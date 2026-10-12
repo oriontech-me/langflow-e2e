@@ -1,6 +1,6 @@
 # Enterprise — The Recipient's Side of a Share, and Who May Be Offered One
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -80,6 +80,9 @@ improvement.
 
 ## External dependencies *(required)*
 
+- On the 1.13 line `./scripts/start-langflow-enterprise.sh` sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`; without a licence the user creation
+  behind the shared subject answers `503` (#2259).
 - The Enterprise RBAC variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`,
   `PLAYWRIGHT_BASE_URL` at `http://localhost:7891`.
 - Zero or one login per run — the directory's shared subject and the cached superuser token.

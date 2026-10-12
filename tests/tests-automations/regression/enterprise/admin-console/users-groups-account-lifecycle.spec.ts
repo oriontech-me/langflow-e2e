@@ -10,8 +10,8 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
 /**
  * What the Users & Groups screen does, as opposed to whether it loads.
  *
- * `console-tab-contract` proved all seven `/admin-ee` screens resolve and fetch
- * their own data. It says nothing about what any of them lets an operator DO.
+ * `console-tab-contract` proved every `/admin` screen resolves and fetches its
+ * own data. It says nothing about what any of them lets an operator DO.
  * This is the first per-tab follow-up, and this tab is first because of what its
  * controls are: an account is deactivated, promoted to superuser and DELETED
  * from here, and the deletion is irreversible.
@@ -27,7 +27,12 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
  *  - a toggle that flips its own pixels and sends nothing is invisible to any
  *    assertion made on the toggle, so both are read back from the API.
  *
- * Reasoning, the measured surface and the two locator traps:
+ * The 1.13 table (EE PR 493, LE-2923) moved every control: a row's `Manage`
+ * expands a sibling panel holding `Edit User — <u>` and `Delete user — <u>`, and
+ * Active / Superuser are switches inside the Edit user dialog, saved together
+ * (#2259).
+ *
+ * Reasoning, the measured surface and the locator traps:
  * `docs/enterprise/admin-console/users-groups-account-lifecycle.md`.
  */
 
@@ -102,27 +107,67 @@ async function readAccount(
   return users.find((user) => user.username === username);
 }
 
-/**
- * One row, located by the account it is about.
- *
- * There are no per-row testids on this screen. Every control is named
- * `"<Control> — <username>"`, which is the entire locator story here.
- */
-function accountRow(page: Page, username: string) {
-  return page.getByRole("row", { name: new RegExp(username) });
+/** The account's id, which keys its row and its details panel. */
+async function accountId(
+  request: APIRequestContext,
+  auth: string,
+  username: string,
+): Promise<string> {
+  const response = await request.get("/api/v1/users/?limit=100", {
+    headers: { Authorization: auth },
+  });
+  expect(response.status()).toBe(200);
+  const { users } = (await response.json()) as { users: { id: string; username: string }[] };
+  const found = users.find((user) => user.username === username);
+  expect(found, `the instance has no ${username} account`).toBeDefined();
+  return found!.id;
 }
 
-function rowControl(page: Page, username: string, control: string) {
-  return accountRow(page, username).getByRole("button", {
-    name: `${control} — ${username}`,
-  });
+/** One row, by its stable testid. */
+function accountRow(page: Page, id: string) {
+  return page.getByTestId(`user-row-${id}`);
 }
 
 async function openUsersScreen(page: Page): Promise<void> {
-  await page.goto("/admin-ee/users-groups");
+  await page.goto("/admin/users-groups");
+  await expect(page.getByTestId("users-table")).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Narrow the table to one account and wait for its row.
+ *
+ * The table pages at 12 and orders by username, so on a dirty instance a fresh
+ * account can sit on page 2; the search is what makes the row reachable at all.
+ */
+async function findAccount(page: Page, username: string, id: string) {
+  await page.getByRole("textbox", { name: "Search Username" }).fill(username);
+  const row = accountRow(page, id);
   // Wait for a ROW, not the request: an empty table satisfies half the
   // assertions below while proving nothing.
-  await expect(accountRow(page, EE_USERNAME)).toBeVisible({ timeout: 30_000 });
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  return row;
+}
+
+/**
+ * Expand an account's details and return them.
+ *
+ * The panel is a SIBLING `<tr>` (`td#user-panel-<id>`), not part of the row, so
+ * a control in it can never be found by scoping to the row.
+ */
+async function openAccountDetails(page: Page, username: string, id: string) {
+  const row = await findAccount(page, username, id);
+  await row.getByRole("button", { name: "Manage", exact: true }).click();
+  const details = page.locator(`#user-panel-${id}`);
+  await expect(details).toBeVisible();
+  return details;
+}
+
+/**
+ * The Edit user dialog. Its accessible name is "Dialog" — a hidden heading comes
+ * before the visible "Edit user" — so it is found by its visible heading.
+ */
+function editDialog(page: Page) {
+  return page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Edit user" }) });
 }
 
 test.describe("Enterprise — the Users & Groups screen changes accounts, not just controls", () => {
@@ -137,37 +182,41 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
     async ({ page, request }) => {
       const auth = await getEnterpriseAuthToken(request);
+      const selfId = await accountId(request, auth, EE_USERNAME);
       await openUsersScreen(page);
+      const details = await openAccountDetails(page, EE_USERNAME, selfId);
 
-      await test.step("all three controls on that row are disabled, each saying why", async () => {
-        for (const control of ["Active", "Superuser", "Delete"]) {
-          await expect(
-            rowControl(page, EE_USERNAME, control),
-            `${control} is operable on the break-glass account`,
-          ).toBeDisabled();
-        }
+      // The signed-in account IS the break-glass account on this lane, and since
+      // 1.13 the self reason wins over the break-glass one on screen (EE PR 493).
+      // The break-glass guard is still what the API answers — asserted below.
+      await test.step("deleting it is disabled, saying why", async () => {
+        const remove = details.getByRole("button", { name: `Delete user — ${EE_USERNAME}` });
+        await expect(remove, "Delete is operable on the signed-in account").toBeDisabled();
         // The reasons are not decoration: they are what tells an operator the
         // control is off by policy rather than by a bug.
-        await expect(
-          rowControl(page, EE_USERNAME, "Active"),
-        ).toHaveAccessibleDescription(/cannot deactivate your own account/i);
-        await expect(
-          rowControl(page, EE_USERNAME, "Delete"),
-        ).toHaveAccessibleDescription(/break-glass account cannot be/i);
+        await expect(remove).toHaveAccessibleDescription(/cannot delete your own account/i);
+      });
+
+      await test.step("and in the Edit user dialog both switches are disabled, each saying why", async () => {
+        await details.getByRole("button", { name: `Edit User — ${EE_USERNAME}` }).click();
+        const dialog = editDialog(page);
+        await expect(dialog).toBeVisible();
+        const active = dialog.getByRole("switch", { name: "Active" });
+        const superuser = dialog.getByRole("switch", { name: "Superuser" });
+        await expect(active, "Active is operable on the signed-in account").toBeDisabled();
+        await expect(superuser, "Superuser is operable on the signed-in account").toBeDisabled();
+        await expect(active).toHaveAccessibleDescription(/cannot deactivate your own account/i);
+        await expect(superuser).toHaveAccessibleDescription(
+          /cannot remove superuser access from your own account/i,
+        );
+        await page.keyboard.press("Escape");
+        await expect(dialog).toBeHidden();
       });
 
       // The half a screenshot cannot show. A disabled control over a permissive
       // API is a screen that only looks protective, and nothing else here — or
       // anywhere in the suite — would notice.
-      const users = await request.get("/api/v1/users/?limit=100", {
-        headers: { Authorization: auth },
-      });
-      const { users: accounts } = (await users.json()) as {
-        users: { id: string; username: string }[];
-      };
-      const breakGlass = accounts.find((user) => user.username === EE_USERNAME);
-      expect(breakGlass, `the instance has no ${EE_USERNAME} account`).toBeDefined();
-      const target = `/api/v1/users/${breakGlass!.id}`;
+      const target = `/api/v1/users/${selfId}`;
 
       await test.step("deactivating it is refused as SELF-protection (403)", async () => {
         const response = await request.patch(target, {
@@ -181,14 +230,18 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
         expect(await response.text()).toMatch(/deactivate your own user account/i);
       });
 
-      await test.step("demoting and deleting it are refused as BREAK-GLASS (409)", async () => {
+      await test.step("demoting it is refused as SELF-protection too (409)", async () => {
+        // On 1.12 this was the break-glass guard's refusal; since 1.13 the
+        // self-protection check answers first, with its own wording.
         const demote = await request.patch(target, {
           headers: { Authorization: auth },
           data: { is_superuser: false },
         });
         expect(demote.status()).toBe(409);
-        expect(await demote.text()).toMatch(/break-glass account cannot be/i);
+        expect(await demote.text()).toMatch(/remove superuser access from your own account/i);
+      });
 
+      await test.step("deleting it is refused as BREAK-GLASS (409)", async () => {
         const remove = await request.delete(target, { headers: { Authorization: auth } });
         expect(remove.status()).toBe(409);
         expect(await remove.text()).toMatch(/break-glass account cannot be deleted/i);
@@ -210,7 +263,7 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
 
       try {
         await openUsersScreen(page);
-        await expect(accountRow(page, subject.username)).toBeVisible();
+        const details = await openAccountDetails(page, subject.username, subject.id);
 
         // Armed before the dialog opens. Reading the listing afterwards is NOT
         // enough on its own and the force-fail proved it: swapping this test's
@@ -226,18 +279,15 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
           }
         });
 
-        await rowControl(page, subject.username, "Delete").click();
-        const dialog = page.getByRole("dialog");
+        await details.getByRole("button", { name: `Delete user — ${subject.username}` }).click();
+        const dialog = page.getByRole("dialog", { name: "Delete User" });
 
         await test.step("the dialog states the action cannot be undone", async () => {
           await expect(dialog).toContainText(/this action cannot be undone/i);
         });
 
         await test.step("cancelling closes it", async () => {
-          // Two controls read `Cancel` in this dialog — the visible one and a
-          // second from the shared modal shell. `.first()` is deliberate;
-          // `getByText("Cancel")` is a strict-mode violation waiting to happen.
-          await dialog.getByRole("button", { name: "Cancel" }).first().click();
+          await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
           await expect(dialog).toBeHidden();
         });
 
@@ -267,25 +317,38 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
 
       try {
         await openUsersScreen(page);
-        await expect(accountRow(page, subject.username)).toBeVisible();
+        const details = await openAccountDetails(page, subject.username, subject.id);
 
-        await rowControl(page, subject.username, "Delete").click();
-        const dialog = page.getByRole("dialog");
-        // By role and name. The confirm control carries
-        // `data-testid="replace-button"` — a shared modal component, so that
-        // testid says nothing about deletion and would follow the component into
-        // whatever dialog it is reused by next.
+        await details.getByRole("button", { name: `Delete user — ${subject.username}` }).click();
+        const dialog = page.getByRole("dialog", { name: "Delete User" });
+        // By role and EXACT name, scoped to the dialog.
+        const removed = page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === `/api/v1/users/${subject.id}` &&
+            response.request().method() === "DELETE",
+        );
         await dialog.getByRole("button", { name: "Delete", exact: true }).click();
 
-        await test.step("the row goes", async () => {
-          await expect(accountRow(page, subject.username)).toHaveCount(0);
+        await test.step("the delete is accepted for background erasure", async () => {
+          // Since langflow-ai/langflow#15470 deletion is an asynchronous erase:
+          // 202, not 200, and the account can still be listed for a moment.
+          expect((await removed).status()).toBe(202);
+          await expect(dialog).toBeHidden();
         });
 
-        await test.step("and so does the account", async () => {
-          // The row disappearing is a render; the listing is the state.
+        await test.step("the account goes at the API", async () => {
+          // The state, polled: the erase runs in the background.
           await expect
-            .poll(() => isListed(request, auth, subject.username), { timeout: 15_000 })
+            .poll(() => isListed(request, auth, subject.username), { timeout: 30_000 })
             .toBe(false);
+        });
+
+        await test.step("and so does its row, once the screen re-reads", async () => {
+          // The screen refetches once, immediately — possibly before the erase
+          // finished — so the row is read after a fresh load, not raced.
+          await openUsersScreen(page);
+          await page.getByRole("textbox", { name: "Search Username" }).fill(subject.username);
+          await expect(accountRow(page, subject.id)).toHaveCount(0);
         });
       } finally {
         await removeSubject(request, auth, subject);
@@ -302,7 +365,7 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
 
       try {
         await openUsersScreen(page);
-        await expect(accountRow(page, subject.username)).toBeVisible();
+        const details = await openAccountDetails(page, subject.username, subject.id);
 
         await test.step("it starts active and unprivileged", async () => {
           expect(await readAccount(request, auth, subject.username)).toMatchObject({
@@ -311,14 +374,16 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
           });
         });
 
-        await test.step("deactivating it is confirmed, and lands at the API", async () => {
-          await rowControl(page, subject.username, "Active").click();
-          const dialog = page.getByRole("dialog");
+        await test.step("deactivating it is saved, and lands at the API", async () => {
+          await details.getByRole("button", { name: `Edit User — ${subject.username}` }).click();
+          const dialog = editDialog(page);
           // The edit dialog names its subject. The delete one does not — see the
           // note in the spec doc; that asymmetry is recorded in #1633 rather
           // than asserted, so this only pins the copy that exists.
           await expect(dialog).toContainText(subject.username);
-          await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
+          await dialog.getByRole("switch", { name: "Active" }).click();
+          await dialog.getByRole("button", { name: "Save Changes", exact: true }).click();
+          await expect(dialog).toBeHidden();
 
           // Read back from the API, never from the control that was clicked: a
           // toggle that flips itself and sends nothing satisfies any assertion
@@ -331,9 +396,11 @@ test.describe("Enterprise — the Users & Groups screen changes accounts, not ju
         });
 
         await test.step("promoting it to superuser lands at the API too", async () => {
-          await rowControl(page, subject.username, "Superuser").click();
-          const dialog = page.getByRole("dialog");
-          await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
+          await details.getByRole("button", { name: `Edit User — ${subject.username}` }).click();
+          const dialog = editDialog(page);
+          await dialog.getByRole("switch", { name: "Superuser" }).click();
+          await dialog.getByRole("button", { name: "Save Changes", exact: true }).click();
+          await expect(dialog).toBeHidden();
 
           await expect
             .poll(

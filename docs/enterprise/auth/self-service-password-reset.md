@@ -1,7 +1,6 @@
 # Enterprise — The Self-Service Password Reset, Beside the Forced One
 
-**Last validated:** 1.12.0 — Langflow Enterprise (image `langflow-enterprise:local`, built
-from `IBM-Langflow@release-1.12.0`), re-measured 2026-08-26 for #1558
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -13,9 +12,19 @@ on the way out. There is a second path — `PATCH /api/v1/users/{user_id}/reset-
 a user calls for themselves — and nothing covered it. This spec covers what **that** path
 claims, and only what it claims.
 
-The route is OSS (`langflow/api/v1/users.py`), unchanged by Enterprise: no EE module overrides
-it and no EE setting alters it. It makes exactly three refusals, and all three are asserted
-here:
+The route is OSS (`langflow/api/v1/users.py`). On 1.12 Enterprise did not touch it; since the
+1.13 line it can refuse in more ways, none of which a **local-password account on a lane with
+no SSO** can reach, so they are recorded here and not asserted (read from the source at
+`bbbec5fb` / `1e829663`, not measured):
+
+- `403 local_auth_disabled` when an operator has made sign-in SSO-only, and `403
+  sso_password_change_disabled` for an SSO-linked account (EE `local_login_gate`).
+- `403 interactive_login_required` when the caller authenticates with an API key, and `429`
+  after five attempts per user per minute (langflow-ai/langflow#15470). The spec spends three.
+- `409 external_credentials_managed` when directory sync manages the credential.
+
+The three refusals a local-password account **can** reach are unchanged, and all three are
+asserted here:
 
 - **Proof of possession**: a wrong `current_password` answers `400 Current password is
   incorrect`.
@@ -140,9 +149,10 @@ this measurement pointed the cross-user attempt at the superuser, which would ha
 lane's own credential had the product allowed it — the answer was `404`, but a test that has to
 be right about the product to be safe is the wrong shape.
 
-Both users are deleted in `afterAll`. `DELETE /api/v1/users/{id}` answers `200`.
+Both users are deleted in `afterAll`. Since langflow-ai/langflow#15470,
+`DELETE /api/v1/users/{id}` answers **`202`** and erases the account in the background, so the
+user may still be listed for a moment; nothing here reads it back.
 
-The re-measurement for #1558 compared three refs and they agree byte-for-byte on this route:
-the Enterprise image under test, the **fresh** OSS pin the EE release line moved to
-(`d78bf754`, 79 commits ahead of the build), and the running OSS nightly. Rebuilding the image
-would measure the same product on this axis, which is why it was not rebuilt.
+On 1.13 the user creation in `beforeAll` is tier-gated: without a licence it answers `503
+Enterprise license validation is unavailable`, which is why the lane's start script sets
+`LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true` (#2259).

@@ -63,11 +63,11 @@ test.describe("Enterprise — share discovery and the share picker", () => {
   });
 
   test.beforeEach(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
   });
 
   test.afterAll(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
     await request
       .delete(`/api/v1/flows/${flowId}`, {
         headers: { Authorization: superuserAuth },
@@ -110,7 +110,7 @@ test.describe("Enterprise — share discovery and the share picker", () => {
       });
 
       await test.step("after revoking, it is gone", async () => {
-        await resetSubjectGrants(request, superuserAuth, granted);
+        await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
         const items = await readSharedWithMe(request, subject.auth);
         // The worse half of the pair: a lingering entry is a dead link to a
         // resource the recipient can no longer open.

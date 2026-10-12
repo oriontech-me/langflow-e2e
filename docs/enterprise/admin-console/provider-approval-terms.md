@@ -1,33 +1,44 @@
 # Enterprise — Approving a Provider Writes the Terms the Screen Displayed
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built 2026-08-27 from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
 ## What this test validates *(required)*
 
-`/admin-ee/providers` is where an operator decides **which model providers this installation may
+`/admin/providers` is where an operator decides **which model providers this installation may
 use at all**. One click changes that for every workspace, and nothing covered it.
 
 It is an **approval** surface, not a configuration one — which is why this tab came before
 `models`, and why the whole spec runs without a single credential.
 
-### The card states the terms before the click
+### The dialog states the alias before the click — and only the alias (1.13)
 
-Each recommended provider displays what approving it will mean:
+On 1.12 each recommended provider was a **card** stating its terms — *All workspaces*, *All
+environments*, credential alias `openai` — with an `Approve` button. The 1.13 console removed the
+cards (EE PR 326). Approval is now the header's `Add provider` button, opening
+`dialog "Add provider"`:
 
-| Field | Value shown |
+| Field | Shown |
 |---|---|
-| Approval scope | All workspaces |
-| Environments | All environments |
-| Credential alias | `openai` |
+| `Provider / API` (combobox) | pick *OpenAI* |
+| `Credential alias` (textbox) | prefilled `openai` once the provider is picked |
+| `Owner / team` (textbox) | empty |
+| `Observability required` (switch) | on |
 
-Those are the terms the write must then carry, and that is the pairing no API test can make: the
-displayed terms are the **input** to the operator's decision. A screen that shows *All workspaces*
-and writes something narrower — or shows one alias and keys the policy on another — is wrong in a
-way only a browser test sees.
+The alias is still the term the write must carry, and that pairing is the one no API test can
+make: a screen that shows one alias and keys the policy on another is wrong in a way only a
+browser test sees. It is read with `toHaveValue` — it is an input, and `toContainText` does not
+read inputs.
 
-### Approving is one click and one write
+The **scope is no longer displayed**. The dialog writes it as a hidden default — `workspaces:
+["all"]`, all three environments, `data_policy: "internal"`, `production_requirement:
+"noApproval"` — and the Models screen later shows it as *All workspaces / All environments*. So
+the scope is pinned at the API: a narrower default would silently not apply where an operator
+approving "globally" expects. Whether an approval should show its scope before it is made is a
+product question, recorded in #2259.
+
+### Approving is one submit and one write
 
 ```
 POST /api/v1/model-provider-governance  ->  201
@@ -104,27 +115,30 @@ No `@stable`: there is no scheduled Enterprise lane (#1010).
    token.
 2. Record the governance records and `approved_provider_ids` as found, so teardown restores rather
    than wipes.
-3. Open `/admin-ee/providers` and read the target provider's card: its `Credential alias` and its
-   `Approval scope`.
-4. Click `Approve`, then assert the governance record carries that alias, `workspaces: ["all"]`,
+3. Open `/admin/providers`, click `Add provider`, pick the target provider in `Provider / API`,
+   and read the dialog's `Credential alias`.
+4. Submit `Add Provider`, then assert the governance record carries that alias, `workspaces: ["all"]`,
    `status: "active"` and the approving user's id — and that `approved_provider_ids` gained exactly
    that provider.
-5. Assert the screen reports it `Pending` under *Needs attention*, naming credentials as what is
-   missing, and lists it under *Available Providers*.
+5. Assert the screen reports it `Pending` under *Needs Attention*, naming credentials as what is
+   missing, and lists it as `provider-row-<alias>` under *Available Providers*.
 6. Click `Dismiss`, assert no write was issued, the policy is unchanged, and the provider is still
    listed under *Available Providers*.
 7. Restore: delete the governance record with the current bundle revision.
 
 ## Validation criterion *(required)*
 
-Fails when approving writes terms other than the ones the card displayed, when an approved
+Fails when approving writes an alias other than the one the dialog displayed or a scope other
+than the documented default, when an approved
 provider is reported as ready rather than pending credentials, or when dismissing the reminder
 changes the approval — in either direction.
 
 ## External dependencies *(required)*
 
 - A Langflow **Enterprise** instance on the RBAC variant:
-  `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`.
+  `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`. On the 1.13 line the script sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: the governance and model-policy routes
+  this screen reads and writes are tier-gated and answer `503` without a licence (#2259).
 - A browser.
 - **No credential of any kind**, no LLM provider, no network egress, no licence, and no additional
   login. Keeping it keyless is deliberate: it is what makes this runnable on any Enterprise
@@ -134,6 +148,6 @@ changes the approval — in either direction.
 
 ## Notes
 
-The three non-2xx responses the console fires on every page load — `auto_login` `403`, `refresh`
+The non-2xx responses the console fires on every page load — `auto_login` `403`, and (on 1.12) `refresh`
 `401`, `store/tags` `500` — are covered in the shell spec's notes, including the measurement trap
 that the fixture prints `Backend Error` on **stdout**.

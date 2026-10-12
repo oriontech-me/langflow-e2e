@@ -1,6 +1,6 @@
 # Enterprise — The Admin Catalog Inventory Agrees With the Declared Policy
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -27,8 +27,16 @@ in both directions:
   the palette and *not* in the policy is one being hidden by something the
   operator never declared.
 
-Measured on the reference instance: 161 inventory types, 160 palette types, the
-difference being the single blocked component and the reverse difference empty.
+Measured on the 1.12 reference instance: 161 inventory types, 160 palette types; on 1.13
+(`bbbec5fb`): **194** and **193** — in both, the difference is the single blocked component and
+the reverse difference empty.
+
+Since the 1.13 line the palette (`GET /api/v1/all`) is also filtered by **integration** policy
+(langflow-ai/langflow#14947), and the inventory is not. On a fresh instance integration policy
+is empty and unrestricted, so the equality still holds — but it now has a precondition. The
+test asserts it first (`approved_integration_provider_ids` and `blocked_integration_action_keys`
+both empty on the bundle) and fails naming them, rather than reporting an integration filter as
+an undeclared hiding mechanism.
 
 ### `policy_candidates` — the answer to a trap this area already has
 
@@ -85,6 +93,8 @@ nothing.
 - A Langflow **Enterprise** instance started with the component blocked:
   `LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText ./scripts/start-langflow-enterprise.sh`
 - No LLM provider and no network egress.
+- On the 1.13 line the script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: the
+  policy routes are tier-gated and answer `503` without a licence (#2259).
 
 ## Notes
 

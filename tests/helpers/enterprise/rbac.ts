@@ -709,10 +709,19 @@ export async function mePermissions(
   auth: string,
   resourceType: string,
   resourceIds: string[],
+  domain?: string,
 ): Promise<Record<string, string[]>> {
+  // `domain` defaults to `*` server-side — the GLOBAL question. A grant scoped to a
+  // project only answers in that project's domain (`project:<id>`), which is what
+  // the product's own client sends; asking without it is how #1532 read a correct
+  // answer to a different question as a disagreement.
   const response = await request.post("/api/v1/authz/me/permissions", {
     headers: { Authorization: auth },
-    data: { resource_type: resourceType, resource_ids: resourceIds },
+    data: {
+      resource_type: resourceType,
+      resource_ids: resourceIds,
+      ...(domain ? { domain } : {}),
+    },
   });
   expect(response.status(), await response.text()).toBe(200);
   return ((await response.json()) as { permissions: Record<string, string[]> })
@@ -830,10 +839,12 @@ export async function authzCheck(
   userId: string,
   obj: string,
   act: string,
+  domain?: string,
 ): Promise<AuthzDecision> {
+  // Same `domain` rule as `mePermissions`: omitted, the question is asked in `*`.
   const response = await request.post("/api/v1/authz/check", {
     headers: { Authorization: auth },
-    data: { user_id: userId, obj, act },
+    data: { user_id: userId, obj, act, ...(domain ? { domain } : {}) },
   });
   expect(response.status()).toBe(200);
   return (await response.json()) as AuthzDecision;
@@ -1097,6 +1108,67 @@ export async function getProjectOwnedBy(
  * `folderId` is REQUIRED rather than optional, so a caller cannot accidentally
  * fall back to the override path the way every pre-#1635 call site did.
  */
+/**
+ * A NON-personal project owned by `subject`, for probes that need a destination
+ * where neither ownership nor project privacy answers before policy does.
+ *
+ * The superuser's own projects are answered by the owner override (#1635), and a
+ * user's default Starter Project is private since the 1.13 line (EE PR 401):
+ * global role wildcards — the superuser's bootstrap `admin` included, with bypass
+ * off — no longer reach it, so a refusal there proves nothing about roles. A
+ * role-less subject cannot create a project, so it is granted `developer` for
+ * exactly that one call and the grant is revoked before returning.
+ *
+ * Needs `LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS=false` (the start script sets it):
+ * otherwise project creation also registers an MCP stdio server, which 1.13
+ * restricts to superusers, and the create answers `403 MCP stdio servers are
+ * restricted to administrators…` for every other role.
+ */
+export async function getSubjectNonPersonalProject(
+  request: APIRequestContext,
+  superuserAuth: string,
+  subject: RbacUser,
+): Promise<string> {
+  const headers = { Authorization: subject.auth };
+  const listed = await request.get("/api/v1/projects/", { headers });
+  expect(listed.status(), await listed.text()).toBe(200);
+  const body = (await listed.json()) as
+    | { id: string; name: string }[]
+    | { projects: { id: string; name: string }[] };
+  const existing = (Array.isArray(body) ? body : body.projects).find(
+    (project) => project.name === SCOPE_PROBE_PROJECT_NAME,
+  );
+  if (existing) return existing.id;
+
+  // Not `getProjectOwnedBy`: its fallback for a refused create is the owner's
+  // Starter Project, which is exactly the private destination this helper exists
+  // to avoid — so a refusal here must fail, not degrade.
+  const roles = await builtinRoleIds(request, superuserAuth);
+  const assignment = await assignRole(request, superuserAuth, subject.id, roles.developer);
+  try {
+    const created = await request.post("/api/v1/projects/", {
+      headers,
+      data: { name: SCOPE_PROBE_PROJECT_NAME },
+    });
+    const text = await created.text();
+    if (created.status() === 403 && text.includes("MCP stdio")) {
+      throw new Error(
+        `A developer could not create a project: ${text.slice(0, 160)}. Start the ` +
+          `instance with LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS=false — ` +
+          `scripts/start-langflow-enterprise.sh sets it.`,
+      );
+    }
+    expect(created.status(), text).toBe(201);
+    return ((await created.json()) as { id: string }).id;
+  } finally {
+    await request
+      .delete(`/api/v1/authz/role-assignments/${assignment}`, {
+        headers: { Authorization: superuserAuth },
+      })
+      .catch(() => undefined);
+  }
+}
+
 export function attemptFlowCreate(
   request: APIRequestContext,
   auth: string,
@@ -1119,8 +1191,29 @@ export async function getSharedRbacSubject(
       .get("/api/v1/users/whoami", { headers: { Authorization: cached.auth } })
       .catch(() => undefined);
     if (whoami?.ok()) {
-      const body = (await whoami.json()) as { id?: string };
-      if (body.id === cached.id) return cached;
+      const body = (await whoami.json()) as { id?: string; is_superuser?: boolean };
+      if (body.id === cached.id) {
+        // Every spec here treats this account as role-less AND not a superuser,
+        // and nothing else would notice if it stopped being one: a superuser
+        // passes every guard, so every "refused" assertion in the directory
+        // fails at once, for a reason none of them is about. Measured: a
+        // force-fail of the promotion containment made it a superuser through
+        // the superuser's own PATCH, and nine tests went red on the next run.
+        // Repaired here rather than reported, because the subject is shared and
+        // cached across runs — the next run would inherit it.
+        if (body.is_superuser) {
+          const demoted = await request.patch(`/api/v1/users/${cached.id}`, {
+            headers: { Authorization: auth },
+            data: { is_superuser: false },
+          });
+          expect(
+            demoted.status(),
+            `the shared subject ${cached.username} was a superuser and could not be demoted: ` +
+              (await demoted.text()),
+          ).toBe(200);
+        }
+        return cached;
+      }
     }
 
     // The token died; the ACCOUNT usually has not. Minting a replacement here

@@ -54,11 +54,11 @@ test.describe("Enterprise — the admin signal, and the second grant path", () =
   });
 
   test.beforeEach(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
   });
 
   test.afterAll(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
   });
 
   test(
@@ -85,7 +85,7 @@ test.describe("Enterprise — the admin signal, and the second grant path", () =
       });
 
       await test.step("after revoking, both go back", async () => {
-        await resetSubjectGrants(request, superuserAuth, granted);
+        await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
         // The half a grant-then-check test misses: a signal that only ever
         // latches true would pass the step above and leave a revoked user
         // looking at admin screens.

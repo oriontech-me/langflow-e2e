@@ -69,11 +69,11 @@ test.describe("Enterprise — policy reconciliation reads honestly and repairs i
   });
 
   test.beforeEach(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
   });
 
   test.afterAll(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
     await deleteProject?.(request).catch(() => undefined);
   });
 
@@ -134,7 +134,7 @@ test.describe("Enterprise — policy reconciliation reads honestly and repairs i
         baseline.expected_count!,
       );
 
-      await resetSubjectGrants(request, superuserAuth, granted);
+      await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
 
       const afterRevoke = await reconcilePolicy(request, superuserAuth);
       // Byte-identical, not merely "changed again". The hash is only usable for

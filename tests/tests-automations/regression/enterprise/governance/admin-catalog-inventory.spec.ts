@@ -85,6 +85,21 @@ test.describe("Enterprise — the admin catalog inventory agrees with the policy
         blockedComponents: [BLOCKED_COMPONENT],
       });
 
+      await test.step("precondition: no integration policy hides anything", async () => {
+        // Since 1.13 the palette is also filtered by integration policy and the
+        // inventory is not (#2259). With an integration ceiling in force the
+        // equality below would report the integration filter as an undeclared
+        // hiding mechanism — so it is named here instead.
+        expect(
+          bundle.approved_integration_provider_ids ?? [],
+          "approved_integration_provider_ids must be empty for this invariant",
+        ).toEqual([]);
+        expect(
+          bundle.blocked_integration_action_keys ?? [],
+          "blocked_integration_action_keys must be empty for this invariant",
+        ).toEqual([]);
+      });
+
       const response = await request.get(
         "/api/v1/enterprise-admin/catalog/components",
         { headers: { Authorization: auth } },

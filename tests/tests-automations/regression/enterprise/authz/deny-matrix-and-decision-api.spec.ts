@@ -8,7 +8,9 @@ import {
   resetSubjectGrants,
   getSharedRbacSubject,
   effectivePermissions,
+  getProjectOwnedBy,
   requireRbacInstance,
+  SCOPE_CONFLICT_DETAIL,
   shareWithUser,
   type RbacUser,
 } from "../../../../helpers/enterprise/rbac";
@@ -41,6 +43,12 @@ import {
  * for shares. Asking the first about a specific resource produces a confident
  * wrong answer that looks exactly like a product defect — it did, twice, while
  * this was being measured.
+ *
+ * Two 1.13 rules shape the matrix (#2259). Roles do not stack at one scope — a
+ * second global grant is a 409 — so the walk REPLACES the role at each step. And
+ * a user's default Starter Project is private: global role wildcards no longer
+ * reach it, so the flow under test lives in a non-personal project, and the
+ * privacy rule gets a row of its own instead of hiding inside the others.
  */
 
 /** A flow id that is well-formed and belongs to nobody. */
@@ -109,7 +117,7 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
 
   test.beforeEach(async ({ request }) => {
     const auth = await getEnterpriseAuthToken(request);
-    await resetSubjectGrants(request, auth, granted);
+    await resetSubjectGrants(request, auth, granted, subject?.id);
   });
 
   test.afterAll(async ({ request }) => {
@@ -117,7 +125,7 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
     // cached between runs; deleting it would cost a fresh login next time,
     // which is the whole reason it is shared.
     const auth = await getEnterpriseAuthToken(request);
-    await resetSubjectGrants(request, auth, granted);
+    await resetSubjectGrants(request, auth, granted, subject?.id);
   });
 
   test(
@@ -129,19 +137,48 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
 
       const headers = { Authorization: auth };
       const roles = await builtinRoleIds(request, auth);
+      // In a NON-personal project the superuser owns. A bare create lands in
+      // the superuser's private Starter Project, which no global role reaches
+      // since 1.13 — the matrix would be measuring the privacy rule, not roles.
+      const projectId = await getProjectOwnedBy(request, auth);
       const created = await request.post("/api/v1/flows/", {
         headers,
         data: {
           name: `matrix-owned-${Date.now()}`,
           description: "",
           data: { nodes: [], edges: [] },
+          folder_id: projectId,
         },
       });
       expect(created.status()).toBe(201);
       const flowId = ((await created.json()) as { id: string }).id;
+      // The private-project row's resource: a bare create, which canonicalises
+      // to the superuser's own Starter Project.
+      const privateCreated = await request.post("/api/v1/flows/", {
+        headers,
+        data: {
+          name: `matrix-private-${Date.now()}`,
+          description: "",
+          data: { nodes: [], edges: [] },
+        },
+      });
+      expect(privateCreated.status()).toBe(201);
+      const privateFlowId = ((await privateCreated.json()) as { id: string }).id;
 
       const assignments = granted.assignments;
       let shareId: string | undefined;
+
+      /** Replace whatever role the subject holds with `roleId`, globally. */
+      const replaceRole = async (roleId: string) => {
+        for (const assignmentId of assignments.splice(0)) {
+          const removed = await request.delete(
+            `/api/v1/authz/role-assignments/${assignmentId}`,
+            { headers },
+          );
+          expect(removed.ok()).toBe(true);
+        }
+        assignments.push(await assignRole(request, auth, subject.id, roleId));
+      };
 
       try {
         await test.step("with no role, a flow it does not own is indistinguishable from one that does not exist", async () => {
@@ -152,9 +189,7 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
         });
 
         await test.step("viewer reads but cannot write", async () => {
-          assignments.push(
-            await assignRole(request, auth, subject.id, roles.viewer),
-          );
+          await replaceRole(roles.viewer);
           expect(await probe(request, subject, flowId)).toEqual({
             readOther: 200,
             readMissing: 404,
@@ -166,10 +201,41 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
           });
         });
 
-        await test.step("developer reads and writes", async () => {
-          assignments.push(
-            await assignRole(request, auth, subject.id, roles.developer),
+        await test.step("a second role at the same scope is refused, not stacked", async () => {
+          // Raw, not through `assignRole`: the refusal IS the assertion here.
+          const stacked = await request.post("/api/v1/authz/role-assignments", {
+            headers,
+            data: {
+              user_id: subject.id,
+              role_id: roles.developer,
+              domain_type: "global",
+              domain_id: null,
+            },
+          });
+          expect(stacked.status()).toBe(409);
+          expect(((await stacked.json()) as { detail: string }).detail).toContain(
+            SCOPE_CONFLICT_DETAIL,
           );
+        });
+
+        await test.step("a global role does not reach another user's private Starter Project", async () => {
+          // Same viewer, same instance: the only difference is the project.
+          const read = await request.get(`/api/v1/flows/${privateFlowId}`, {
+            headers: { Authorization: subject.auth },
+          });
+          expect(read.status()).toBe(404);
+          const list = await request.get("/api/v1/flows/", {
+            headers: { Authorization: subject.auth },
+          });
+          expect(
+            ((await list.json()) as { id: string }[]).some(
+              (flow) => flow.id === privateFlowId,
+            ),
+          ).toBe(false);
+        });
+
+        await test.step("developer reads and writes", async () => {
+          await replaceRole(roles.developer);
           expect(await probe(request, subject, flowId)).toEqual({
             readOther: 200,
             readMissing: 404,
@@ -179,9 +245,7 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
         });
 
         await test.step("admin is not less than developer", async () => {
-          assignments.push(
-            await assignRole(request, auth, subject.id, roles.admin),
-          );
+          await replaceRole(roles.admin);
           expect(await probe(request, subject, flowId)).toEqual({
             readOther: 200,
             readMissing: 404,
@@ -190,7 +254,7 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
           });
         });
 
-        await test.step("removing every assignment revokes the access", async () => {
+        await test.step("removing the assignment revokes the access", async () => {
           for (const assignmentId of assignments.splice(0)) {
             const removed = await request.delete(
               `/api/v1/authz/role-assignments/${assignmentId}`,
@@ -234,9 +298,11 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
             .delete(`/api/v1/authz/shares/${shareId}`, { headers })
             .catch(() => undefined);
         }
-        await request
-          .delete(`/api/v1/flows/${flowId}`, { headers })
-          .catch(() => undefined);
+        for (const id of [flowId, privateFlowId]) {
+          await request
+            .delete(`/api/v1/flows/${id}`, { headers })
+            .catch(() => undefined);
+        }
         // The subject is shared by the file and torn down in afterAll; what
         // this test must undo is what it granted, which beforeEach also does.
       }

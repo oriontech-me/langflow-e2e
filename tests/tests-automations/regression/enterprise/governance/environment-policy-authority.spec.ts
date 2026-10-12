@@ -260,6 +260,11 @@ test.describe("Enterprise — environment-declared policy is authoritative", () 
           blocked_component_keys: bundle.blocked_component_keys ?? [],
           blocked_template_keys: bundle.blocked_template_keys ?? [],
           blocked_model_keys: [],
+          // Carried, not omitted: since 1.13 an omitted integration field is
+          // reset to empty, so this attempt would otherwise also wipe whatever
+          // integration policy the instance holds (#2259).
+          approved_integration_provider_ids: bundle.approved_integration_provider_ids ?? [],
+          blocked_integration_action_keys: bundle.blocked_integration_action_keys ?? [],
           reason: "environment-policy-authority: attempt to clear",
         },
       });
@@ -284,6 +289,9 @@ test.describe("Enterprise — environment-declared policy is authoritative", () 
               blocked_component_keys: current.blocked_component_keys ?? [],
               blocked_template_keys: current.blocked_template_keys ?? [],
               blocked_model_keys: bundle.blocked_model_keys ?? [],
+              approved_integration_provider_ids:
+                current.approved_integration_provider_ids ?? [],
+              blocked_integration_action_keys: current.blocked_integration_action_keys ?? [],
               reason: "environment-policy-authority: restore",
             },
           });

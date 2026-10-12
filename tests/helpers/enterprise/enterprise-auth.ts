@@ -81,10 +81,24 @@ function readCachedToken(): string | undefined {
   }
 }
 
-function writeCachedToken(token: string): void {
+/**
+ * The refresh token minted with the cached access token, when the cache has one.
+ * Only the browser session needs it (see `seedEnterpriseUiSession`); caches
+ * written before it was recorded simply lack it.
+ */
+function readCachedRefreshToken(): string | undefined {
+  try {
+    const raw = readFileSync(tokenCachePath(), "utf-8");
+    return (JSON.parse(raw) as { refresh?: string }).refresh || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedToken(token: string, refresh?: string): void {
   try {
     if (!existsSync(TOKEN_CACHE_DIR)) mkdirSync(TOKEN_CACHE_DIR, { recursive: true });
-    writeFileSync(tokenCachePath(), JSON.stringify({ token }), { mode: 0o600 });
+    writeFileSync(tokenCachePath(), JSON.stringify({ token, refresh }), { mode: 0o600 });
   } catch {
     // Best effort: failing to cache costs a login, not a run.
   }
@@ -158,7 +172,10 @@ async function loginOnce(request: APIRequestContext): Promise<string> {
   if (cached && (await tokenStillValid(request, cached))) {
     return `Bearer ${cached}`;
   }
+  return loginFresh(request);
+}
 
+async function loginFresh(request: APIRequestContext): Promise<string> {
   const response = await request.post("/api/v1/login", {
     form: { username: EE_USERNAME, password: EE_PASSWORD },
   });
@@ -176,11 +193,11 @@ async function loginOnce(request: APIRequestContext): Promise<string> {
     );
   }
 
-  const body = (await response.json()) as { access_token?: string };
+  const body = (await response.json()) as { access_token?: string; refresh_token?: string };
   if (!body.access_token) {
     throw new Error("Enterprise login returned no access_token");
   }
-  writeCachedToken(body.access_token);
+  writeCachedToken(body.access_token, body.refresh_token);
   return `Bearer ${body.access_token}`;
 }
 
@@ -196,9 +213,11 @@ async function loginOnce(request: APIRequestContext): Promise<string> {
  * So the page is handed the same cached token the API tests use, as the cookie
  * the frontend reads. Measured on 1.12.0: `access_token_lf` (httpOnly) plus
  * `auto_login_lf` are sufficient — the admin screen renders its full bundle list
- * with no login request at all. `refresh_token_lf` is deliberately not seeded:
- * nothing here runs long enough to need a refresh, and seeding a token this
- * helper never minted would make an expiry bug look like a rendering one.
+ * with no login request at all. On 1.12 `refresh_token_lf` was deliberately not
+ * seeded, since nothing ran long enough to need a refresh. Since 1.13 it is,
+ * because a refresh no longer needs time to happen: the frontend refreshes on any
+ * 401/403, and one screen provokes a 403 on purpose (see the cookie below). The
+ * refresh token is the one minted WITH the cached access token, never a guess.
  *
  * This does NOT test the login form. `enterprise/auth/login-surface.spec.ts`
  * owns that, and a UI spec asserting on an admin screen should not fail because
@@ -208,7 +227,15 @@ export async function seedEnterpriseUiSession(
   page: import("@playwright/test").Page,
   request: APIRequestContext,
 ): Promise<void> {
-  const auth = await getEnterpriseAuthToken(request);
+  let auth = await getEnterpriseAuthToken(request);
+  // A cache written before the refresh token was recorded has none; one login
+  // replaces it (and the module's in-flight token with it), once.
+  let refresh = readCachedRefreshToken();
+  if (!refresh) {
+    cachedToken = loginFresh(request);
+    auth = await cachedToken;
+    refresh = readCachedRefreshToken();
+  }
   const token = auth.replace(/^Bearer\s+/i, "");
   const baseUrl = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7890";
   const { hostname, protocol } = new URL(baseUrl);
@@ -223,6 +250,27 @@ export async function seedEnterpriseUiSession(
       secure: protocol === "https:",
       sameSite: "Lax",
     },
+    // The refresh token is seeded since 1.13 (#2259). The Audit Log screen
+    // probes `flows/audits` and `projects/audits`, which answer 403 to a role
+    // without `audit_read`; the frontend answers ANY 401/403 by refreshing, and
+    // with no refresh cookie that refresh fails and the interceptor logs the
+    // session out — measured: a cookie-seeded run landed on /login while a real
+    // login session refreshed (200) and stayed. Seeding it makes this session
+    // behave like the one a form login produces. Refresh tokens survive reuse
+    // (measured: six refreshes of one token, all 200), so the cached one is safe.
+    ...(refresh
+      ? [
+          {
+            name: "refresh_token_lf",
+            value: refresh,
+            domain: hostname,
+            path: "/",
+            httpOnly: true,
+            secure: protocol === "https:",
+            sameSite: "Lax" as const,
+          },
+        ]
+      : []),
     {
       name: "auto_login_lf",
       value: "login",

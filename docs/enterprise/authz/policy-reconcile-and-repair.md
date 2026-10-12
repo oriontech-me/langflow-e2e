@@ -1,6 +1,6 @@
 # Enterprise — Policy Reconciliation: an Honest Read, and an Idempotent Repair
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -98,6 +98,9 @@ further changes, or when a non-superuser reaches any of the three.
 
 ## External dependencies *(required)*
 
+- On the 1.13 line `./scripts/start-langflow-enterprise.sh` sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`; without a licence the user creation
+  behind the shared subject and the reconcile/sync routes themselves answers `503` (#2259).
 - The Enterprise RBAC variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`,
   `PLAYWRIGHT_BASE_URL` at `http://localhost:7891`.
 - **Zero or one** login per run — the directory's shared subject plus the cached superuser

@@ -1,6 +1,6 @@
 # Enterprise — Three Refusals Are Three Guards, and What Superuser Bypass Actually Switches
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -11,6 +11,7 @@ Two questions the RBAC area left open, and they are one question asked from both
 **Are the three `403` messages three guards, or three spellings of one ladder?**
 `rbac-instance-baseline` names them and defers them on purpose: `Permission denied`,
 `RBAC administrator role required`, and `Superuser required to administer roles.`
+(the last is now the refusal a **role-less** caller gets — see *What moved on 1.13*).
 If they were one ladder, a single "privilege" scalar would order every subject and the
 three messages would be cosmetic. They are not: each guard reads a *different* predicate,
 and no subject satisfies them in a nested order.
@@ -29,7 +30,7 @@ Three routes, one per guard. Subjects are principals, not privilege levels.
 | Subject | `POST /flows/` (resource policy) | `GET /authz/admin/users` (admin route) | `POST /authz/roles` (role administration) |
 |---|---|---|---|
 | no role, bypass off | `403` `Permission denied` | `403` `RBAC administrator role required` | `403` `Superuser required to administer roles.` |
-| `admin` role, global, bypass off | `201` | `200` | `403` `Superuser required to administer roles.` |
+| `admin` role, global, bypass off | `201` | `200` | `201` (delegated administration, 1.13) |
 | superuser with **no** assignment, bypass off | `403` `Permission denied` | `200` | `201` |
 | superuser with **no** assignment, bypass **on** | `201` | `200` | `201` |
 | no role, bypass **on** | `403` `Permission denied` | `403` `RBAC administrator role required` | `403` `Superuser required to administer roles.` |
@@ -42,17 +43,31 @@ is the finding worth pinning:
   not enter this decision at all when bypass is off.
 - The **admin route** guard is satisfied by the `admin` role **or** by the superuser flag.
   The role-less superuser passes it while being refused by the guard "below" it.
-- **Role administration** is satisfied by the superuser flag **only**. A holder of the
-  global `admin` role passes the two guards beneath it and is refused here — so an admin
-  cannot grant themselves anything, which is the containment that makes the `admin` role
-  safe to hand out. (`POST /authz/role-assignments` refuses with its own wording,
-  `Superuser required to administer role assignments.`, so the message names the route
-  rather than the guard.)
+- **Role administration** is satisfied by the superuser flag **or** the global `admin` role
+  since the 1.13 line, which delegates user, team, role and assignment administration to
+  that role (EE PR 332). The role-less subject is still refused, with the same message.
 
-Each of the two non-superuser subjects passes a guard the other fails. That is what makes
-these three independent gates rather than one ordering, and it is unassertable from a
-single subject — which is why the previous specs, each built around one subject, could
-name the three messages but not separate them.
+Each of the two non-superuser subjects is still refused somewhere the other is not — the
+role-less one by all three, the global admin by the containment below — and the role-less
+superuser still passes the admin guards while being refused by resource policy. That is what
+keeps these independent gates rather than one ordering.
+
+### What moved on 1.13, and where the containment went
+
+On 1.12 the containment was "an admin cannot create a role". With role administration
+delegated, it moved to the one privilege the delegation does not include: **becoming a
+superuser**. Measured on `bbbec5fb`, a global `admin` subject:
+
+| Call | Answer |
+|---|---|
+| `POST /authz/roles` | `201` — role administration is delegated |
+| `PATCH /users/{self}` `{is_superuser: true}` | `403 Only a superuser may promote or demote platform superusers` |
+| `POST /authz/check` | `403 Superuser required for authz admin endpoints` — the operator routes stay superuser-only |
+| `POST /authz/role-assignments`, itself, `developer`, global | `409` scope conflict — it already holds `admin` at that scope, so this is the one-role-per-scope rule (langflow-ai/langflow#15426), not a guard, and it is no longer used as a containment probe |
+
+So the load-bearing assertion is now the promotion refusal: an admin who could make itself a
+superuser would hold every guard on the instance, which is the escalation the containment
+exists to prevent.
 
 ### What bypass switches
 
@@ -67,6 +82,26 @@ resource policy.* An operator locked out by their own policy can turn it on and 
 without touching the policy; a lane that gates on `false` is asserting that its superuser
 is subject to policy like anybody else. Both halves are asserted here, each against the
 container that can answer it — and each skipping, named, on the container that cannot.
+
+## Note — whose project the probes write into
+
+Tests 2 and 3 ask whether the **superuser** is subject to resource policy, so the project they
+write into must be one where nothing *but* policy can answer. Two 1.13-era rules rule out the
+obvious targets:
+
+- **The owner override** (#1635): a project the superuser owns answers `201` whatever the
+  bypass says.
+- **Private Starter Projects** (EE PR 401, on the personal-project flag from langflow-ai/langflow#15404): another user's default project
+  excludes global role wildcards, so even an un-stripped superuser holding `admin` is refused
+  there — a `403` would not prove the role was what mattered.
+
+So the target is a **non-personal project the shared subject owns** (`authz-foreign-scope`,
+created while the subject briefly holds `developer`). Test 2 first asserts the control: the
+un-stripped superuser creates a flow there (`201`), and only then strips its assignment and
+expects `403`. Creating that project requires `LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS=false`,
+the Editor configuration Enterprise documents; left at the OSS default, project creation also
+registers an MCP stdio server, which 1.13 restricts to superusers, and no subject could own a
+non-personal project at all.
 
 ## Note — the owner override (#1635)
 
@@ -93,21 +128,25 @@ its own.
 
 1. Reset the subject's grants. Probe the three routes → three `403`s, and assert the three
    `detail` strings are **pairwise different**, not merely non-empty.
-2. Grant the subject `admin` at global scope. Re-probe: the resource call is now allowed,
-   the admin route answers, and role administration is **still** refused with the same
-   message as in step 1.
-3. Assert the containment directly: the subject that may now read the admin surface still
-   cannot create a role or an assignment.
+2. Grant the subject `admin` at global scope. Re-probe: the resource call, the admin route
+   and role administration are all allowed (`201` / `200` / `201`).
+3. Assert the containment directly: the same subject asking to become a superuser
+   (`PATCH /users/{self}` `{is_superuser: true}`) → `403 Only a superuser may promote or
+   demote platform superusers`, and the operator route `POST /authz/check` → `403 Superuser
+   required for authz admin endpoints`.
 4. Delete anything created, then remove the assignment.
 
 **Test 2 — with bypass off, the superuser is subject to resource policy.** Gates on
 `superuser_bypass === false`.
 
-1. Read the superuser's own global role assignments and remember them.
-2. Delete them. `authz/status` reports `assignment_count` 0.
-3. The identical `POST /flows/` now answers `403 Permission denied`, while the admin route
+1. Obtain the subject's non-personal project (see the note above).
+2. Control: the superuser, still holding its bootstrap `admin` role, creates a flow there →
+   `201`. Without this the `403` below could come from the project rather than the role.
+3. Read the superuser's own global role assignments and remember them; delete them.
+   `authz/status` reports `assignment_count` 0.
+4. The identical `POST /flows/` now answers `403 Permission denied`, while the admin route
    answers `200` and role administration `201` — the two guards the flag satisfies.
-4. Restore every assignment from a `finally`, and assert the restore landed before the test
+5. Restore every assignment from a `finally`, and assert the restore landed before the test
    ends. This is the only test in the area that mutates the lane's own principal; leaving it
    role-less would break every spec that runs after it, so the restore is asserted rather
    than attempted.
@@ -116,20 +155,24 @@ its own.
 `superuser_bypass === true`, which skips on the enforcing container naming
 `LANGFLOW_EE_BYPASS=1 ./scripts/start-langflow-enterprise.sh`.
 
-1. Strip the superuser's assignments exactly as test 2 does, and confirm `assignment_count` 0.
-2. The same `POST /flows/` answers `201` — with no role granting it, the only remaining
-   source of that allow is the bypass.
-3. A role-less peer on the **same** instance is still refused by all three guards, with the
+1. Obtain the subject's non-personal project on this instance, as test 2 does. The 1.12
+   version wrote into the superuser's own project, where the owner override answers `201`
+   with or without the bypass — so its central assertion could not fail.
+2. Strip the superuser's assignments exactly as test 2 does, and confirm `assignment_count` 0.
+3. The same `POST /flows/` into the subject's project answers `201` — with no role granting
+   it and no ownership, the only remaining source of that allow is the bypass.
+4. A role-less peer on the **same** instance is still refused by all three guards, with the
    same three messages — so enforcement is live and the exemption is scoped to one principal.
-4. Restore, as in test 2.
+5. Restore, as in test 2.
 
 ## Validation criterion *(required)*
 
-Test 1 fails when two guards answer with the same message, when the `admin` role stops
-being refused by role administration (self-escalation), or when a role-less subject is
-allowed anywhere.
+Test 1 fails when two guards answer with the same message, when the global `admin` role can
+promote itself to superuser or reach the superuser-only operator routes (self-escalation),
+or when a role-less subject is allowed anywhere.
 
-Test 2 fails when a superuser stripped of its role is still allowed to create a flow on an
+Test 2 fails when the control write does not succeed (the target cannot answer the
+question), or when a superuser stripped of its role is still allowed to create a flow on an
 instance whose `superuser_bypass` is `false` — the state the whole `authz/` directory gates
 on would then be decorative. It also fails when the restore does not land.
 
@@ -141,7 +184,10 @@ superuser exemption).
 
 - Tests 1 and 2: the Enterprise RBAC variant,
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`, with `PLAYWRIGHT_BASE_URL`
-  pointed at `http://localhost:7891`.
+  pointed at `http://localhost:7891`. The script sets the two variables the 1.13 line needs
+  here: `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true` (user and role creation answer
+  `503` without a licence) and `LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS=false` (see *whose
+  project the probes write into*).
 - Test 3: the bypass variant, `LANGFLOW_EE_BYPASS=1 ./scripts/start-langflow-enterprise.sh`
   — a third container, its own Postgres, on `http://localhost:7892`. It is a **separate
   run**: no lane can satisfy both gates at once, which is why the two halves skip rather

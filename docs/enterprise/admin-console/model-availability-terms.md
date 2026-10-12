@@ -1,17 +1,17 @@
 # Enterprise — Approved Is Not Available, and Three Surfaces Have to Say So
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built 2026-08-27 from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
 ## What this test validates *(required)*
 
-`/admin-ee/models` is where an operator decides which models the platform may offer. It is the
+`/admin/models` is where an operator decides which models the platform may offer. It is the
 last of the four per-tab follow-ups to the console shell, and it was scheduled last on an
 assumption that turned out to be **wrong**: that it needed a provider credential.
 
 Measured: approving a provider — itself keyless, as `provider-approval-terms` established —
-populates this screen with **44 models** and no key anywhere. The assumption is recorded because
+populates this screen with its catalog — **44 models** on 1.12, **50** on 1.13 — and no key anywhere. The assumption is recorded because
 it is why this tab waited, and because the same assumption would send the next person looking for
 an API key they do not need.
 
@@ -40,7 +40,7 @@ With nothing approved the screen is not blank — it names the cause and links t
 
 > No model providers available — You must **add a provider** before managing m…
 
-with the link pointing at `/admin-ee/providers`. That is the only guidance an operator gets on a
+with the link pointing at `/admin/providers`. That is the only guidance an operator gets on a
 fresh instance, so it is asserted rather than assumed.
 
 ## The write half, and the report that wrongly excluded it
@@ -112,9 +112,10 @@ No `@stable`: there is no scheduled Enterprise lane (#1010).
 2. Revoke the provider approval **before** asserting anything, rather than assuming a clean
    instance — a previous run that died between its approval and its teardown would otherwise make
    the empty-state test read the wrong way round.
-3. **Empty state.** Open `/admin-ee/models` with nothing approved and assert it names the missing
-   providers and links to `/admin-ee/providers`.
-4. **Populate.** Approve the provider through `/admin-ee/providers`, return, and assert the row
+3. **Empty state.** Open `/admin/models` with nothing approved and assert it names the missing
+   providers and links to `/admin/providers`.
+4. **Populate.** Approve the provider through `/admin/providers` — on 1.13 the `Add provider`
+   dialog, the recommended cards being gone (EE PR 326) — return, and assert the row
    appears reporting a model count.
 5. **The chain.** Assert the row reads `Pending` and `Hidden` while the policy's
    `enabled_model_keys` is empty.
@@ -135,7 +136,9 @@ stops stating the governance terms the approval set.
 ## External dependencies *(required)*
 
 - A Langflow **Enterprise** instance on the RBAC variant:
-  `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`.
+  `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`. On the 1.13 line the script sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: the governance and model-policy routes
+  this screen reads and writes are tier-gated and answer `503` without a licence (#2259).
 - A browser.
 - **No credential of any kind**, no LLM provider, no network egress, no licence, no additional
   login.
@@ -148,6 +151,6 @@ unchanged: `PUT /api/v1/model-provider-policy` with an empty list clears the pol
 the governance record `active`, so the two surfaces disagree afterwards. Use the `DELETE` with
 `expected_revision`.
 
-The three non-2xx responses the console fires on every page load — `auto_login` `403`, `refresh`
+The non-2xx responses the console fires on every page load — `auto_login` `403`, and (on 1.12) `refresh`
 `401`, `store/tags` `500` — are covered in the shell spec's notes, including the measurement trap
 that the fixture prints `Backend Error` on **stdout**.

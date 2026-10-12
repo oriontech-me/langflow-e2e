@@ -1,6 +1,6 @@
 # Enterprise — The RBAC Instance Enforces, and a Role Is What Changes the Answer
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -60,8 +60,11 @@ not fail for a reason belonging to a different question:
   Only `developer` flips them.
 - **Three distinct refusal messages**, which is a useful diagnostic and a separate axis:
   `Permission denied` (the RBAC resource check), `RBAC administrator role required` (the
-  admin-route guard), and `Superuser required to administer roles.` — that last one means
-  role administration is gated on *superuser*, not on the admin role.
+  admin-route guard), and `Superuser required to administer roles.` — the refusal a
+  role-less caller gets from role administration. On 1.12 it meant role administration was
+  superuser-only; since 1.13 the global `admin` role holds it too (delegated administration),
+  and the containment moved to promotion to superuser — see
+  `guard-ladder-and-superuser-bypass.md`.
 
 ## The owner override, and why every probe here names its destination
 
@@ -95,6 +98,17 @@ The audit half of that test keys each verdict on `details.domain` — the projec
 was reached in — rather than collecting results for the actor. The looser version **passed a
 mutation that swapped `owner_override` for `allow`**, because a sibling test in the same file
 produces an `allow` for the same actor and `arrayContaining` found it.
+
+## Note — cleanup runs as the owner (1.13)
+
+Since the 1.13 line a user's default Starter Project is **private** (EE PR 401, on the personal-project flag from langflow-ai/langflow#15404):
+global role wildcards — including the superuser's bootstrap `admin` role, with bypass off — no
+longer reach flows inside it. A flow the subject creates with a bare `POST /api/v1/flows/` lands
+there, and the superuser's `DELETE` on it answers `404 Flow not found`; the 1.12 cleanup
+swallowed that and leaked one flow per run. Measured on `bbbec5fb`: superuser `DELETE` → `404`,
+the owner's own `DELETE` → `200`. So every flow the subject creates is deleted with the
+**subject's** credentials. The privacy rule itself is asserted in
+`deny-matrix-and-decision-api.md`.
 
 ## Tags *(required)*
 
@@ -137,11 +151,18 @@ the outcome, or when the decision is not recorded.
   `PLAYWRIGHT_BASE_URL` at `http://localhost:7891`.
 - Postgres, started by that script. The variant will not come up on SQLite, and the script
   fails rather than falling back.
+- On the 1.13 line the script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`;
+  without a licence the user and project creation this spec depends on answer `503` (#2259).
 - No LLM provider and no network egress.
 - **One** login per test user created — a handful, well inside the per-IP budget, and the
   superuser token is the shared cached one.
 
 ## Notes
+
+A flow the subject creates in a project the superuser owns is **owned by the project's owner**
+since the 1.13 line (OSS `_resolve_new_flow_owner`, `flows_helpers.py`), not by its creator — so the superuser's cleanup of the flip
+test's flow still works, and only the owner-override test's flow (in the subject's own private
+project) needs the subject's credentials to delete.
 
 Test users are created and deleted by the spec. They log in without a forced rotation:
 `must_change_password` is stamped on the env-bootstrapped superuser only, not on accounts

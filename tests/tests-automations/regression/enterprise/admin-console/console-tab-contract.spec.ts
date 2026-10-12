@@ -11,10 +11,12 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
 /**
  * The shell contract of the Enterprise admin console.
  *
- * `/admin-ee` is the console an operator governs an instance from, and § 21 of
+ * `/admin` is the console an operator governs an instance from, and § 21 of
  * the checklist names the admin UI as the part Enterprise exclusively owns —
  * every enforcement mechanism behind it is already covered from the API side.
- * It has seven screens; before this spec one of them was covered, for one
+ * It has nine screens on 1.13 — it moved from `/admin-ee` (now a legacy
+ * redirect), gained Data Connections and Integrations, and Security became
+ * Authentication (#2259). Before this spec one of them was covered, for one
  * field, so nothing would have noticed a screen that stopped loading, a route
  * that stopped resolving, or a tab whose label opened the wrong screen.
  *
@@ -27,17 +29,17 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
  * guess. Getting either wrong produces a spec that looks reasonable and asserts
  * nothing:
  *
- *  - The strip holds seven `role="tab"` BUTTONS, not links, named by their
+ *  - The strip holds nine `role="tab"` BUTTONS, not links, named by their
  *    visible label and carrying no testid at all — so navigation is by role and
  *    name, and which one is current is `aria-selected`.
  *  - `data-testid="enterprise-admin-tab-<route>"` is NOT on the tab. Despite its
- *    name it sits on the screen's own `<section role="tabpanel">`, whose
- *    `aria-label` is the tab's visible label, and only the active route's panel
- *    exists in the DOM. The first version of this file read it as the active-tab
+ *    name it sits on the screen's own `<section role="tabpanel">`, which is
+ *    `aria-labelledby` its tab — so its accessible name is the tab's label — and
+ *    only the active route's panel exists in the DOM. The first version of this file read it as the active-tab
  *    marker and failed all nine tests against a console where nothing was wrong.
  *    The correction is an improvement: a container anchors more than a marker —
  *    visible says this screen's content region mounted, unique says no other
- *    mounted with it, and `aria-label` ties the route to the label the strip
+ *    mounted with it, and its accessible name ties the route to the label the strip
  *    shows, which is the mapping this spec exists to pin.
  *
  * Full reasoning, including why each screen is anchored on its subtitle rather
@@ -45,8 +47,10 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
  */
 
 interface AdminTab {
-  /** Path segment under `/admin-ee/`. */
+  /** Path segment under `/admin/`. */
   route: string;
+  /** The legacy `/admin-ee/` segment that redirects here, when it differs. */
+  legacyRoute?: string;
   /** Visible label on the tab strip. NOT derivable from the route: see `catalog`. */
   label: string;
   /**
@@ -62,18 +66,20 @@ interface AdminTab {
    */
   subtitle: string;
   /**
-   * The one API read no other tab performs.
+   * The API read this screen performs.
    *
-   * The load-bearing assertion of this file. All seven screens paint the same
+   * The load-bearing assertion of this file. All nine screens paint the same
    * chrome, so "something rendered" is satisfied by any of them; only this
-   * separates a screen that loaded from a shell that painted.
+   * separates a screen that loaded from a shell that painted. Since 1.13 it is
+   * not unique for every screen — `data-connections` performs no read of its
+   * own at all — and the doc records which; the subtitle carries identity.
    */
   read: string;
   /**
    * 4xx/5xx this screen provokes on purpose, declared so the advisory log stays
    * worth reading.
    *
-   * Empty for six of the seven. A declaration that never fires FAILS its test,
+   * Empty for most screens. A declaration that never fires FAILS its test,
    * so this belongs per tab rather than once for the file — and it is data here
    * rather than a branch inside a test body.
    */
@@ -82,7 +88,8 @@ interface AdminTab {
    * Reads this screen performs beyond `read`, which a caller must await before
    * asserting on the screen.
    *
-   * Only `security` has any, and awaiting them is not tidiness (#1636): its
+   * Only `authentication` and `audit-logs` have any, and awaiting them is not
+   * tidiness (#1636): `authentication`'s
    * `503` on `/api/v1/sso/entitlements` is DECLARED above, and the fixture fails
    * a declaration that does not occur. The per-tab test awaited its own `read`
    * and observed the `503` alongside it; the strip and i18n walks merely passed
@@ -144,9 +151,32 @@ const TABS: AdminTab[] = [
     secondaryReads: [],
   },
   {
-    route: "security",
-    label: "Security",
-    subtitle: "Configure login connections, recovery access, and security defaults.",
+    route: "data-connections",
+    label: "Data Connections",
+    subtitle: "Manage vector stores for knowledge and memory bases, as in Settings → DB Providers.",
+    // Not distinctive: the shell reads it too. The screen performs no read of its
+    // own on 1.13, so this proves it fetched, and the subtitle proves which it is.
+    read: "/api/v1/variables/",
+    knownHttpErrors: [],
+    secondaryReads: [],
+  },
+  {
+    route: "integrations",
+    label: "Integrations",
+    subtitle:
+      "Which integration providers this deployment approves, and which of their actions are blocked. " +
+      "A connection a user authorizes is governed by this ceiling, and execution enforces it even " +
+      "when a client ignores it.",
+    read: "/api/v1/integrations/policy/effective",
+    knownHttpErrors: [],
+    secondaryReads: [],
+  },
+  {
+    // Security on 1.12; `/admin-ee/security` still redirects here.
+    route: "authentication",
+    legacyRoute: "security",
+    label: "Authentication",
+    subtitle: "Configure login connections, recovery access, and authentication defaults.",
     read: "/api/v1/sso/connections",
     // The screen also reads entitlements, and an Enterprise instance with no
     // licence refuses that with 503 — correctly, by design. Not this spec's
@@ -171,10 +201,33 @@ const TABS: AdminTab[] = [
   {
     route: "audit-logs",
     label: "Audit logs",
-    subtitle: "Sign-on and access-control events for this Langflow instance, newest first.",
-    read: "/api/v1/authz/audit",
-    knownHttpErrors: [],
-    secondaryReads: [],
+    subtitle:
+      "Review administrative activity, access events, and governance changes across your workspace.",
+    // OSS's unified feed since 1.13 (EE PR 381); `/authz/audit` is no longer read.
+    read: "/api/v1/audits",
+    // The screen probes the per-resource audit sources and marks a refused one
+    // unavailable. Both need `audit_read`, which no built-in Enterprise role
+    // grants — so with bypass off even the superuser holding `admin` is refused.
+    // A product observation recorded in #2259, declared rather than silenced so
+    // a fix surfaces as a stale declaration naming itself.
+    knownHttpErrors: [
+      {
+        pathname: "/api/v1/flows/audits",
+        status: 403,
+        reason:
+          "no built-in Enterprise role grants flow:audit_read, so the audit screen's " +
+          "per-resource probe is refused even to the RBAC superuser (#2259)",
+      },
+      {
+        pathname: "/api/v1/projects/audits",
+        status: 403,
+        reason:
+          "no built-in Enterprise role grants project:audit_read, so the audit screen's " +
+          "per-resource probe is refused even to the RBAC superuser (#2259)",
+      },
+    ],
+    // The reads that carry the declarations above (#1636's rule).
+    secondaryReads: ["/api/v1/flows/audits", "/api/v1/projects/audits"],
   },
 ];
 
@@ -289,7 +342,7 @@ async function expectScreenRendered(page: Page, tab: AdminTab): Promise<void> {
 /**
  * Apply a screen's declared 4xx/5xx to the running test.
  *
- * Table-driven so six of the seven pass an empty list and no test body needs a
+ * Table-driven so most screens pass an empty list and no test body needs a
  * branch. See `AdminTab.knownHttpErrors` for why a blanket declaration is wrong.
  */
 function declareKnownHttpErrors(page: Page, tabs: AdminTab[]): void {
@@ -302,7 +355,7 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
   test.beforeEach(async ({ page, request }) => {
     const auth = await getEnterpriseAuthToken(request);
     // `access-control` and `audit-logs` read `/authz/*` and have nothing to load
-    // on a container without authorization, so two of the seven screens would
+    // on a container without authorization, so two of the nine screens would
     // report an environment choice as a product failure.
     await requireRbacInstance(request, auth);
     // Seeded, not filled: the instance rate-limits login to 5/min for the whole
@@ -321,12 +374,12 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
         // afterwards would be a race the screen usually wins.
         const [read, ...secondary] = armReads(page, tab);
 
-        await page.goto(`/admin-ee/${tab.route}`);
+        await page.goto(`/admin/${tab.route}`);
 
         await test.step("the route resolves to itself rather than a default tab", async () => {
           // Asserted first and separately. A screen that redirected would go on
           // to satisfy every remaining assertion — of the DEFAULT tab.
-          await expect(page).toHaveURL(new RegExp(`/admin-ee/${tab.route}(?:[?#]|$)`));
+          await expect(page).toHaveURL(new RegExp(`/admin/${tab.route}(?:[?#]|$)`));
         });
 
         await test.step("the strip marks it as the current screen", async () => {
@@ -335,9 +388,12 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
 
         await test.step("its own panel mounted, labelled as the tab that opens it", async () => {
           // The panel is where the route<->label mapping is actually pinned:
-          // `Components` is `/admin-ee/catalog`, so the label cannot be derived.
+          // `Components` is `/admin/catalog`, so the label cannot be derived. By
+          // ACCESSIBLE name: the panel is `aria-labelledby` its tab, which wins
+          // over its own `aria-label` — on 1.13 the audit panel's says "Audit
+          // Log" while assistive technology is told "Audit logs".
           await expect(screenPanel(page, tab.route)).toBeVisible();
-          await expect(screenPanel(page, tab.route)).toHaveAttribute("aria-label", tab.label);
+          await expect(screenPanel(page, tab.route)).toHaveAccessibleName(tab.label);
         });
 
         await test.step("and its body rendered inside it", async () => {
@@ -370,14 +426,14 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
       // Start somewhere the walk does not begin on, so the first click is a real
       // navigation rather than a no-op on the already-selected tab.
       const [first, ...rest] = TABS;
-      await visitScreen(page, first, () => page.goto(`/admin-ee/${first.route}`));
+      await visitScreen(page, first, () => page.goto(`/admin/${first.route}`));
 
       for (const tab of rest) {
-        await test.step(`'${tab.label}' opens /admin-ee/${tab.route}`, async () => {
+        await test.step(`'${tab.label}' opens /admin/${tab.route}`, async () => {
           // By role and name: the strip buttons carry no testid, and the label
           // does not name the route for `Components` -> `catalog`.
           await visitScreen(page, tab, () => stripTab(page, tab.label).click());
-          await expect(page).toHaveURL(new RegExp(`/admin-ee/${tab.route}(?:[?#]|$)`));
+          await expect(page).toHaveURL(new RegExp(`/admin/${tab.route}(?:[?#]|$)`));
         });
       }
     },
@@ -399,7 +455,7 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
         // Required before inspecting text: a blank screen satisfies "no raw
         // keys" perfectly and would keep satisfying it forever — and a screen
         // whose reads have not landed is one this scan is reading too early.
-        await visitScreen(page, tab, () => page.goto(`/admin-ee/${tab.route}`));
+        await visitScreen(page, tab, () => page.goto(`/admin/${tab.route}`));
 
         const raw = await page.evaluate(() => {
           const elements = Array.from(document.querySelectorAll("body *"));
@@ -440,6 +496,30 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
         `the admin console rendered ${findings.length} unresolved translation key(s):\n` +
           findings.map((finding) => `  - ${finding}`).join("\n"),
       ).toEqual([]);
+    },
+  );
+  test(
+    "the legacy /admin-ee links still land on the screen they named",
+    { tag: ["@enterprise", "@regression", "@ui-ux"] },
+    async ({ page }) => {
+      // `/admin-ee` was the console's base path through 1.12; bookmarks, docs and
+      // older product links still point at it. Since 1.13 it is a redirect that
+      // keeps query and hash, with one rename on the way (security ->
+      // authentication).
+      declareKnownHttpErrors(page, TABS);
+
+      await test.step("/admin lands on the first screen", async () => {
+        await visitScreen(page, TABS[0], () => page.goto("/admin"));
+        await expect(page).toHaveURL(new RegExp(`/admin/${TABS[0].route}(?:[?#]|$)`));
+      });
+
+      for (const tab of TABS) {
+        const legacy = tab.legacyRoute ?? tab.route;
+        await test.step(`/admin-ee/${legacy} lands on /admin/${tab.route}`, async () => {
+          await visitScreen(page, tab, () => page.goto(`/admin-ee/${legacy}`));
+          await expect(page).toHaveURL(new RegExp(`/admin/${tab.route}(?:[?#]|$)`));
+        });
+      }
     },
   );
 });

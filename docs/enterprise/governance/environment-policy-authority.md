@@ -1,6 +1,6 @@
 # Enterprise — Environment-Declared Policy Is Authoritative
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -86,6 +86,21 @@ rather than merely red:
 > environment, so that stale state reads as "not the instance this spec needs"
 > instead of as a product defect.
 
+## Product position, as documented on 1.13
+
+The expected failures here are a **disagreement with the product's own documentation**, not a
+defect the product admits. Since before the 1.12 baseline, Enterprise documents the four policy
+variables as *strict, one-time bootstrap inputs*: read while the policy bundle is
+uninitialised, and ignored afterwards — "environment drift cannot replace durable policy"
+(EE `docs/architecture.md`, `docs/configuration.md`). The 1.13 handbook says the same of the
+approved-component catalog ("bootstrap-only … DB wins afterward"). `managed_externally` is
+reserved for a plugin-owned external policy source, which this lane does not configure.
+
+So these assertions encode what an operator reasonably expects from a policy declared in the
+deployment, against a product that explicitly promises less. Whether to file that upstream or
+re-specify this spec to the documented contract is an open decision (#2259); until it is made
+the assertions stay as they are, and must not be relaxed to turn the lane green.
+
 ## Tags *(required)*
 
 `@enterprise` `@api` `@regression` `@governance`
@@ -121,7 +136,11 @@ otherwise.
 5. **A runtime write cannot clear the model blocklist.** `PUT
    /api/v1/policy-bundle` with `blocked_model_keys: []` and the rest of the
    bundle carried over → not a success status, and the bundle still carries the
-   declared key. Restore on the way out.
+   declared key. Restore on the way out. "The rest of the bundle" includes the
+   two integration fields 1.13 added (`approved_integration_provider_ids`,
+   `blocked_integration_action_keys`): both default to `[]` on a write, so a
+   `PUT` that omits them — the attempt or the restore — would wipe any
+   integration policy on the instance.
 
 ## Validation criterion *(required)*
 
@@ -146,3 +165,5 @@ attempt.
   declaration runs the part it can rather than failing.
 - No LLM provider and no network egress. The provider allowlist is asserted on
   the catalog listing, which needs no credential.
+- On the 1.13 line the script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: the
+  policy routes are tier-gated and answer `503` without a licence (#2259).
