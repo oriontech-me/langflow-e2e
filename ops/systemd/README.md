@@ -108,7 +108,11 @@ is exactly one of `ONDEMAND_REF`, a branch of upstream built into an image, and
 resolves under `--prerelease=if-necessary-or-explicit` whatever `UV_PRERELEASE` says
 (with uv 0.12.5, the qa's, that resolves rcs, finals and nightlies alike), and versions
 before 1.12 are refused (their `langflow-base` was numbered 0.N); `ONDEMAND_VERSION_FROM` is `pypi` or
-empty, which means it. `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
+empty, which means it. With `ONDEMAND_VERSION_FROM=docker` the version's **published
+image** runs instead (`langflowai/langflow:<version>`, or `langflow-nightly` for a nightly
+the first lacks): asked of Docker Hub, pulled, and run by its digest, since the image's
+labels carry no Langflow commit; it is removed after the run unless it was on the
+machine before. `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's
 `SUITE_FLOOR`, or the request is refused before the build. **A suite ref is trusted
@@ -134,10 +138,12 @@ A published version instead of a branch:
 ```sh
 cat > /root/e2e-on-demand/request.env <<'REQ'
 ONDEMAND_ID=hand-20261012-1
-ONDEMAND_VERSION=1.13.1rc0
+ONDEMAND_VERSION=1.12.5rc1
 REQ
 systemctl start --no-block e2e-on-demand.service
 ```
+
+Its published image instead: add `ONDEMAND_VERSION_FROM=docker`.
 
 Its cleanup runs `docker builder prune -af`, which is **machine-wide**: harmless while no
 other lane builds an image on the qa, and the first thing to change when one does.
@@ -162,6 +168,7 @@ Three ceilings, each under the next:
 |---|---|---|
 | each upstream step 5 min, the `docker build` 30 min | `build-target-image.sh` (`UPSTREAM_TIMEOUT_S`, `BUILD_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, docker or the network, never the branch |
 | a version's install 15 min | `run-on-demand.sh` (`E2E_ONDEMAND_INSTALL_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, the network or the index, never the version |
+| an image's pull 10 min | `run-on-demand.sh` (`E2E_ONDEMAND_PULL_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, the network or the registry, never the version |
 | the run's deadline, 80 min from the executor's start, plus up to 2 for the suite to stop | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
 | 90 min | the unit's `TimeoutStartSec` | `failed`, "stopped by SIGTERM", which the daily's stop and `systemctl stop` also say |
 
