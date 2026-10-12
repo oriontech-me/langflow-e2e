@@ -101,8 +101,10 @@ never sourced**: ten known keys (`ONDEMAND_ID`, `ONDEMAND_REF`, `ONDEMAND_VERSIO
 shape, anything else refused (see the header of `ops/vm/run-on-demand.sh`). The target
 is exactly one of `ONDEMAND_REF`, a branch of upstream built into an image, and
 `ONDEMAND_VERSION`, a version published on PyPI in PEP 440's normal form (`1.13.1rc0`,
-`1.13.0.dev12`), installed with the daily's `scripts/prepare-target-dist.sh` into
-`/root/e2e-on-demand/venv` and served from it; `ONDEMAND_VERSION_FROM` is `pypi` or
+`1.13.0.dev12`, as PyPI spells it), installed with the daily's
+`scripts/prepare-target-dist.sh` into `/root/e2e-on-demand/venv`, with `langflow-base`
+and `lfx` pinned to the same version and Python 3.14 unless the release excludes it,
+and served from it; `ONDEMAND_VERSION_FROM` is `pypi` or
 empty, which means it. `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's
