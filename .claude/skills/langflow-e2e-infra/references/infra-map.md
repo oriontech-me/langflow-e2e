@@ -9,7 +9,7 @@ before acting; this list drifts.
 
 | Workflow | Role | Notes / owner doc |
 |---|---|---|
-| `daily-stable.yml` | **Active stable workflow.** Weekdays 05:00 BRT, `@stable` only; opens `daily-failure` issue; appends `reports/daily-history.jsonl` | consumed by `langflow-e2e-triage` |
+| `daily-stable.yml` | **Disabled since 2026-10-02** (#2159). The daily runs on the QA VM (`ops/vm/run-daily.sh`), which opens the umbrella on the destination and writes `reports/daily-history.jsonl` (#2164). Kept as the way back: `gh workflow enable daily-stable.yml` | `ops/systemd/README.md`; consumed by `langflow-e2e-triage` |
 | `pr-validation.yml` | Every PR: `tsc --noEmit` + ESLint + QA-CHECKLIST guard + impacted-specs gate | `#741`, `#873`, `#892` |
 | `manual.yml` | Parameterized manual run (Docker tag / URL, suite, grep) | use to dry-run a workflow-adjacent change |
 | `triage-dispatch.yml` | Automates daily-failure triage dispatch behind an approval gate | `#785/#786/#787`, `#819` |
@@ -71,5 +71,5 @@ Retired in #2171, all disabled and without runs since June: `nightly.yml`, `week
 ## Run history & reporting (`reports/`)
 
 - `reports/README.md` — schema (version 1), expansion criteria, `jq` query examples. **Read before extending.**
-- `reports/daily-history.jsonl` — active, one line per `daily-stable.yml` run (machine-written, human-read only; never hand-edit).
+- `reports/daily-history.jsonl` — active, one line per daily run (machine-written, human-read only; never hand-edit). Written by the VM daily since 2026-10-05 (`HISTORY_TO_SOURCE=1` in `ops/vm/run-daily.sh`, #2164); `daily-stable.yml` wrote it until it was disabled on 2026-10-02.
 - `reports/weekly-history.jsonl` — frozen history from the disabled weekly workflow.

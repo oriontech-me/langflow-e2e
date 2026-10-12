@@ -218,8 +218,8 @@ tests/
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `pr-validation.yml` | Every PR to `main` | TypeScript check (`tsc --noEmit`) + ESLint in parallel — both must pass before merge |
-| `daily-stable.yml` | Mon–Fri 05:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report. **Active stable workflow.** |
-| `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag. Carries the `provider` input (`auto` / `openai` / `anthropic` / `google` / `all-models`) — **the only lane that still runs multi-provider**, since `pr-validation` pins one provider and `daily-stable` rotates by weekday (#1186) |
+| `daily-stable.yml` | **Disabled since 2026-10-02** (#2159) | Ran `@stable` against `langflow-nightly:latest` on weekdays. **The daily now runs on the QA VM** (`ops/vm/run-daily.sh`, `e2e-daily.timer`, see [`ops/systemd/README.md`](./ops/systemd/README.md)), which also writes `reports/daily-history.jsonl` (#2164). The file stays as the way back: `gh workflow enable daily-stable.yml` |
+| `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag. Carries the `provider` input (`auto` / `openai` / `anthropic` / `google` / `all-models`) — **the only lane that still runs multi-provider**, since `pr-validation` pins one provider and the daily rotates by weekday (#1186) |
 
 ---
 
