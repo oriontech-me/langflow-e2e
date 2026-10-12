@@ -821,8 +821,8 @@ test("a claimed version is checked, and names its target alone", () => {
 test("a version's install is read as the build is: the version and its seconds", () => {
   const log = "request: id=od-1 version=1.13.1rc0 from=pypi provider=<rotation>\nsuite at: abc suite\ninstalling: langflow==1.13.1rc0 from pypi into /s/venv (at most 900s)\ninstalled: langflow==1.13.1rc0, version 1.13.1rc0, 95s, in /s/venv\n=== run start 20260930T150102Z ===\n";
   assert.deepEqual(readProgress(log, "od-1"), { building: true, runId: "20260930T150102Z", version: "1.13.1rc0", buildS: 95 });
-  // An install whose seconds were not reported gives the version alone, never a guess.
-  assert.deepEqual(readProgress(log.replace(", 95s,", ", ?s,"), "od-1"), { building: true, runId: "20260930T150102Z", version: null, buildS: null });
+  // An install whose seconds were not reported keeps its version, and no seconds are guessed.
+  assert.deepEqual(readProgress(log.replace(", 95s,", ", ?s,"), "od-1"), { building: true, runId: "20260930T150102Z", version: "1.13.1rc0", buildS: null });
 });
 
 test("a claimed version is run by the executor from the worker's own state, and its result forwarded", async () => {

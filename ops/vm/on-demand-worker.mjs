@@ -235,12 +235,13 @@ export function readProgress(log, id) {
   const run = log.match(/^=== run start (\d{8}T\d{6}Z) ===$/m);
   // A branch's build, or a published version's install, which stands where it would.
   const built = log.match(/^built: .* @ [0-9a-f]{12}, version (\S+), (\d+)s, as /m)
-    ?? log.match(/^installed: langflow==\S+, version (\S+), (\d+)s, in /m);
+    ?? log.match(/^installed: langflow==\S+, version (\S+), (\d+|\?)s, in /m);
   return {
     building,
     runId: run ? run[1] : null,
     version: built && /^[\x21-\x7e]{1,200}$/.test(built[1]) ? built[1] : null,
-    buildS: built ? Number(built[2]) : null,
+    // '?' when the installer reported no seconds: the version still stands.
+    buildS: built && built[2] !== "?" ? Number(built[2]) : null,
   };
 }
 
