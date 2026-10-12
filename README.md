@@ -225,12 +225,12 @@ tests/
 
 ## Scheduled workflows moved to the QA VM
 
-Each was disabled in Actions after its VM routine gave the same verdict, and the file stays as the way back. The routines, their schedules and their alarms are in [`ops/systemd/README.md`](./ops/systemd/README.md) (*Scheduled routines*).
+Each was disabled in Actions once its VM routine had shown the same result: days in parallel with the same verdict, or a rehearsal on the VM that produced the same report. The file stays as the way back. The routines, their schedules and their alarms are in [`ops/systemd/README.md`](./ops/systemd/README.md) (*Scheduled routines*).
 
 | Workflow | Disabled | Replaced by | Way back |
 |---|---|---|---|
 | `migration-test.yml`, `migration-fresh-install.yml`, `migration-upgrade-with-flows.yml` | 2026-10-10, after three weekdays of the same verdict in parallel (#2208) | `e2e-routine-migration`: one routine, latest stable below the target → the target, in 12 cells (SQLite / Postgres 16 × pip / docker × fresh / upgrade, plus `AUTO_LOGIN` off on the four upgrades) (#2193) | `gh workflow enable <file>` |
-| `stable-orphan-reconcile.yml` | 2026-10-11 | `e2e-routine-stable-orphans`: the same reconciler, Mondays 10:00 UTC, reading the trackers of both repositories, with its report issue on the destination (#2224) | `gh workflow enable stable-orphan-reconcile.yml` |
+| `stable-orphan-reconcile.yml` | 2026-10-11, after a rehearsal on the VM produced the same report as the workflow, and before the routine's first scheduled run | `e2e-routine-stable-orphans`: the same reconciler, Mondays 10:00 UTC, reading the trackers of both repositories, with its report issue on the destination (#2224) | `gh workflow enable stable-orphan-reconcile.yml` |
 
 ---
 
