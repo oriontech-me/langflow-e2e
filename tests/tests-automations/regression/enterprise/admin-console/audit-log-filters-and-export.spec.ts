@@ -79,7 +79,7 @@ const EXPORT_COLUMNS = [
 /**
  * The per-resource audit sources the screen probes on every mount. Both need
  * `audit_read`, which no built-in Enterprise role grants, so they answer 403 to
- * the RBAC superuser too — a product observation recorded in #2259. Declared
+ * the RBAC superuser too — a product observation recorded in #2263. Declared
  * rather than silenced, so a fix surfaces as a stale declaration naming itself.
  */
 const AUDIT_SOURCE_PROBES = ["/api/v1/flows/audits", "/api/v1/projects/audits"];
@@ -249,7 +249,7 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
         status: 403,
         reason:
           "no built-in Enterprise role grants audit_read, so the audit screen's " +
-          "per-resource probe is refused even to the RBAC superuser (#2259)",
+          "per-resource probe is refused even to the RBAC superuser (#2263)",
       });
     }
   });
@@ -333,7 +333,8 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
           // ignored returns a populated list that looks exactly like a filtered
           // one. A denied permission check renders "Denied"; a denied ACTION
           // (e.g. deleting a built-in role) renders "Failed" — both are
-          // `result=deny`, and neither is ever "Success" or "Allowed".
+          // `result=deny`, and neither is ever "Success" or "Allowed" (the wording
+          // mismatch with the filter option is #2265).
           const rows = await eventRows(page).allInnerTexts();
           for (const row of rows) {
             expect(row, "a row survived the Deny filter without being one").toMatch(
