@@ -14,7 +14,7 @@ before acting; this list drifts.
 | `manual.yml` | Parameterized manual run (Docker tag / URL, suite, grep) | use to dry-run a workflow-adjacent change |
 | `triage-dispatch.yml` | Automates daily-failure triage dispatch behind an approval gate | `#785/#786/#787`, `#819` |
 | `update-coverage-summary.yml` | Regenerates QA-CHECKLIST generated blocks on merge to `main` | `scripts/coverage-summary.ts`, `stable-tests.ts` |
-| `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | Langflow version-migration checks (latest → nightly) | `migration-test` label |
+| `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | **Disabled 2026-10-10** (#2208). Replaced by the VM routine `e2e-routine-migration` (`ops/vm/run-migration.sh`, 12 cells; a red opens the `routine:migration` issue on the destination). Kept as the way back: `gh workflow enable <file>` | `ops/systemd/README.md`; #2193 |
 | `build-ollama-image.yml` | Builds the Ollama image used by provider specs | — |
 
 ## Composite actions (`.github/actions/`)

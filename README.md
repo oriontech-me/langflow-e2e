@@ -223,6 +223,16 @@ tests/
 
 ---
 
+## Scheduled workflows moved to the QA VM
+
+Each was disabled in Actions after its VM routine gave the same verdict, and the file stays as the way back. The routines, their schedules and their alarms are in [`ops/systemd/README.md`](./ops/systemd/README.md) (*Scheduled routines*).
+
+| Workflow | Disabled | Replaced by | Way back |
+|---|---|---|---|
+| `migration-test.yml`, `migration-fresh-install.yml`, `migration-upgrade-with-flows.yml` | 2026-10-10, after three weekdays of the same verdict in parallel (#2208) | `e2e-routine-migration`: one routine, latest stable below the target → the target, in 12 cells (SQLite / Postgres 16 × pip / docker × fresh / upgrade, plus `AUTO_LOGIN` off on the four upgrades) (#2193) | `gh workflow enable <file>` |
+
+---
+
 ## Retired workflows
 
 `nightly.yml`, `weekly-stable.yml`, `adaptive-impacted.yml` and `file-watcher.yml` were deleted in #2171. All four were disabled in Actions, none had run since June, and two never ran at all. The `@stable` removal the weekly ran now lives in the VM lane (`scripts/run-e2e.sh`). Their history, including `reports/weekly-history.jsonl`, stays in the repository.
