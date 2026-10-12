@@ -83,6 +83,7 @@ function setup({
     join(uvBin, "uv"),
     `#!/usr/bin/env bash
 # A stand-in for uv that is strict about the CALL and permissive about its shape.
+[ "\${1:-}" = "--version" ] && { echo "uv 0.0.0 (fake)"; exit 0; }
 echo "$*" >> "${uvLog}"
 echo "fake uv: chatter that must never reach stdout of the caller"
 sub="\${1:-}"; shift || true
@@ -328,7 +329,7 @@ test("siblings are pinned to the version only when asked, and never with pre-rel
   for (const pin of ["", "langflow-base", "lfx langflow-base"]) assert.doesNotMatch(installLine({ LANGFLOW_DIST_PIN: pin }), /--prerelease/);
 });
 
-test("pre-releases are allowed only when asked", () => {
+test("a pre-release mode is passed only when asked, and only one of uv's", () => {
   const installLine = (env) => {
     const ctx = setup();
     const r = run(ctx, env);
@@ -336,13 +337,22 @@ test("pre-releases are allowed only when asked", () => {
     return readFileSync(ctx.uvLog, "utf8").split("\n").find((l) => l.startsWith("pip install")) ?? "";
   };
   assert.doesNotMatch(installLine({}), /--prerelease/, "the daily's call");
-  assert.match(installLine({ LANGFLOW_DIST_PRERELEASE: "1", LANGFLOW_DIST_PIN: "langflow-base lfx" }), /--prerelease=allow langflow==1\.13\.0\.dev12 langflow-base==1\.13\.0\.dev12 lfx==1\.13\.0\.dev12$|langflow==1\.13\.0\.dev12 --prerelease=allow langflow-base==1\.13\.0\.dev12 lfx==1\.13\.0\.dev12$/);
+  assert.match(installLine({ LANGFLOW_DIST_PRERELEASE: "if-necessary-or-explicit", LANGFLOW_DIST_PIN: "langflow-base lfx" }), /langflow==1\.13\.0\.dev12 --prerelease=if-necessary-or-explicit langflow-base==1\.13\.0\.dev12 lfx==1\.13\.0\.dev12$/);
+  for (const bad of ["1", "yes", "allow; rm -rf /"]) {
+    const ctx = setup();
+    seedVenv(ctx);
+    const r = run(ctx, { LANGFLOW_DIST_PRERELEASE: bad });
+    assert.equal(r.status, 2, bad);
+    assert.match(r.stderr, /LANGFLOW_DIST_PRERELEASE must be one of uv's pre-release modes/, bad);
+    assert.ok(existsSync(join(ctx.venv, "yesterday.txt")), `${bad}: the venv must be untouched`);
+  }
+});
+
+test("the install names the uv that resolved it, and a UV_PRERELEASE that could change it", () => {
   const ctx = setup();
-  seedVenv(ctx);
-  const bad = run(ctx, { LANGFLOW_DIST_PRERELEASE: "yes" });
-  assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /LANGFLOW_DIST_PRERELEASE must be 0 or 1/);
-  assert.ok(existsSync(join(ctx.venv, "yesterday.txt")), "the venv must be untouched");
+  const r = run(ctx, { UV_PRERELEASE: "allow" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /installing with uv 0\.0\.0 \(fake\), UV_PRERELEASE=allow\.\.\./);
 });
 
 test("a LANGFLOW_DIST_PIN outside langflow-base and lfx is refused before anything is touched", () => {
