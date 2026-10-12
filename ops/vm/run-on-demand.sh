@@ -12,7 +12,11 @@
 # Or against ONE PUBLISHED VERSION (langflow==<version> from PyPI: a release, an rc or a
 # nightly .devN), installed the way the daily installs its own: scripts/prepare-target-
 # dist.sh into a venv of this lane's, served from it, and declared to run-e2e.sh by its
-# version alone (#2261). No image is built. The team's usual question is "is the rc that
+# version alone (#2261). No image is built. Unlike the daily's, which is always the
+# newest, the version may be any release: PyPI is asked first (scripts/lib/pypi-
+# release.mjs) for its own spelling, a file to install and the newest interpreter its
+# requires_python allows, and langflow-base and lfx are pinned to the version too,
+# because a release asks for langflow-base as a range. The team's usual question is "is the rc that
 # was just published good?", and a branch build is not the artefact users install.
 #
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
@@ -191,8 +195,9 @@ main() {
   # resolved from scratch each time, so this is a download and a resolve, not a build.
   # Half the build's limit (BUILD_TIMEOUT_S, 30 min), and the same -k.
   local INSTALL_TIMEOUT_S="${E2E_ONDEMAND_INSTALL_TIMEOUT_S:-900}"
-  # Where PyPI says whether it has a version. Tests only point it elsewhere.
-  local PYPI_JSON="${E2E_ONDEMAND_PYPI_JSON:-https://pypi.org/pypi/langflow}"
+  # PyPI's JSON API, under which <project>/<version>/json says whether it has a release.
+  # Tests only point it elsewhere.
+  local PYPI_JSON="${E2E_ONDEMAND_PYPI_JSON:-https://pypi.org/pypi}"
 
   mkdir -p "$LOG_DIR" "$STATE/requests" "$STATE/results"
   local STAMP LOG
@@ -332,7 +337,7 @@ main() {
   # (build-target-image.sh's own trap did not run either) and its ledger copy.
   OD_TOUCHED=1
   ondemand_clear_images
-  ondemand_stop_versions
+  ondemand_stop_versions || echo "WARNING: a Langflow a killed run left on this lane's ports could not be stopped; the run will find its port taken"
   rm -rf "$STATE"/builds/src-* "$STATE"/ledger-* "$STATE/venv"
 
   # --- the suite: the clone's commit, or the ref asked for, in a worktree of its own --
@@ -694,27 +699,49 @@ ondemand_install() {
   local limit_s="$1" pypi="$2" said rc=0 out err="$OD_STATE/install-stderr.$$" meta="$OD_STATE/pypi.$$.json" code start=$SECONDS
   [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
   # 404 is PyPI's "no such version"; anything else unclear (the network, a 5xx) lets the
-  # install decide, as the provider pre-check does.
-  code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
+  # install decide, as the provider pre-check does, with the daily's interpreter.
+  local python=3.14 pin="" verdict requires p
+  code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/langflow/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
   if [ "$code" = "404" ]; then
     rm -f "$meta"
     ondemand_refuse "PyPI has no langflow==$OD_VERSION; check the version at https://pypi.org/project/langflow/#history"
   fi
   if [ "$code" = "200" ]; then
-    # A release whose every file is yanked is withdrawn: uv does not install it either.
-    said="$(node -e 'const u=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).urls;process.stdout.write(Array.isArray(u)?(u.length===0?"none":u.every(f=>f.yanked)?"yanked":"ok"):"unknown")' "$meta" 2>/dev/null)" || said=unknown
+    said="$(node "$OD_REPO/scripts/lib/pypi-release.mjs" "$meta" "$OD_VERSION" 9>&- 8>&- 2>/dev/null)" || said=""
     rm -f "$meta"
-    case "$said" in
-      none) ondemand_refuse "PyPI lists langflow==$OD_VERSION with no files to install" ;;
+    verdict="$(printf '%s\n' "$said" | sed -n 's/^verdict=//p')"
+    requires="$(printf '%s\n' "$said" | sed -n 's/^requires=//p')"
+    case "$verdict" in
+      ok) ;;
+      # PyPI answers /1.12/json with 1.12.0: the same release, spelled so the run's exact
+      # gate would call it another version. Refused with the spelling to ask for.
+      other) ondemand_refuse "PyPI publishes that release as langflow==$(printf '%s\n' "$said" | sed -n 's/^version=//p'), not $OD_VERSION; ask for it as PyPI spells it" ;;
+      nofiles) ondemand_refuse "PyPI lists langflow==$OD_VERSION with no files to install" ;;
+      # uv would still install a yanked release pinned with == (PEP 592); refused because
+      # its publisher withdrew it, which is not what anyone means to test.
       yanked) ondemand_refuse "langflow==$OD_VERSION was withdrawn from PyPI (every file is yanked)" ;;
+      *) echo "PyPI's answer for langflow==$OD_VERSION could not be read; the install decides" ;;
     esac
+    if [ "$verdict" = "ok" ]; then
+      python="$(printf '%s\n' "$said" | sed -n 's/^python=//p')"
+      [ -n "$python" ] || ondemand_refuse "langflow==$OD_VERSION requires Python $requires, and this machine runs 3.12 to 3.14"
+      [[ "$python" =~ ^3\.1[2-4]$ ]] || python=3.14
+    fi
   else
     rm -f "$meta"
     echo "PyPI did not say whether it has langflow==$OD_VERSION (HTTP ${code:-none}); the install decides"
   fi
+  # langflow-base and lfx pinned to the version when PyPI has them at it: a release asks
+  # for langflow-base as a range, which resolves the newest of the series, and lfx is
+  # not pinned at all (#2261 review). Only what PyPI says it has: lfx is younger than
+  # most releases, and a pin to a version it never had fails the install.
+  for p in langflow-base lfx; do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$pypi/$p/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
+    [ "$code" = "200" ] && pin="${pin:+$pin }$p"
+  done
   OD_VENV="$OD_STATE/venv"
-  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV (at most ${limit_s}s)"
-  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PRERELEASE=1 \
+  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin:+, with $pin at the same version} (at most ${limit_s}s)"
+  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PIN="$pin" LANGFLOW_DIST_PYTHON="$python" \
     timeout -k 60 "$limit_s" "$OD_REPO/scripts/prepare-target-dist.sh" 9>&- 8>&- 2> "$err")" || rc=$?
   cat "$err" 2>/dev/null
   # The installer's reason is its ERROR: paragraph; the first line names it.
@@ -729,7 +756,8 @@ ondemand_install() {
       # Its checks of what landed: the distribution is wrong, not the machine.
       "the install reported success and no langflow"* | "the wheel installed "* \
         | "langflow "*" is installed and langflow-base is not"* | "langflow is "*" but langflow-base is "* \
-        | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"*)
+        | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"* \
+        | "lfx was pinned to "*)
         ondemand_fail 4 build_failed "langflow==$OD_VERSION installed but cannot be served, not a test result: ${said:-no reason given}" ;;
       *) ondemand_fail 3 failed "could not install langflow==$OD_VERSION (prepare-target-dist.sh exited $rc): the machine, the network or the index, which this cannot tell from the version: ${said:-no reason given}" ;;
     esac
@@ -751,12 +779,17 @@ ondemand_install() {
 
 # A version's Langflow on this lane's ports, by the starter's own pid files: run-e2e.sh
 # stops them on its exit, and this is for an exit it never reached.
+# Fails when one of them could not be stopped (it survived SIGKILL), which the stopper
+# says and leaves its pid file for.
 ondemand_stop_versions() {
-  local port
+  local port stopped=0
   [ -x "$OD_REPO/scripts/stop-langflow-source.sh" ] || return 0
   for port in 7910 7911 7912 7913; do
-    LANGFLOW_PORT="$port" "$OD_REPO/scripts/stop-langflow-source.sh" 2>&1 | sed 's/^/    /' || true
+    LANGFLOW_PORT="$port" "$OD_REPO/scripts/stop-langflow-source.sh" > "$OD_STATE/stop.$$" 2>&1 || stopped=1
+    sed 's/^/    /' "$OD_STATE/stop.$$" 2>/dev/null
+    rm -f "$OD_STATE/stop.$$"
   done
+  return "$stopped"
 }
 
 # The provider and model the run's agent specs used, from the run's model-used line
@@ -853,7 +886,10 @@ ondemand_finish() {
     cleanup=incomplete
     echo "ERROR: container(s) still present after removal: $(echo "$left" | tr '\n' ' ')"
   fi
-  ondemand_stop_versions
+  if ! ondemand_stop_versions; then
+    cleanup=incomplete
+    echo "ERROR: a Langflow on this lane's ports (7910-7913) could not be stopped"
+  fi
   [ -z "$OD_VENV" ] || rm -rf "$OD_VENV"
   if [ -n "$OD_WT" ] && [ -d "$OD_WT/scripts" ]; then
     ( cd "$OD_WT"; ECHO_PORT=8100 bash scripts/stop-echo-source.sh; OLLAMA_PORT=11454 bash scripts/stop-ollama-source.sh ) 2>&1 | sed 's/^/    /' || true

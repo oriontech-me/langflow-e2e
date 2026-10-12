@@ -839,10 +839,11 @@ test("a version request is installed from PyPI into the lane's venv and declared
   const r = onDemand({ request: vreq() });
   assert.equal(r.status, 0, r.log);
   assert.equal(r.build, null, "no image is built for a version");
-  assert.deepEqual(r.pypiAsked, [`https://pypi.org/pypi/langflow/${V}/json`]);
-  // The daily's installer, from the clone, into a venv of this lane's, pre-releases on.
+  assert.deepEqual(r.pypiAsked, ["langflow", "langflow-base", "lfx"].map((p) => `https://pypi.org/pypi/${p}/${V}/json`));
+  // The daily's installer, from the clone, into a venv of this lane's, its siblings
+  // pinned to the version and no pre-release rule of its own.
   const dist = r.dist ?? "";
-  assert.match(dist, new RegExp(`^TARGET_VERSION=${V.replace(/\./g, "\\.")} LANGFLOW_DIST_VENV=${r.state}/venv LANGFLOW_DIST_PRERELEASE=1 script=${r.repo}/scripts/prepare-target-dist\\.sh$`, "m"));
+  assert.match(dist, new RegExp(`^TARGET_VERSION=${V.replace(/\./g, "\\.")} LANGFLOW_DIST_VENV=${r.state}/venv LANGFLOW_DIST_PIN=langflow-base lfx LANGFLOW_DIST_PYTHON=3\\.14 script=${r.repo}/scripts/prepare-target-dist\\.sh$`, "m"));
   assert.match(dist, /^fd9=closed fd8=closed$/m, "the installer must not hold the locks");
   assert.match(r.timeouts, /^900 \S+prepare-target-dist\.sh +-k 60$/m, `the install is not bounded: ${r.timeouts}`);
   assert.match(r.log, new RegExp(`^installed: langflow==${V.replace(/\./g, "\\.")}, version ${V.replace(/\./g, "\\.")}, 95s, in ${r.state}/venv$`, "m"));
@@ -939,6 +940,53 @@ test("an install that fails is the machine's, and a distribution that cannot ser
     assert.match(res.REASON, why, JSON.stringify(opts));
     assert.equal(r.env, null, "the suite must not run");
     assert.equal(r.venvLeft, false, "a failed install's venv is removed too");
+  }
+});
+
+test("PyPI's own spelling, the interpreter its requires_python allows, and only the siblings it has", () => {
+  // /1.12/json answers 1.12.0: the run's gate compares exactly, so the request is refused.
+  const other = onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=1.12\n`, pypiVersion: "1.12.0" });
+  assert.equal(other.status, 2, other.log);
+  assert.match(other.result["req-v"].REASON, /PyPI publishes that release as langflow==1\.12\.0, not 1\.12; ask for it as PyPI spells it/);
+  assert.equal(other.dist, null);
+
+  const older = onDemand({ request: vreq(), pypiRequires: ">=3.10,<3.14" });
+  assert.match(older.dist ?? "", /LANGFLOW_DIST_PYTHON=3\.13 /, older.log);
+  assert.equal(older.result["req-v"].STATUS, "done");
+
+  const none = onDemand({ request: vreq(), pypiRequires: "<3.12" });
+  assert.equal(none.status, 2, none.log);
+  assert.match(none.result["req-v"].REASON, /requires Python <3\.12, and this machine runs 3\.12 to 3\.14/);
+  assert.equal(none.dist, null);
+
+  // lfx is younger than most releases: pinned only when PyPI has it at the version.
+  const noLfx = onDemand({ request: vreq(), siblings: { "langflow-base": 200, lfx: 404 } });
+  assert.match(noLfx.dist ?? "", /LANGFLOW_DIST_PIN=langflow-base LANGFLOW_DIST_PYTHON/, noLfx.log);
+  const silent = onDemand({ request: vreq(), siblings: { "langflow-base": 503, lfx: 404 } });
+  assert.match(silent.dist ?? "", /LANGFLOW_DIST_PIN= LANGFLOW_DIST_PYTHON=3\.14 /, silent.log);
+});
+
+test("a Langflow that survives its stop leaves the cleanup incomplete", () => {
+  const r = onDemand({ request: vreq(), stopFails: true });
+  assert.equal(r.result["req-v"].STATUS, "done", r.log);
+  assert.equal(r.result["req-v"].CLEANUP, "incomplete");
+  assert.match(r.log, /could not be stopped/);
+});
+
+test("every reason the executor reads as build_failed is one the installer can still give", () => {
+  // The case patterns copy the installer's die texts by hand: a reworded die would turn
+  // a distribution that cannot serve into the machine's failure, with no test failing.
+  // Each pattern is matched by bash itself against the first line of every die.
+  const installer = readFileSync(join(ROOT, "scripts", "prepare-target-dist.sh"), "utf8");
+  const dies = [...installer.matchAll(/die "([^"\n]*)/g)].map((m) => m[1].replace(/\$\{[A-Z_]+\}|\$\([^)]*\)/g, "X"));
+  const block = readFileSync(ONDEMAND, "utf8").match(/# Its checks of what landed[^\n]*\n([\s\S]*?)\)\n/)[1];
+  const patterns = block.replace(/\\\n/g, " ").split("|").map((p) => p.trim()).filter(Boolean);
+  assert.ok(patterns.length >= 7, `patterns not found: ${patterns}`);
+  const dir = makeTempDir("od-dies-");
+  writeFileSync(join(dir, "dies.txt"), dies.join("\n") + "\n");
+  for (const pattern of patterns) {
+    const script = `while IFS= read -r d; do case "$d" in ${pattern}) echo hit; exit 0 ;; esac; done < ${q(join(dir, "dies.txt"))}; echo miss`;
+    assert.equal(spawnSync("bash", ["-c", script], { encoding: "utf8" }).stdout.trim(), "hit", `no die in prepare-target-dist.sh matches ${pattern}`);
   }
 });
 

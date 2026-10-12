@@ -80,6 +80,13 @@ export function setup({
   // it was given) and, failing, `distError` as its ERROR: line.
   pypi = 200,
   pypiFiles = [{ yanked: false }],
+  // What PyPI's JSON says of the release: its version (null: the one asked for) and
+  // requires_python; and the status for langflow-base and lfx at that version.
+  pypiVersion = null,
+  pypiRequires = ">=3.10,<3.15",
+  siblings = { "langflow-base": 200, lfx: 200 },
+  // A Langflow on one of the lane's ports that survives its stop (the stopper exits 1).
+  stopFails = false,
   distExit = 0,
   distOut = null,
   distError = null,
@@ -139,13 +146,16 @@ process.exit(${probe.exit});
   }
   writeFileSync(join(dir, "leftover"), leftover);
   writeFileSync(join(repo, "scripts", "stop-echo-source.sh"), `echo "echo $ECHO_PORT" >> ${q(stopLog)}\n`);
-  stub(join(repo, "scripts"), "stop-langflow-source.sh", `echo "langflow $LANGFLOW_PORT" >> ${q(stopLog)}`);
+  stub(join(repo, "scripts"), "stop-langflow-source.sh", `echo "langflow $LANGFLOW_PORT" >> ${q(stopLog)}${stopFails ? '\n[ "$LANGFLOW_PORT" = 7911 ] && { echo "ERROR: PID 1 survived SIGKILL; port 7911 may still be bound." >&2; exit 1; }' : ""}`);
+  // The executor reads PyPI's answer with the clone's own module: the real one.
+  mkdirSync(join(repo, "scripts", "lib"), { recursive: true });
+  writeFileSync(join(repo, "scripts", "lib", "pypi-release.mjs"), readFileSync(join(ROOT, "scripts", "lib", "pypi-release.mjs")));
   const distLog = join(dir, "dist.log");
   // The installer: what it was given, and a venv with a langflow in it, as the real one.
   stub(
     join(repo, "scripts"),
     "prepare-target-dist.sh",
-    `echo "TARGET_VERSION=$TARGET_VERSION LANGFLOW_DIST_VENV=$LANGFLOW_DIST_VENV LANGFLOW_DIST_PRERELEASE=$LANGFLOW_DIST_PRERELEASE script=$0" > ${q(distLog)}
+    `echo "TARGET_VERSION=$TARGET_VERSION LANGFLOW_DIST_VENV=$LANGFLOW_DIST_VENV LANGFLOW_DIST_PIN=$LANGFLOW_DIST_PIN LANGFLOW_DIST_PYTHON=$LANGFLOW_DIST_PYTHON script=$0" > ${q(distLog)}
 echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed) fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(distLog)}
 echo "target: langflow==$TARGET_VERSION" >&2
 ${distExit === 0 ? `mkdir -p "$LANGFLOW_DIST_VENV/bin" "$LANGFLOW_DIST_VENV/lib/langflow/frontend" && printf '#!/bin/sh\n' > "$LANGFLOW_DIST_VENV/bin/langflow" && chmod +x "$LANGFLOW_DIST_VENV/bin/langflow"` : ""}
@@ -214,8 +224,15 @@ esac`);
   stub(bin, "curl", `out=""; url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -w|--max-time) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
 echo "$url" >> ${q(pypiLog)}
-${pypi === null ? "exit 7" : `[ -n "$out" ] && printf '%s' ${q(JSON.stringify({ urls: pypiFiles }))} > "$out"
-printf '%s' ${pypi}`}`);
+${pypi === null ? "exit 7" : ""}
+case "$url" in
+  */langflow-base/*) printf '%s' ${siblings["langflow-base"]} ;;
+  */lfx/*) printf '%s' ${siblings.lfx} ;;
+  */langflow/*)
+    v="\${url%/json}"; v="\${v##*/}"
+    [ "$out" != /dev/null ] && [ -n "$out" ] && printf '{"info":{"version":"%s","requires_python":%s},"urls":%s}' "${pypiVersion ?? "$v"}" ${q(JSON.stringify(pypiRequires))} ${q(JSON.stringify(pypiFiles))} > "$out"
+    printf '%s' ${pypi} ;;
+esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.
   if (termOnConsume) stub(bin, "mv", `/bin/mv "$@"; rc=$?\ncase "$*" in *"/request.env "*) kill -TERM $PPID ;; esac\nexit $rc`);
