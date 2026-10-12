@@ -28,8 +28,10 @@ This document defines the canonical template and rules for dedicated-issue triag
 
 Two issues get opened around a red daily; only one is templated:
 
-- The **umbrella** is created by `daily-stable.yml` through the GitHub API
-  (`github.rest.issues.create`), which no template can govern. Not this.
+- The **umbrella** is created by the QA VM's daily run, on the destination
+  repository, through `scripts/create-failure-issue.mjs` (the logic
+  `daily-stable.yml` carried inline until it was disabled on 2026-10-02), which
+  no template can govern. Not this.
 - The **dedicated per-cause issues** are created here, in Phase 7. These.
 
 ## Dedicated-Issue Template

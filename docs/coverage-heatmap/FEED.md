@@ -145,7 +145,7 @@ The matrix splits in two, and the split is what makes a live dashboard honest.
 
 | Half | Refreshed | By what |
 |---|---|---|
-| **Derivable** — mitigation, bullet states, spec and `@stable` counts, test health, and the residual risk and ranking that follow | **Once a weekday**, after the daily run | `.github/workflows/refresh-coverage-matrix.yml` |
+| **Derivable** — mitigation, bullet states, spec and `@stable` counts, test health, and the residual risk and ranking that follow | **Once a weekday**, after the daily run | The QA VM routine `e2e-routine-coverage-matrix` (`ops/vm/run-coverage-matrix.sh`, 08:45 UTC, #2211). `.github/workflows/refresh-coverage-matrix.yml` did it until 2026-10-12 and is kept, disabled, as the way back |
 | **Judged** — impact, fragility, the bug and churn quintiles, probability, inherent risk, the graph-engine override, `cappedByProduct`, `instrumentCaveat`, `actions[]` | **Per release cycle, by a human** | A full generation |
 
 `data.json` therefore carries two dates: **`generated`** (the last full generation) and
