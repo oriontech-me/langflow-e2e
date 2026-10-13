@@ -272,9 +272,9 @@ test("each credential reaches only its own call", () => {
   // destination reference (Langflow/e2e-qa#N) with the destination's issue token, under
   // its own name only. Nothing else: not the Slack webhook, not the issue token under a
   // name `gh` would send to github.com.
-  const { DEST_GH_TOKEN, DEST_GH_HOST, ...recRest } = r.reconcile.env;
-  assert.equal(DEST_GH_TOKEN, "issue-token");
-  assert.equal(DEST_GH_HOST, "dest.example.invalid");
+  const { E2E_QA_ISSUES_TOKEN, E2E_QA_HOST, ...recRest } = r.reconcile.env;
+  assert.equal(E2E_QA_ISSUES_TOKEN, "issue-token");
+  assert.equal(E2E_QA_HOST, "dest.example.invalid");
   const recValues = Object.values(recRest).join("\n");
   assert.equal(r.reconcile.env.GH_TOKEN, "push-token");
   assert.equal(r.reconcile.env.GH_HOST, "github.com");
@@ -294,8 +294,8 @@ test("each credential reaches only its own call", () => {
 
 test("with no ISSUE_HOST in the lane, the issue token does not reach the reconciler", () => {
   const r = orphans({ trackers: "source", laneText: "ISSUE_CC=\n" });
-  assert.equal(r.reconcile.env.DEST_GH_HOST, "");
-  assert.equal(r.reconcile.env.DEST_GH_TOKEN, "");
+  assert.equal(r.reconcile.env.E2E_QA_HOST, "");
+  assert.equal(r.reconcile.env.E2E_QA_ISSUES_TOKEN, "");
   assert.ok(!Object.values(r.reconcile.env).join("\n").includes("issue-token"), "the issue token reached the reconciler");
 });
 

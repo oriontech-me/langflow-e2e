@@ -147,7 +147,7 @@ test("an owner on the destination counts, and the report names it with its slug"
   const cap = fresh();
   const code = run(["--base-ref", "origin/main", "--json", "o.json"], deps({
     fetchIssues: () => ownerIssues(
-      { DEST_GH_TOKEN: "t" },
+      { E2E_QA_ISSUES_TOKEN: "t" },
       () => [],
       () => [{ number: 17, title: "Track new/added.spec.ts", html_url: "u", repo: "Langflow/e2e-qa" }],
       () => {},
@@ -159,7 +159,7 @@ test("an owner on the destination counts, and the report names it with its slug"
   assert.equal(row?.detail, "owned by Langflow/e2e-qa#17");
 });
 
-test("ownerIssues reads the destination only with DEST_GH_TOKEN, and says when it did not", () => {
+test("ownerIssues reads the destination only with E2E_QA_ISSUES_TOKEN, and says when it did not", () => {
   const logs: string[] = [];
   let destAsked = 0;
   const src = (): RawIssue[] => [{ number: 1, title: "a", html_url: "u" }];
@@ -169,10 +169,10 @@ test("ownerIssues reads the destination only with DEST_GH_TOKEN, and says when i
   };
   assert.equal(ownerIssues({}, src, dest, (s) => logs.push(s)).length, 1);
   assert.equal(destAsked, 0);
-  assert.match(logs[0], /no DEST_GH_TOKEN/);
+  assert.match(logs[0], /no E2E_QA_ISSUES_TOKEN/);
   assert.equal(ownerIssues({ GITHUB_ACTIONS: "true" }, src, dest, (s) => logs.push(s)).length, 1);
   assert.match(logs[1], /^::notice::/);
-  const both = ownerIssues({ DEST_GH_TOKEN: "t" }, src, dest, (s) => logs.push(s));
+  const both = ownerIssues({ E2E_QA_ISSUES_TOKEN: "t" }, src, dest, (s) => logs.push(s));
   assert.deepEqual(both.map((i) => `${i.repo ?? ""}#${i.number}`), ["#1", "Langflow/e2e-qa#1"]);
   assert.equal(logs.length, 2, "nothing to say when both were read");
 });
@@ -181,7 +181,7 @@ test("a failed destination read is a failed lookup: the run is undecided, not cl
   const cap = fresh();
   const code = run(["--base-ref", "origin/main"], deps({
     fetchIssues: () => ownerIssues(
-      { DEST_GH_TOKEN: "t" },
+      { E2E_QA_ISSUES_TOKEN: "t" },
       () => [{ number: 88, title: "Track new/added.spec.ts", html_url: "u" }],
       () => {
         throw new Error("HTTP 401: Bad credentials");
