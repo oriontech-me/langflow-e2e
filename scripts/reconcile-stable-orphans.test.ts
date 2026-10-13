@@ -791,7 +791,7 @@ test("destination issues carry their slug, and the report issues are not owners"
 
 test("the destination's gh environment drops the source credential and names its own host", () => {
   const env = destGhEnv(
-    { GH_TOKEN: "src", GITHUB_TOKEN: "src2", GH_REPO: "o/r", DEST_GH_TOKEN: "dst", PATH: "/bin" },
+    { GH_TOKEN: "src", GITHUB_TOKEN: "src2", GH_REPO: "o/r", E2E_QA_ISSUES_TOKEN: "dst", PATH: "/bin" },
     "issues",
   );
   assert.equal(env.GH_TOKEN, undefined);
@@ -800,13 +800,13 @@ test("the destination's gh environment drops the source credential and names its
   assert.equal(env.GH_ENTERPRISE_TOKEN, "dst");
   assert.equal(env.GH_HOST, "github.ibm.com");
   assert.equal(env.PATH, "/bin");
-  assert.equal(destGhEnv({ DEST_GH_TOKEN: "dst", DEST_GH_HOST: "ghe.example" }, "x").GH_HOST, "ghe.example");
-  assert.throws(() => destGhEnv({ GH_TOKEN: "src" }, "issues"), /no DEST_GH_TOKEN: Langflow\/e2e-qa issues/);
+  assert.equal(destGhEnv({ E2E_QA_ISSUES_TOKEN: "dst", E2E_QA_HOST: "ghe.example" }, "x").GH_HOST, "ghe.example");
+  assert.throws(() => destGhEnv({ GH_TOKEN: "src" }, "issues"), /no E2E_QA_ISSUES_TOKEN: Langflow\/e2e-qa issues/);
 });
 
 test("a destination lookup that cannot be made is LOOKUP-FAILED, never not-found", () => {
   const states = resolveRefStates([ref(5, "dest")], () => {
-    throw new Error("no DEST_GH_TOKEN: Langflow/e2e-qa references cannot be read from here");
+    throw new Error("no E2E_QA_ISSUES_TOKEN: Langflow/e2e-qa references cannot be read from here");
   });
   const s = states["dest#5"];
   assert.equal(s.kind === "unresolved" ? s.cause : s.kind, "lookup-failed");

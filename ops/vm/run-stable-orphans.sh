@@ -154,7 +154,7 @@ main() {
   : > "$OR_WORK/outputs"
   (
     cd "$OR_TREE" || exit 3
-    DEST_GH_HOST="$dest_host" DEST_GH_TOKEN="$dest_token" \
+    E2E_QA_HOST="$dest_host" E2E_QA_ISSUES_TOKEN="$dest_token" \
     GH_TOKEN="$token" GH_HOST=github.com GH_REPO="$OR_SOURCE_REPO" \
       GITHUB_OUTPUT="$OR_WORK/outputs" RUN_LABEL="the VM routine \`stable-orphans\`, run $RT_STAMP on ${sha:0:12}" \
       ./node_modules/.bin/ts-node scripts/reconcile-stable-orphans.ts "${files[@]}" \

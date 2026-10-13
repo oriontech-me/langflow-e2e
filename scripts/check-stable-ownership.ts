@@ -143,7 +143,7 @@ export interface OwnershipDeps {
 
 /**
  * The open issues that can own a spec: this repo's, plus the destination's when
- * DEST_GH_TOKEN is set. New issues open on the destination, so an owner opened
+ * E2E_QA_ISSUES_TOKEN is set. New issues open on the destination, so an owner opened
  * there must count, or the PR that relies on it fails for want of one. Without
  * the token the destination is not read, and the run says so; with it, a failed
  * read throws like any lookup failure and the run is undecided (#1012).
@@ -155,10 +155,10 @@ export function ownerIssues(
   log: (s: string) => void,
 ): RawIssue[] {
   const source = fetchSource();
-  if (!env.DEST_GH_TOKEN) {
+  if (!env.E2E_QA_ISSUES_TOKEN) {
     log(
       `${env.GITHUB_ACTIONS === "true" ? "::notice::" : ""}` +
-        "check-stable-ownership: no DEST_GH_TOKEN, so issues on Langflow/e2e-qa were not read as owners",
+        "check-stable-ownership: no E2E_QA_ISSUES_TOKEN, so issues on Langflow/e2e-qa were not read as owners",
     );
     return source;
   }

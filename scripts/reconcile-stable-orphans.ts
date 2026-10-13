@@ -120,7 +120,7 @@ const UPSTREAM_REPO = "langflow-ai/langflow";
 /**
  * Where a `dest` reference (`Langflow/e2e-qa#N`) is looked up: a host the
  * source's `gh` login cannot reach, so it is asked with its own credential,
- * DEST_GH_HOST and DEST_GH_TOKEN, which the VM routine reads from the lane's
+ * E2E_QA_HOST and E2E_QA_ISSUES_TOKEN, which the VM routine reads from the lane's
  * publishing credential. Without them a cited destination issue is
  * `lookup-failed`, never "not found": an unanswered question is an outage.
  */
@@ -541,15 +541,15 @@ export function withoutReportIssues(issues: RawIssue[]): RawIssue[] {
  * The environment `gh` gets for a call to the destination. It lives on another
  * host and is asked with its own credential, never with the source's: `gh`
  * sends GH_TOKEN to whatever host it is given, so the source's token and repo
- * are dropped. Throws without DEST_GH_TOKEN, naming what could not be asked.
+ * are dropped. Throws without E2E_QA_ISSUES_TOKEN, naming what could not be asked.
  */
 export function destGhEnv(env: NodeJS.ProcessEnv, what: string): NodeJS.ProcessEnv {
-  const token = env.DEST_GH_TOKEN;
+  const token = env.E2E_QA_ISSUES_TOKEN;
   if (!token) {
-    throw new Error(`no DEST_GH_TOKEN: ${DEST_SLUG} ${what} cannot be read from here`);
+    throw new Error(`no E2E_QA_ISSUES_TOKEN: ${DEST_SLUG} ${what} cannot be read from here`);
   }
   const { GH_TOKEN: _src, GITHUB_TOKEN: _src2, GH_REPO: _repo, ...rest } = env;
-  return { ...rest, GH_HOST: env.DEST_GH_HOST || DEST_HOST_DEFAULT, GH_ENTERPRISE_TOKEN: token };
+  return { ...rest, GH_HOST: env.E2E_QA_HOST || DEST_HOST_DEFAULT, GH_ENTERPRISE_TOKEN: token };
 }
 
 /**
