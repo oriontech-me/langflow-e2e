@@ -42,6 +42,7 @@ import {
 import {
   EXEMPTIONS_PATH,
   buildSpecTrackerIndex,
+  fetchDestinationIssues,
   fetchOpenIssues,
   parseExemptions,
   withoutReportIssues,
@@ -140,6 +141,30 @@ export interface OwnershipDeps {
   appendStepSummary: (text: string) => void;
 }
 
+/**
+ * The open issues that can own a spec: this repo's, plus the destination's when
+ * DEST_GH_TOKEN is set. New issues open on the destination, so an owner opened
+ * there must count, or the PR that relies on it fails for want of one. Without
+ * the token the destination is not read, and the run says so; with it, a failed
+ * read throws like any lookup failure and the run is undecided (#1012).
+ */
+export function ownerIssues(
+  env: Record<string, string | undefined>,
+  fetchSource: () => RawIssue[],
+  fetchDest: (env: NodeJS.ProcessEnv) => RawIssue[],
+  log: (s: string) => void,
+): RawIssue[] {
+  const source = fetchSource();
+  if (!env.DEST_GH_TOKEN) {
+    log(
+      `${env.GITHUB_ACTIONS === "true" ? "::notice::" : ""}` +
+        "check-stable-ownership: no DEST_GH_TOKEN, so issues on Langflow/e2e-qa were not read as owners",
+    );
+    return source;
+  }
+  return [...source, ...fetchDest(env)];
+}
+
 const git = (args: string[]): string =>
   execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
 
@@ -148,7 +173,7 @@ export const realDeps: OwnershipDeps = {
   readBaseline: (ref) =>
     ref ? git(["show", `${ref}:${BASELINE_REL}`]) : fs.readFileSync(BASELINE_PATH, "utf-8"),
   readExemptions: () => fs.readFileSync(path.join(REPO_ROOT, EXEMPTIONS_PATH), "utf-8"),
-  fetchIssues: fetchOpenIssues,
+  fetchIssues: () => ownerIssues(process.env, fetchOpenIssues, fetchDestinationIssues, console.log),
   changedFiles: (ref) =>
     git(["diff", "--name-only", "--diff-filter=d", `${ref}...HEAD`, "--", REGRESSION_PREFIX])
       .split("\n")

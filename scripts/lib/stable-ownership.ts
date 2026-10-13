@@ -67,7 +67,7 @@ export interface OwnershipInput {
   /** Spec → reason, for every spec #1746's declarations name. */
   exemptSpecs: ReadonlyMap<string, string>;
   /** Spec → open issues naming it; `null` when the lookup failed. */
-  trackers: Readonly<Record<string, readonly { number: number }[]>> | null;
+  trackers: Readonly<Record<string, readonly { number: number; repo?: string }[]>> | null;
   /** Why the lookup failed, when it did — carried into every row it decides. */
   lookupError?: string;
   /**
@@ -124,7 +124,8 @@ export function ownershipReport(input: OwnershipInput): OwnershipReport {
       rows.push({
         spec,
         verdict: "owned",
-        detail: `owned by ${owners.map((o) => `#${o.number}`).join(", ")}`,
+        // An owner on the destination carries its slug; a bare #N is this repo's.
+        detail: `owned by ${owners.map((o) => `${o.repo ?? ""}#${o.number}`).join(", ")}`,
       });
       continue;
     }
