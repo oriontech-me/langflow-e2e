@@ -32,7 +32,7 @@ const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encodi
  * issues:    { source: "ok"|"fail", destination: "ok"|"fail" }
  * publish:   "ok" | "fail" | "slackfail"
  */
-function orphans({ reconcile = "findings", issues = {}, publish = "ok", token = "push-token", readToken = "", dryRun = false, runBusy = false, trackers = null, shallow = false, staleRef = false, lockedLeftover = false } = {}) {
+function orphans({ reconcile = "findings", issues = {}, publish = "ok", token = "push-token", readToken = "", dryRun = false, runBusy = false, trackers = null, shallow = false, staleRef = false, lockedLeftover = false, laneText = "ISSUE_HOST=dest.example.invalid\nISSUE_REPO=o/r\nISSUE_CC=\n" } = {}) {
   const dir = makeTempDir("run-stable-orphans-");
   const control = join(dir, "control.json");
   writeFileSync(control, q({ reconcile, issues: { source: "ok", destination: "ok", ...issues }, publish }));
@@ -131,7 +131,7 @@ process.exit(2);
     [token ? `export SOURCE_PUSH_TOKEN=${token}` : "", readToken ? `export SOURCE_READ_TOKEN=${readToken}` : "", "export GITHUB_TOKEN=issue-token", "export SLACK_WEBHOOK_URL=https://hooks.example.invalid/services/x"].join("\n") + "\n",
   );
   const lane = join(dir, "lane.env");
-  writeFileSync(lane, "ISSUE_HOST=dest.example.invalid\nISSUE_REPO=o/r\nISSUE_CC=\n");
+  writeFileSync(lane, laneText);
   const r = spawnSync("bash", [SCRIPT], {
     encoding: "utf8",
     env: {
@@ -268,9 +268,14 @@ test("a Slack post that failed keeps the day green and leaves an ALARM for the w
 
 test("each credential reaches only its own call", () => {
   const r = orphans();
-  // The reconciler asks GitHub about gate references with the source token, and nothing
-  // else: not the destination's issue token, not the Slack webhook.
-  const recValues = Object.values(r.reconcile.env).join("\n");
+  // The reconciler asks GitHub about gate references with the source token, and about a
+  // destination reference (Langflow/e2e-qa#N) with the destination's issue token, under
+  // its own name only. Nothing else: not the Slack webhook, not the issue token under a
+  // name `gh` would send to github.com.
+  const { DEST_GH_TOKEN, DEST_GH_HOST, ...recRest } = r.reconcile.env;
+  assert.equal(DEST_GH_TOKEN, "issue-token");
+  assert.equal(DEST_GH_HOST, "dest.example.invalid");
+  const recValues = Object.values(recRest).join("\n");
   assert.equal(r.reconcile.env.GH_TOKEN, "push-token");
   assert.equal(r.reconcile.env.GH_HOST, "github.com");
   assert.equal(r.reconcile.env.GH_REPO, "oriontech-me/langflow-e2e");
@@ -285,6 +290,13 @@ test("each credential reaches only its own call", () => {
   assert.match(r.publish.env.SLACK_WEBHOOK_URL, /hooks\.example\.invalid/);
   assert.ok(!Object.values(r.publish.env).join("\n").includes("push-token"), "the push token reached the publisher");
   assert.equal(r.last.READ_TOKEN, "SOURCE_PUSH_TOKEN (no SOURCE_READ_TOKEN in the secrets file)");
+});
+
+test("with no ISSUE_HOST in the lane, the issue token does not reach the reconciler", () => {
+  const r = orphans({ trackers: "source", laneText: "ISSUE_CC=\n" });
+  assert.equal(r.reconcile.env.DEST_GH_HOST, "");
+  assert.equal(r.reconcile.env.DEST_GH_TOKEN, "");
+  assert.ok(!Object.values(r.reconcile.env).join("\n").includes("issue-token"), "the issue token reached the reconciler");
 });
 
 test("a read token, when there is one, is what reads the source and reaches the reconciler", () => {

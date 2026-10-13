@@ -1042,6 +1042,12 @@ being written:
   or stops citing the reference it declares is reported **expired** rather than
   honoured.
 
+An issue on the destination is always cited with its slug,
+`Langflow/e2e-qa#N`. Its numbers collide with this repo's, so a bare `#N` keeps
+meaning this repo, where pull requests still open. The check asks the
+destination about those references with its own credential. The VM routine has
+it; without it the row is `unknown`, never closed.
+
 Declare a citation only when it is genuinely provenance — *"#820 records which
 issue added this coverage note"* — never to silence a gate you have not looked
 at. A live gate needs an **open** issue in the prose instead; one is enough.

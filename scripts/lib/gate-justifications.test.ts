@@ -20,6 +20,8 @@ import {
   hasGateFindings,
   normalizeDeclRef,
   refKey,
+  refLabel,
+  refLink,
   renderGateSection,
   tagsSection,
   type GateDecl,
@@ -101,8 +103,31 @@ describe("extractRefs", () => {
     ]);
   });
 
+  it("reads the destination's slug as its own repository, apart from this repo's #N", () => {
+    const refs = extractRefs("#17 and Langflow/e2e-qa#17, then langflow/E2E-QA#18");
+    assert.deepEqual(refs.map(refKey), ["#17", "dest#17", "dest#18"]);
+    assert.deepEqual(refs.map(refLabel), ["#17", "Langflow/e2e-qa#17", "Langflow/e2e-qa#18"]);
+  });
+
   it("ignores a heading anchor, which has no digits", () => {
     assert.deepEqual(extractRefs("see [Tags](#tags-required)"), []);
+  });
+});
+
+describe("refLink", () => {
+  it("links each reference to its own host, so a bare #N cannot land on the destination's", () => {
+    assert.equal(
+      refLink({ repo: "self", number: 17 }),
+      "[oriontech-me/langflow-e2e#17](https://github.com/oriontech-me/langflow-e2e/issues/17)",
+    );
+    assert.equal(
+      refLink({ repo: "dest", number: 17 }),
+      "[Langflow/e2e-qa#17](https://github.ibm.com/Langflow/e2e-qa/issues/17)",
+    );
+    assert.equal(
+      refLink({ repo: "upstream", number: 14512 }),
+      "[langflow-ai/langflow#14512](https://github.com/langflow-ai/langflow/issues/14512)",
+    );
   });
 });
 
@@ -474,7 +499,10 @@ describe("renderGateSection", () => {
     const md = renderGateSection(v, opts);
     assert.match(md, /\*\*1 expired\*\*/);
     assert.match(md, /a\/x\.spec\.ts/);
-    assert.match(md, /#818 — closed/);
+    assert.match(
+      md,
+      /\[oriontech-me\/langflow-e2e#818\]\(https:\/\/github\.com\/oriontech-me\/langflow-e2e\/issues\/818\) — closed/,
+    );
     assert.match(md, /#963/);
     assert.match(md, /CONTEXT, not ownership/);
   });

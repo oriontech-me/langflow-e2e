@@ -93,8 +93,12 @@ import { LANE_TAGS } from "./stable-tests";
 
 // ─── Inputs ──────────────────────────────────────────────────────────────────
 
-/** Which repository a cited `#N` points at. */
-export type RefRepo = "self" | "upstream";
+/**
+ * Which repository a cited `#N` points at. `dest` is the destination of the
+ * migration, where new issues open from stage 4 on; this repo's PRs stay here
+ * until stage 5, so a bare `#N` keeps meaning this repo.
+ */
+export type RefRepo = "self" | "upstream" | "dest";
 
 /** One issue/PR reference found in a justification. */
 export interface CitedRef {
@@ -240,10 +244,18 @@ export interface GateVerdict {
 const SELF_SLUG = "oriontech-me/langflow-e2e";
 /** The upstream repository this repo's docs cite. */
 const UPSTREAM_SLUG = "langflow-ai/langflow";
+/**
+ * The destination repository (on github.ibm.com). Its issues are always cited
+ * with the slug, because their numbers collide with this repo's. Matched
+ * without case: GitHub slugs are case-insensitive, and a lower-case spelling
+ * read as "not a repository this check resolves" would drop a live gate.
+ */
+export const DEST_SLUG = "Langflow/e2e-qa";
 
 /**
  * Match `#123` and a `owner/repo#123` written with one of the two slugs this
- * repo's prose actually uses.
+ * repo's prose actually uses, plus the destination's (`DEST_SLUG`), which the
+ * prose starts citing when new issues open there.
  *
  * **Only those two**, and the reason is a measured one rather than laziness:
  * across `docs/` and `QA-CHECKLIST.md` the qualified form appears 88 times, 80
@@ -264,14 +276,13 @@ const UPSTREAM_SLUG = "langflow-ai/langflow";
 const REF_PATTERN = /(?:^|[^A-Za-z0-9_/-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#(\d{1,7})\b/g;
 
 export function refKey(ref: CitedRef): string {
-  return ref.repo === "self" ? `#${ref.number}` : `upstream#${ref.number}`;
+  return ref.repo === "self" ? `#${ref.number}` : `${ref.repo}#${ref.number}`;
 }
 
 /** Render a reference the way a human writes it, for the report. */
 export function refLabel(ref: CitedRef): string {
-  return ref.repo === "self"
-    ? `#${ref.number}`
-    : `langflow-ai/langflow#${ref.number}`;
+  if (ref.repo === "self") return `#${ref.number}`;
+  return `${ref.repo === "dest" ? DEST_SLUG : UPSTREAM_SLUG}#${ref.number}`;
 }
 
 /**
@@ -294,6 +305,7 @@ export function extractRefs(text: string): CitedRef[] {
     let repo: RefRepo;
     if (!slug || slug === SELF_SLUG) repo = "self";
     else if (slug === UPSTREAM_SLUG) repo = "upstream";
+    else if (slug.toLowerCase() === DEST_SLUG.toLowerCase()) repo = "dest";
     else continue; // Not a repository this check resolves — see REF_PATTERN.
     const ref: CitedRef = { repo, number: Number(m[2]) };
     const key = refKey(ref);
@@ -586,11 +598,28 @@ function esc(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
+/**
+ * A reference as a link to the issue itself. The report is published on the
+ * destination, where a bare `#17` autolinks to the destination's #17, an
+ * unrelated issue, and a slug autolinks on the wrong host. A link with the
+ * full URL is right wherever the report lands; GitHub's issue URL redirects to
+ * the pull request when the number is one.
+ */
+export function refLink(ref: CitedRef): string {
+  const [label, base] =
+    ref.repo === "self"
+      ? [`${SELF_SLUG}#${ref.number}`, `https://github.com/${SELF_SLUG}`]
+      : ref.repo === "dest"
+        ? [refLabel(ref), `https://github.ibm.com/${DEST_SLUG}`]
+        : [refLabel(ref), `https://github.com/${UPSTREAM_SLUG}`];
+  return `[${label}](${base}/issues/${ref.number})`;
+}
+
 function refCell(refs: ResolvedRef[]): string {
   if (refs.length === 0) return "—";
   return refs
     .map((r) => {
-      const label = refLabel(r.ref);
+      const label = refLink(r.ref);
       switch (r.state.kind) {
         case "open":
           return `${label} — open`;

@@ -758,6 +758,36 @@ test("resolveRefStates maps each GraphQL state, and an absent node is NOT-FOUND"
   assert.equal(hadLookupFailure(states), false);
 });
 
+test("resolveRefStates asks each repository apart, and keys a destination ref apart from ours", () => {
+  const asked: Array<[string, number[]]> = [];
+  const states = resolveRefStates(
+    [ref(17), ref(17, "dest"), ref(14512, "upstream")],
+    (repo, numbers): Record<number, { state: string } | null> => {
+      asked.push([repo, numbers]);
+      if (repo === "self") return { 17: { state: "CLOSED" } };
+      if (repo === "Langflow/e2e-qa") return { 17: { state: "OPEN" } };
+      return { 14512: { state: "MERGED" } };
+    },
+  );
+  assert.deepEqual(asked, [
+    ["self", [17]],
+    ["Langflow/e2e-qa", [17]],
+    ["langflow-ai/langflow", [14512]],
+  ]);
+  assert.deepEqual(states["#17"], { kind: "closed" });
+  assert.deepEqual(states["dest#17"], { kind: "open" }, "the same number, a different issue");
+  assert.deepEqual(states["upstream#14512"], { kind: "merged" });
+});
+
+test("a destination lookup that cannot be made is LOOKUP-FAILED, never not-found", () => {
+  const states = resolveRefStates([ref(5, "dest")], () => {
+    throw new Error("no DEST_GH_TOKEN: Langflow/e2e-qa references cannot be looked up from here");
+  });
+  const s = states["dest#5"];
+  assert.equal(s.kind === "unresolved" ? s.cause : s.kind, "lookup-failed");
+  assert.equal(hadLookupFailure(states), true);
+});
+
 test("resolveRefStates marks a thrown query as LOOKUP-FAILED, which bars the destructive paths", () => {
   // The distinction the workflow's `gate_lookup_failed` gate rests on. It was
   // derived from `reason.startsWith("lookup failed:")` — a string contract with
@@ -793,7 +823,7 @@ test("resolveRefStates asks each repository separately and keeps the same number
   const asked: Array<[string, number[]]> = [];
   const states = resolveRefStates(
     [ref(14512), ref(14512, "upstream")],
-    (repo, numbers) => {
+    (repo, numbers): Record<number, { state: string } | null> => {
       asked.push([repo, numbers]);
       return { 14512: repo === "self" ? null : { state: "MERGED" } };
     },
