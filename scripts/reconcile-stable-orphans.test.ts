@@ -35,6 +35,8 @@ import {
   readBlobs,
   readIssueFiles,
   resolveRefStates,
+  tagDestinationIssues,
+  destGhEnv,
   walkSpec,
   withoutReportIssues,
   type RawIssue,
@@ -777,6 +779,29 @@ test("resolveRefStates asks each repository apart, and keys a destination ref ap
   assert.deepEqual(states["#17"], { kind: "closed" });
   assert.deepEqual(states["dest#17"], { kind: "open" }, "the same number, a different issue");
   assert.deepEqual(states["upstream#14512"], { kind: "merged" });
+});
+
+test("destination issues carry their slug, and the report issues are not owners", () => {
+  const tagged = tagDestinationIssues([
+    [{ number: 17, title: "Track a.spec.ts", html_url: "u" }],
+    [{ number: 3, title: ORPHAN_ISSUE_TITLE, html_url: "v" }],
+  ]);
+  assert.deepEqual(tagged.map((i) => `${i.repo}#${i.number}`), ["Langflow/e2e-qa#17"]);
+});
+
+test("the destination's gh environment drops the source credential and names its own host", () => {
+  const env = destGhEnv(
+    { GH_TOKEN: "src", GITHUB_TOKEN: "src2", GH_REPO: "o/r", DEST_GH_TOKEN: "dst", PATH: "/bin" },
+    "issues",
+  );
+  assert.equal(env.GH_TOKEN, undefined);
+  assert.equal(env.GITHUB_TOKEN, undefined);
+  assert.equal(env.GH_REPO, undefined);
+  assert.equal(env.GH_ENTERPRISE_TOKEN, "dst");
+  assert.equal(env.GH_HOST, "github.ibm.com");
+  assert.equal(env.PATH, "/bin");
+  assert.equal(destGhEnv({ DEST_GH_TOKEN: "dst", DEST_GH_HOST: "ghe.example" }, "x").GH_HOST, "ghe.example");
+  assert.throws(() => destGhEnv({ GH_TOKEN: "src" }, "issues"), /no DEST_GH_TOKEN: Langflow\/e2e-qa issues/);
 });
 
 test("a destination lookup that cannot be made is LOOKUP-FAILED, never not-found", () => {

@@ -199,7 +199,9 @@ jobs:
       # issue lookup also fails (#1012) — a re-run is the remedy, not a skip.
       # An owner can be an issue on the destination (Langflow/e2e-qa), where new
       # issues open. DEST_ISSUES_READ_TOKEN is a read-only github.ibm.com token;
-      # without it the destination is not read and the step says so.
+      # without it the destination is not read and the step says so. With it, a
+      # failed read fails the step on every PR (#1012): an expired token is the
+      # likely cause, and rotating the secret is the fix.
       - name: "@stable ownership guard"
         env:
           BASE_REF: ${{ github.base_ref }}

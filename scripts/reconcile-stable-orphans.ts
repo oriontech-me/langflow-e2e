@@ -563,7 +563,15 @@ export function fetchDestinationIssues(env: NodeJS.ProcessEnv = process.env): Ra
     ["api", "--paginate", "-X", "GET", `repos/${DEST_SLUG}/issues`, "-f", "state=open", "-f", "per_page=100", "--slurp"],
     { cwd: REPO_ROOT, encoding: "utf-8", env: destGhEnv(env, "issues"), maxBuffer: 256 * 1024 * 1024 },
   );
-  const pages = JSON.parse(out) as RawIssue[][];
+  return tagDestinationIssues(JSON.parse(out) as RawIssue[][]);
+}
+
+/**
+ * The destination's pages as owners. PURE. The report issues are dropped (one
+ * already lives there) and each issue carries the destination's slug: without
+ * it an owner there would render as this repo's `#N`, an unrelated issue.
+ */
+export function tagDestinationIssues(pages: RawIssue[][]): RawIssue[] {
   return withoutReportIssues(pages.flat()).map((i) => ({ ...i, repo: DEST_SLUG }));
 }
 
