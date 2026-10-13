@@ -22,6 +22,7 @@ import {
   annotationLines,
   exemptSpecsFrom,
   parseBaselineSpecs,
+  ownerIssues,
   run,
   specsFromDiffNames,
   type OwnershipDeps,
@@ -140,6 +141,56 @@ test("the same spec is not a failure once an open issue names it", () => {
     fetchIssues: () => [{ number: 88, title: "Track new/added.spec.ts", html_url: "u" }],
   }, cap));
   assert.equal(code, 0);
+});
+
+test("an owner on the destination counts, and the report names it with its slug", () => {
+  const cap = fresh();
+  const code = run(["--base-ref", "origin/main", "--json", "o.json"], deps({
+    fetchIssues: () => ownerIssues(
+      { DEST_GH_TOKEN: "t" },
+      () => [],
+      () => [{ number: 17, title: "Track new/added.spec.ts", html_url: "u", repo: "Langflow/e2e-qa" }],
+      () => {},
+    ),
+  }, cap));
+  assert.equal(code, 0);
+  const report = JSON.parse(cap.files["o.json"]) as { rows: { spec: string; detail: string }[] };
+  const row = report.rows.find((r) => r.spec === "new/added.spec.ts");
+  assert.equal(row?.detail, "owned by Langflow/e2e-qa#17");
+});
+
+test("ownerIssues reads the destination only with DEST_GH_TOKEN, and says when it did not", () => {
+  const logs: string[] = [];
+  let destAsked = 0;
+  const src = (): RawIssue[] => [{ number: 1, title: "a", html_url: "u" }];
+  const dest = (): RawIssue[] => {
+    destAsked++;
+    return [{ number: 1, title: "b", html_url: "v", repo: "Langflow/e2e-qa" }];
+  };
+  assert.equal(ownerIssues({}, src, dest, (s) => logs.push(s)).length, 1);
+  assert.equal(destAsked, 0);
+  assert.match(logs[0], /no DEST_GH_TOKEN/);
+  assert.equal(ownerIssues({ GITHUB_ACTIONS: "true" }, src, dest, (s) => logs.push(s)).length, 1);
+  assert.match(logs[1], /^::notice::/);
+  const both = ownerIssues({ DEST_GH_TOKEN: "t" }, src, dest, (s) => logs.push(s));
+  assert.deepEqual(both.map((i) => `${i.repo ?? ""}#${i.number}`), ["#1", "Langflow/e2e-qa#1"]);
+  assert.equal(logs.length, 2, "nothing to say when both were read");
+});
+
+test("a failed destination read is a failed lookup: the run is undecided, not clean", () => {
+  const cap = fresh();
+  const code = run(["--base-ref", "origin/main"], deps({
+    fetchIssues: () => ownerIssues(
+      { DEST_GH_TOKEN: "t" },
+      () => [{ number: 88, title: "Track new/added.spec.ts", html_url: "u" }],
+      () => {
+        throw new Error("HTTP 401: Bad credentials");
+      },
+      () => {},
+    ),
+  }, cap));
+  assert.equal(code, 1);
+  assert.ok(cap.out.some((l) => l.startsWith("unknown") && /HTTP 401/.test(l)), cap.out.join("\n"));
 });
 
 test("the ownership report issue itself never counts as the owner", () => {

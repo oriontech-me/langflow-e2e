@@ -537,6 +537,36 @@ export function withoutReportIssues(issues: RawIssue[]): RawIssue[] {
   return issues.filter((i) => !reports.has(i.title));
 }
 
+/**
+ * The environment `gh` gets for a call to the destination. It lives on another
+ * host and is asked with its own credential, never with the source's: `gh`
+ * sends GH_TOKEN to whatever host it is given, so the source's token and repo
+ * are dropped. Throws without DEST_GH_TOKEN, naming what could not be asked.
+ */
+export function destGhEnv(env: NodeJS.ProcessEnv, what: string): NodeJS.ProcessEnv {
+  const token = env.DEST_GH_TOKEN;
+  if (!token) {
+    throw new Error(`no DEST_GH_TOKEN: ${DEST_SLUG} ${what} cannot be read from here`);
+  }
+  const { GH_TOKEN: _src, GITHUB_TOKEN: _src2, GH_REPO: _repo, ...rest } = env;
+  return { ...rest, GH_HOST: env.DEST_GH_HOST || DEST_HOST_DEFAULT, GH_ENTERPRISE_TOKEN: token };
+}
+
+/**
+ * The destination's open issues, each tagged with its repository so a tracker
+ * there renders as `Langflow/e2e-qa#N` and never as this repo's `#N`. For the
+ * PR lane's ownership guard: an owner opened on the destination must count.
+ */
+export function fetchDestinationIssues(env: NodeJS.ProcessEnv = process.env): RawIssue[] {
+  const out = execFileSync(
+    "gh",
+    ["api", "--paginate", "-X", "GET", `repos/${DEST_SLUG}/issues`, "-f", "state=open", "-f", "per_page=100", "--slurp"],
+    { cwd: REPO_ROOT, encoding: "utf-8", env: destGhEnv(env, "issues"), maxBuffer: 256 * 1024 * 1024 },
+  );
+  const pages = JSON.parse(out) as RawIssue[][];
+  return withoutReportIssues(pages.flat()).map((i) => ({ ...i, repo: DEST_SLUG }));
+}
+
 export function fetchOpenIssues(): RawIssue[] {
   const out = execFileSync(
     "gh",
@@ -802,23 +832,8 @@ function queryRefsViaGh(
   // failed" would report a whole spec undecidable because ONE of its citations
   // is unresolvable. stdout is therefore parsed either way, and only a response
   // with no usable `data` is an error.
-  // The destination lives on another host, asked with its own credential and
-  // never with the source's: `gh` sends GH_TOKEN to whatever host it is given.
-  let env: NodeJS.ProcessEnv = process.env;
-  if (repo === DEST_SLUG) {
-    const token = process.env.DEST_GH_TOKEN;
-    if (!token) {
-      throw new Error(
-        `no DEST_GH_TOKEN: ${DEST_SLUG} references cannot be looked up from here`,
-      );
-    }
-    const { GH_TOKEN: _src, GITHUB_TOKEN: _src2, GH_REPO: _repo, ...rest } = process.env;
-    env = {
-      ...rest,
-      GH_HOST: process.env.DEST_GH_HOST || DEST_HOST_DEFAULT,
-      GH_ENTERPRISE_TOKEN: token,
-    };
-  }
+  const env =
+    repo === DEST_SLUG ? destGhEnv(process.env, "references") : process.env;
 
   let out: string;
   try {

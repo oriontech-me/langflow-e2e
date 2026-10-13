@@ -197,11 +197,15 @@ jobs:
       #     the daily's standing report.
       # No continue-on-error: the failing case is the author's own diff. A failed
       # issue lookup also fails (#1012) — a re-run is the remedy, not a skip.
+      # An owner can be an issue on the destination (Langflow/e2e-qa), where new
+      # issues open. DEST_ISSUES_READ_TOKEN is a read-only github.ibm.com token;
+      # without it the destination is not read and the step says so.
       - name: "@stable ownership guard"
         env:
           BASE_REF: ${{ github.base_ref }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          DEST_GH_TOKEN: ${{ secrets.DEST_ISSUES_READ_TOKEN }}
         run: npx ts-node scripts/check-stable-ownership.ts --base-ref "origin/$BASE_REF"
 
   doc-deps-guard:

@@ -781,7 +781,7 @@ test("resolveRefStates asks each repository apart, and keys a destination ref ap
 
 test("a destination lookup that cannot be made is LOOKUP-FAILED, never not-found", () => {
   const states = resolveRefStates([ref(5, "dest")], () => {
-    throw new Error("no DEST_GH_TOKEN: Langflow/e2e-qa references cannot be looked up from here");
+    throw new Error("no DEST_GH_TOKEN: Langflow/e2e-qa references cannot be read from here");
   });
   const s = states["dest#5"];
   assert.equal(s.kind === "unresolved" ? s.cause : s.kind, "lookup-failed");
