@@ -146,9 +146,11 @@ main() {
   # to a destination issue (Langflow/e2e-qa#N) is asked of the destination with the lane's
   # issue credential, handed over as two names and read in its own subshell: sourcing the
   # secrets file here would export every secret on the machine to the reconciler.
-  local rc=0 dest_host dest_token
+  # Only to a host the lane names: with no ISSUE_HOST the token stays here, and a cited
+  # destination issue is undecided rather than asked of a host nobody chose.
+  local rc=0 dest_host dest_token=""
   dest_host="$( (set +u; orphans_load_publishing; printf '%s' "${ISSUE_HOST:-}") )"
-  dest_token="$( (set +u; orphans_load_publishing; printf '%s' "${GITHUB_TOKEN:-${GH_TOKEN:-}}") )"
+  [ -z "$dest_host" ] || dest_token="$( (set +u; orphans_load_publishing; printf '%s' "${GITHUB_TOKEN:-${GH_TOKEN:-}}") )"
   : > "$OR_WORK/outputs"
   (
     cd "$OR_TREE" || exit 3

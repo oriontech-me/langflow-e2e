@@ -598,11 +598,28 @@ function esc(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
+/**
+ * A reference as a link to the issue itself. The report is published on the
+ * destination, where a bare `#17` autolinks to the destination's #17, an
+ * unrelated issue, and a slug autolinks on the wrong host. A link with the
+ * full URL is right wherever the report lands; GitHub's issue URL redirects to
+ * the pull request when the number is one.
+ */
+export function refLink(ref: CitedRef): string {
+  const [label, base] =
+    ref.repo === "self"
+      ? [`${SELF_SLUG}#${ref.number}`, `https://github.com/${SELF_SLUG}`]
+      : ref.repo === "dest"
+        ? [refLabel(ref), `https://github.ibm.com/${DEST_SLUG}`]
+        : [refLabel(ref), `https://github.com/${UPSTREAM_SLUG}`];
+  return `[${label}](${base}/issues/${ref.number})`;
+}
+
 function refCell(refs: ResolvedRef[]): string {
   if (refs.length === 0) return "—";
   return refs
     .map((r) => {
-      const label = refLabel(r.ref);
+      const label = refLink(r.ref);
       switch (r.state.kind) {
         case "open":
           return `${label} — open`;
