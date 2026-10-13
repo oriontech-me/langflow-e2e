@@ -20,8 +20,23 @@ test("a drifted color or description is updated to the origin's", () => {
     [L("qa-infra", "5319e7", "QA testing infrastructure"), L("bug", "d73a4a", "Something isn't working")],
     [L("qa-infra"), L("bug", "D73A4A", "Something isn't working")],
   );
-  assert.deepEqual(plan.update, [{ name: "qa-infra", color: "5319e7", description: "QA testing infrastructure" }]);
-  assert.deepEqual(plan.create, [], "color case alone is not drift");
+  assert.deepEqual(
+    plan.update,
+    [{ name: "qa-infra", color: "5319e7", description: "QA testing infrastructure", current: "qa-infra" }],
+    "color case alone is not drift",
+  );
+  assert.deepEqual(plan.create, []);
+});
+
+test("a description the origin left empty is cleared on the destination", () => {
+  const plan = planLabels([L("needs-triage", "ededed", "")], [L("needs-triage", "ededed", "set by hand")]);
+  assert.deepEqual(plan.update, [{ name: "needs-triage", color: "ededed", description: "", current: "needs-triage" }]);
+});
+
+test("names match without case: a case-only difference renames, never creates", () => {
+  const plan = planLabels([L("Bug", "d73a4a")], [L("bug", "d73a4a")]);
+  assert.deepEqual(plan.create, []);
+  assert.deepEqual(plan.update, [{ name: "Bug", color: "d73a4a", description: "", current: "bug" }]);
 });
 
 test("labels only the destination has are left alone", () => {
@@ -34,6 +49,9 @@ test("an applied plan is empty on the next run", () => {
   const first = planLabels(origin, []);
   assert.equal(first.create.length, 2);
   assert.deepEqual(planLabels(origin, first.create), { create: [], update: [], skipped: [] });
+  const second = planLabels([L("flaky", "fbca04", "")], [L("flaky", "fbca04", "Intermittent")]);
+  const applied = second.update.map(({ current: _c, ...l }) => l);
+  assert.deepEqual(planLabels([L("flaky", "fbca04", "")], applied), { create: [], update: [], skipped: [] });
 });
 
 test("weekly-failure is dead but a label that only starts with it is not", () => {
