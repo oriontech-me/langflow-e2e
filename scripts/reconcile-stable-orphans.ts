@@ -58,6 +58,7 @@ import {
   type DeclaredTest,
 } from "./lib/stable-tests";
 import {
+  DEST_SLUG,
   candidateSpecs,
   checklistBullets,
   classifyGates,
@@ -71,6 +72,7 @@ import {
   type GateDecl,
   type GateVerdict,
   type JustificationSource,
+  type RefRepo,
   type RefState,
   type SpecJustification,
   type TrackedBy,
@@ -114,6 +116,22 @@ export const GATE_DECLARATIONS_PATH =
  * constant only decides where an `upstream` reference is looked up.
  */
 const UPSTREAM_REPO = "langflow-ai/langflow";
+
+/**
+ * Where a `dest` reference (`Langflow/e2e-qa#N`) is looked up: a host the
+ * source's `gh` login cannot reach, so it is asked with its own credential,
+ * DEST_GH_HOST and DEST_GH_TOKEN, which the VM routine reads from the lane's
+ * publishing credential. Without them a cited destination issue is
+ * `lookup-failed`, never "not found": an unanswered question is an outage.
+ */
+const DEST_HOST_DEFAULT = "github.ibm.com";
+
+/** The repository each kind of reference is looked up in. */
+const LOOKUP_REPO: Record<RefRepo, string> = {
+  self: "self",
+  upstream: UPSTREAM_REPO,
+  dest: DEST_SLUG,
+};
 
 /**
  * Cap on how far back one spec's history is walked. Well above the deepest
@@ -688,23 +706,23 @@ export function resolveRefStates(
   refs: CitedRef[],
   query: (repo: string, numbers: number[]) => Record<number, GraphQlRefNode | null>,
 ): Record<string, RefState> {
-  const byRepo = new Map<string, number[]>();
+  const byRepo = new Map<RefRepo, number[]>();
   for (const r of refs) {
-    const repo = r.repo === "self" ? "self" : UPSTREAM_REPO;
-    const list = byRepo.get(repo) ?? [];
+    const list = byRepo.get(r.repo) ?? [];
     if (!list.includes(r.number)) list.push(r.number);
-    byRepo.set(repo, list);
+    byRepo.set(r.repo, list);
   }
 
   const out: Record<string, RefState> = {};
-  for (const [repo, numbers] of byRepo) {
+  for (const [kind, numbers] of byRepo) {
+    const repo = LOOKUP_REPO[kind];
     let nodes: Record<number, GraphQlRefNode | null>;
     try {
       nodes = query(repo, numbers);
     } catch (e) {
       const reason = (e as Error).message.split("\n")[0];
       for (const n of numbers) {
-        out[refKey({ repo: repo === "self" ? "self" : "upstream", number: n })] =
+        out[refKey({ repo: kind, number: n })] =
           {
             kind: "unresolved",
             cause: "lookup-failed",
@@ -714,10 +732,7 @@ export function resolveRefStates(
       continue;
     }
     for (const n of numbers) {
-      const key = refKey({
-        repo: repo === "self" ? "self" : "upstream",
-        number: n,
-      });
+      const key = refKey({ repo: kind, number: n });
       const node = nodes[n];
       if (!node) {
         out[key] =
@@ -758,7 +773,7 @@ function queryRefsViaGh(
   const target =
     repo === "self"
       ? "repository(owner: $owner, name: $name)"
-      : `repository(owner: "${UPSTREAM_REPO.split("/")[0]}", name: "${UPSTREAM_REPO.split("/")[1]}")`;
+      : `repository(owner: "${repo.split("/")[0]}", name: "${repo.split("/")[1]}")`;
   const fields = numbers
     .map(
       (n) =>
@@ -787,11 +802,30 @@ function queryRefsViaGh(
   // failed" would report a whole spec undecidable because ONE of its citations
   // is unresolvable. stdout is therefore parsed either way, and only a response
   // with no usable `data` is an error.
+  // The destination lives on another host, asked with its own credential and
+  // never with the source's: `gh` sends GH_TOKEN to whatever host it is given.
+  let env: NodeJS.ProcessEnv = process.env;
+  if (repo === DEST_SLUG) {
+    const token = process.env.DEST_GH_TOKEN;
+    if (!token) {
+      throw new Error(
+        `no DEST_GH_TOKEN: ${DEST_SLUG} references cannot be looked up from here`,
+      );
+    }
+    const { GH_TOKEN: _src, GITHUB_TOKEN: _src2, GH_REPO: _repo, ...rest } = process.env;
+    env = {
+      ...rest,
+      GH_HOST: process.env.DEST_GH_HOST || DEST_HOST_DEFAULT,
+      GH_ENTERPRISE_TOKEN: token,
+    };
+  }
+
   let out: string;
   try {
     out = execFileSync("gh", args, {
       cwd: REPO_ROOT,
       encoding: "utf-8",
+      env,
       maxBuffer: 64 * 1024 * 1024,
     });
   } catch (e) {

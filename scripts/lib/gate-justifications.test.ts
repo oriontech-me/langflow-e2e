@@ -20,6 +20,7 @@ import {
   hasGateFindings,
   normalizeDeclRef,
   refKey,
+  refLabel,
   renderGateSection,
   tagsSection,
   type GateDecl,
@@ -99,6 +100,12 @@ describe("extractRefs", () => {
     assert.deepEqual(extractRefs("oriontech-me/langflow-e2e#963").map(refKey), [
       "#963",
     ]);
+  });
+
+  it("reads the destination's slug as its own repository, apart from this repo's #N", () => {
+    const refs = extractRefs("#17 and Langflow/e2e-qa#17, then langflow/E2E-QA#18");
+    assert.deepEqual(refs.map(refKey), ["#17", "dest#17", "dest#18"]);
+    assert.deepEqual(refs.map(refLabel), ["#17", "Langflow/e2e-qa#17", "Langflow/e2e-qa#18"]);
   });
 
   it("ignores a heading anchor, which has no digits", () => {

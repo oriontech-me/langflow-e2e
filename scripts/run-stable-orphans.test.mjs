@@ -268,9 +268,14 @@ test("a Slack post that failed keeps the day green and leaves an ALARM for the w
 
 test("each credential reaches only its own call", () => {
   const r = orphans();
-  // The reconciler asks GitHub about gate references with the source token, and nothing
-  // else: not the destination's issue token, not the Slack webhook.
-  const recValues = Object.values(r.reconcile.env).join("\n");
+  // The reconciler asks GitHub about gate references with the source token, and about a
+  // destination reference (Langflow/e2e-qa#N) with the destination's issue token, under
+  // its own name only. Nothing else: not the Slack webhook, not the issue token under a
+  // name `gh` would send to github.com.
+  const { DEST_GH_TOKEN, DEST_GH_HOST, ...recRest } = r.reconcile.env;
+  assert.equal(DEST_GH_TOKEN, "issue-token");
+  assert.equal(DEST_GH_HOST, "dest.example.invalid");
+  const recValues = Object.values(recRest).join("\n");
   assert.equal(r.reconcile.env.GH_TOKEN, "push-token");
   assert.equal(r.reconcile.env.GH_HOST, "github.com");
   assert.equal(r.reconcile.env.GH_REPO, "oriontech-me/langflow-e2e");
