@@ -16,10 +16,13 @@ import { langflowProviderName } from "./provider-config";
  *
  * When that fallback had to CREATE a variable, the page loaded before the provider
  * existed and its model options are stale, so the page is reloaded before the picker
- * is opened. And when the picker still does not offer the deployment — another worker
- * may have made the write this page loaded before, or a concurrent enable for another
- * provider may have dropped it — it re-enables it and reloads once more before calling
- * it absent, because an absence becomes a SKIP in the callers.
+ * is opened. When the picker still does not offer the deployment it reloads (another
+ * worker may have made the write this page loaded before), and if that is not enough
+ * it re-enables the deployment (a concurrent enable for another provider may have
+ * dropped it) and reloads again. It never reports the deployment absent: an absence
+ * becomes a SKIP in the callers, so a deployment still missing after a confirmed
+ * enable fails as AZURE_FOUNDRY_ENABLE_LOST — and so does a MODEL_TEST_ID that names
+ * no real deployment, which Langflow's enable either rejects or accepts in vain.
  *
  * The deployment is chosen in the picker — never written into the flow by name —
  * because the picker's options carry the live listing's metadata, and that metadata
