@@ -61,7 +61,7 @@ test(
 
     await collectAll(page);
 
-    await test.step("providers.json has exactly one valid record per known KEYED provider", async () => {
+    await test.step("providers.json has exactly one valid record per KEYED provider plus Azure AI Foundry", async () => {
       expect(fs.existsSync(PROVIDERS_PATH), `${PROVIDERS_PATH} was written`).toBe(true);
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
       // Keyed providers only (#1187). This sweep is the KEY axis: it saves an API key
@@ -70,7 +70,11 @@ test(
       // design, not missing. Comparing against the whole map would fail this
       // pre-flight on every lane the moment a keyless entry existed — and this spec
       // gates the daily, the PR run and every manual dispatch.
-      const known = [...keyedProviderNames].sort();
+      //
+      // Azure AI Foundry is the one non-keyed provider recorded here (#2281): the sweep
+      // does not configure it, but it validates the declared deployment against Azure
+      // directly, so it has a key-axis verdict like the keyed three.
+      const known = [...keyedProviderNames, "azure-ai-foundry"].sort();
       expect(providers.map((p) => p.provider).sort()).toEqual(known);
       for (const p of providers) {
         expect(["active", "inactive"], `status of ${p.provider}`).toContain(p.status);
@@ -125,7 +129,13 @@ test(
       // measures the wrong thing, and which used to be one warning line in a job
       // log nobody reads (the `mode=count` lesson, #1252).
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
-      const targets = providers.filter((p) => p.status === "active" && p.model);
+      // Azure AI Foundry is excluded by design, not by omission (#2281): enabling its
+      // deployment would CONFIGURE it, which the sweep must not do — the Foundry
+      // provider spec needs it unconfigured. A run that targets it enables it in
+      // globalSetup instead; its record says so in `targetEnablementDetail`.
+      const targets = providers.filter(
+        (p) => p.status === "active" && p.model && p.provider !== "azure-ai-foundry",
+      );
 
       // Printed on EVERY run, green included: whoever triages the next daily has to
       // be able to tell from the report whether the run's specs ran with the

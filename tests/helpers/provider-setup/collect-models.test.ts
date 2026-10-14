@@ -56,6 +56,8 @@ import {
   credentialRejectionReason,
   CREDENTIAL_REJECTED_PREFIX,
   isCredentialRejectedReason,
+  AZURE_FOUNDRY_ENABLEMENT_DETAIL,
+  collectAzureFoundry,
 } from "./collect-models";
 import { keyedProviders } from "./provider-config";
 
@@ -1633,4 +1635,43 @@ test("a server that did not answer is UNAVAILABLE, never a silent confirmation",
   const v = confirmEnabledOnServer(undefined, ["gpt-4o"], false);
   assert.equal(v.kind, "unavailable");
   if (v.kind === "unavailable") assert.match(v.message, /could not be confirmed/i);
+});
+
+// ─── Azure AI Foundry: validated off-Langflow, never enabled by the sweep (#2281) ──
+
+test("#2281: an active Foundry deployment becomes a record AND a catalog entry, with no enablement claim", async () => {
+  const { record, models } = await collectAzureFoundry(async () => ({
+    status: "active",
+    model: "gpt-5.6-sol",
+    error: null,
+  }));
+  assert.equal(record.provider, "azure-ai-foundry");
+  assert.equal(record.status, "active");
+  assert.equal(record.model, "gpt-5.6-sol");
+  // `null`, not "unknown": the sweep deliberately did not enable it, which is a
+  // decision, not a missing verdict — and the detail says where it IS enabled.
+  assert.equal(record.targetEnablement, null);
+  assert.equal(record.targetEnablementDetail, AZURE_FOUNDRY_ENABLEMENT_DETAIL);
+  assert.deepEqual(models, [{ provider: "azure-ai-foundry", model: "gpt-5.6-sol" }]);
+});
+
+test("#2281: a declared-but-dead deployment stays in the catalog so its specs SKIP with the reason", async () => {
+  const { record, models } = await collectAzureFoundry(async () => ({
+    status: "inactive",
+    model: "gpt-5.6-sol",
+    error: "Access denied due to invalid subscription key",
+  }));
+  assert.equal(record.status, "inactive");
+  assert.equal(record.error, "Access denied due to invalid subscription key");
+  assert.deepEqual(models, [{ provider: "azure-ai-foundry", model: "gpt-5.6-sol" }]);
+});
+
+test("#2281: an undeclared Foundry contributes no catalog entry — it is not a target at all", async () => {
+  const { record, models } = await collectAzureFoundry(async () => ({
+    status: "inactive",
+    model: null,
+    error: "AZURE_AI_FOUNDRY_API_KEY, AZURE_AI_FOUNDRY_ENDPOINT, AZURE_AI_FOUNDRY_TEST_DEPLOYMENT not set",
+  }));
+  assert.equal(record.status, "inactive");
+  assert.deepEqual(models, []);
 });

@@ -14,6 +14,7 @@ import {
   collectCredentialWrites,
   PROVIDER_SAVE_BUTTON,
 } from "../../../../helpers/provider-setup/provider-panel-save";
+import { azureFoundryTargeted } from "../../../../helpers/provider-setup/azure-foundry";
 import {
   classifyVariableWriteRefusal,
   describeVariableWrite,
@@ -277,6 +278,23 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("Azure AI Foundry — unified provider setup", () => {
   const createdFlowIds: string[] = [];
+
+  // On a run whose AGENT specs target Azure AI Foundry, the instance's Foundry
+  // credential belongs to them (#2281): `globalSetup` configures it before any worker
+  // starts and they run against it in parallel. Every test here needs the opposite
+  // state — the seed catalog (test 1) and the read-only panel (test 2) are what an
+  // UNCONFIGURED provider shows, test 4's fake deployment is accepted only while no
+  // credential is there to validate it, and tests 3, 5 and 6 store a credential and
+  // delete it in their teardown, which would pull it from under a running agent spec.
+  // The same predicate decides both sides, so they cannot disagree about who owns it.
+  test.beforeEach(() => {
+    test.skip(
+      azureFoundryTargeted(),
+      `this run's agent specs target ${PROVIDER_NAME}, so the instance's ${PROVIDER_NAME} ` +
+        `credential is theirs (configured by globalSetup) — these tests need the provider ` +
+        `unconfigured and would delete that credential (#2281)`,
+    );
+  });
 
   // Every test enters through `awaitBootstrapTest`, which creates `New Flow` +
   // `Basic Prompting` whenever the default project is empty, while the ids below were

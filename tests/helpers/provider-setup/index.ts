@@ -3,11 +3,13 @@ import { setupOpenAI } from "./setup-openai";
 import { setupAnthropic } from "./setup-anthropic";
 import { setupGoogle } from "./setup-google";
 import { setupOllama } from "./setup-ollama";
+import { setupAzureFoundry } from "./setup-azure-foundry";
 import { providerConfigMap, type Provider } from "./provider-config";
 
 export type {
   ApiKeyProviderConfig,
   BaseUrlProviderConfig,
+  DeploymentProviderConfig,
   KeyedProvider,
   Provider,
   ProviderConfig,
@@ -35,6 +37,7 @@ export const providerSetupMap: Record<
   anthropic: setupAnthropic,
   google: setupGoogle,
   ollama: setupOllama,
+  "azure-ai-foundry": setupAzureFoundry,
 };
 
 /** Retorna true se todas as env vars do provider estiverem definidas */
