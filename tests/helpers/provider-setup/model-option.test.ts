@@ -480,4 +480,5 @@ test("#2281: a model id two providers share resolves to the caller's provider", 
   assert.equal((unlabelled as { option: ModelOption }).option.provider, "OpenAI");
   const unknown = resolveModelOption("gpt-5.6-sol", options, { providerLabel: "Groq" });
   assert.equal(unknown.kind, "match");
+  assert.equal((unknown as { option: ModelOption }).option.provider, "OpenAI");
 });

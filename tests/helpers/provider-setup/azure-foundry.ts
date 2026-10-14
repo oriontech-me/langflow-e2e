@@ -7,7 +7,8 @@
 // provider spec (`azure-ai-foundry-provider-setup.spec.ts`), whose subject includes
 // the UNCONFIGURED surface: tests 2, 3, 5 and 6 skip on an instance that already
 // holds a Foundry credential, tests 1 and 4 assert state only an unconfigured
-// provider shows, and tests 3, 5 and 6 store one and delete it in their teardown. A
+// provider shows, test 3 saves bogus credentials, and tests 5 and 6 store a real one
+// and delete it in their teardown. A
 // sweep-configured Foundry would therefore cost those tests on every run, and their
 // teardown would delete the credential under any agent spec running on Azure.
 //

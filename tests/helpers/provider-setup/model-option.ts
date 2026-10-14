@@ -554,7 +554,8 @@ export type PinnedSelection =
  * defects and must never reach a caller that would skip on them. Only an
  * *established* absence is handed back, and even then the caller decides —
  * `absentBehavior: "return"` exists for `setup-openai`'s `fallbackToRanking`
- * consumers (#606), which must degrade rather than fail on a stale pin.
+ * consumers (#606), which must degrade rather than fail on a stale pin, and for
+ * `setupAzureFoundry`, which reloads once and retries with `"throw"` (#2281).
  */
 export async function selectPinnedModelOption(
   page: Page,

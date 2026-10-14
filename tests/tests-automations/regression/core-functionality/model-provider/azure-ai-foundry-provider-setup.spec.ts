@@ -284,8 +284,9 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
   // starts and they run against it in parallel. Every test here needs the opposite
   // state — the seed catalog (test 1) and the read-only panel (test 2) are what an
   // UNCONFIGURED provider shows, test 4's fake deployment is accepted only while no
-  // credential is there to validate it, and tests 3, 5 and 6 store a credential and
-  // delete it in their teardown, which would pull it from under a running agent spec.
+  // credential is there to validate it, test 3 saves bogus credentials over whatever is
+  // stored, and tests 5 and 6 store a credential and delete it in their teardown, which
+  // would pull it from under a running agent spec.
   // The same predicate decides both sides, so they cannot disagree about who owns it.
   test.beforeEach(() => {
     test.skip(

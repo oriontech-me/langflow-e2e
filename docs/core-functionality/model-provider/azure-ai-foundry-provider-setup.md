@@ -149,8 +149,8 @@ missing-dependency contract `google-provider.spec.ts` carries for
   and the agent specs use it in parallel, so a `beforeEach` skips every test with
   that reason: tests 1, 2 and 4 need the unconfigured state (the seed catalog, the
   read-only panel, a fake deployment accepted without a credential to validate it),
-  and tests 3, 5 and 6 would store a credential and delete it under a running agent
-  spec. "Targets" is decided by `azureFoundryTargeted()`
+  test 3 would save bogus credentials over the stored one, and tests 5 and 6 would
+  store a credential and delete it under a running agent spec. "Targets" is decided by `azureFoundryTargeted()`
   (`tests/helpers/provider-setup/azure-foundry.ts`), the same predicate
   `globalSetup` uses, derived from `resolveTestTargets` — so a run pinned to another
   provider (every daily rotation slot and the PR lane, today) runs this file in full.

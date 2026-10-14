@@ -15,8 +15,9 @@ import { langflowProviderName } from "./provider-config";
  *
  * When that fallback had to CREATE a variable, the page loaded before the provider
  * existed and its model options are stale, so the page is reloaded before the picker
- * is opened. Without the reload the picker offers no Foundry option and the failure
- * would read as a missing deployment.
+ * is opened. And when the picker still does not offer the deployment — another worker
+ * may have made the write this page loaded before — it reloads once more before
+ * calling it absent, because an absence becomes a SKIP in the callers.
  *
  * The deployment is chosen in the picker — never written into the flow by name —
  * because the picker's options carry the live listing's metadata, and that metadata
