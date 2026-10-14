@@ -326,6 +326,26 @@ test("ALL_MODELS=true sweeps every provider", () => {
   assert.equal(targets.length, CATALOG.length);
 });
 
+test("the pair picks the record matching BOTH when a model id exists under two providers (#2281)", () => {
+  // Measured before the fix: OpenAI's catalog also lists `gpt-5.6-sol`, the name of the
+  // Azure AI Foundry deployment, ahead of it — and the first-match lookup ran a lane
+  // pinned to azure-ai-foundry entirely on OpenAI, green.
+  const catalog: ModelRecord[] = [
+    { provider: "openai", model: "gpt-5.6-sol" },
+    { provider: "azure-ai-foundry", model: "gpt-5.6-sol" },
+  ];
+  const pinned = resolve(
+    { MODEL_TEST_PROVIDER: "azure-ai-foundry", MODEL_TEST_ID: "gpt-5.6-sol" },
+    { models: catalog },
+  );
+  assert.deepEqual(labels(pinned), ["azure-ai-foundry / gpt-5.6-sol"]);
+  // Without a provider the id alone still infers the FIRST record, as before.
+  assert.deepEqual(
+    labels(resolve({ MODEL_TEST_ID: "gpt-5.6-sol" }, { models: catalog })),
+    ["openai / gpt-5.6-sol"],
+  );
+});
+
 test("MODEL_TEST_ID outranks MODEL_TEST_PROVIDER across providers", () => {
   // Behaviour change for the two copies that had no MODEL_TEST_ID branch, made
   // explicit so it is a decision and not a regression discovered later.

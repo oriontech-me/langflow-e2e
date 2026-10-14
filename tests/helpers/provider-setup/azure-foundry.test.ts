@@ -136,6 +136,24 @@ test("a run pinned to Foundry, or unpinned with Foundry in the catalog, targets 
   }
 });
 
+test("a Foundry pin is honoured even when OpenAI lists a model of the same name (#2281)", () => {
+  // The real catalog does: OpenAI ships `gpt-5.6-sol` too. Without the pair rule in
+  // resolveTestTargets this answered false, so globalSetup never configured Foundry
+  // and the run went to OpenAI.
+  const colliding = [
+    { provider: "openai", model: "gpt-5.6-sol" },
+    { provider: "azure-ai-foundry", model: "gpt-5.6-sol" },
+  ];
+  assert.equal(
+    azureFoundryTargeted({
+      env: { ...ENV, MODEL_TEST_PROVIDER: "azure-ai-foundry", MODEL_TEST_ID: "gpt-5.6-sol" },
+      models: colliding,
+      skipReasons: HEALTHY,
+    }),
+    true,
+  );
+});
+
 test("Foundry is not targeted when undeclared, absent from the catalog, or skipped by health", () => {
   assert.equal(azureFoundryTargeted({ env: {}, models: CATALOG, skipReasons: HEALTHY }), false);
   assert.equal(
