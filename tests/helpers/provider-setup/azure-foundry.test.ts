@@ -94,13 +94,34 @@ test("a refusal keeps Azure's own message, and a transport error is inactive too
   );
   assert.equal(refused.status, "inactive");
   assert.equal(refused.model, "gpt-5.6-sol");
-  assert.equal(refused.error, "Access denied due to invalid subscription key");
+  assert.equal(refused.error, "HTTP 401: Access denied due to invalid subscription key");
 
   const down = await validateAzureFoundry(ENV, async () => {
     throw new Error("getaddrinfo ENOTFOUND res.openai.azure.com");
   });
   assert.equal(down.status, "inactive");
   assert.match(down.error ?? "", /ENOTFOUND/);
+});
+
+test("a rate limit keeps its status, so collect-models can read it as transient", async () => {
+  // Azure's 429 wording carries neither `429` nor `quota`; collect-models' BILLING_OR_QUOTA
+  // keys on `\b429\b`, so the status is what keeps a throttled probe from failing the gate.
+  const throttled = await validateAzureFoundry(
+    ENV,
+    fakeFetch(
+      429,
+      { error: { message: "Requests to the ChatCompletions_Create Operation have exceeded token rate limit. Please retry after 6 seconds." } },
+      [],
+    ),
+  );
+  assert.equal(throttled.status, "inactive");
+  assert.match(throttled.error ?? "", /^HTTP 429: .*retry after 6 seconds/);
+});
+
+test("a malformed endpoint is reported without echoing it", async () => {
+  const verdict = await validateAzureFoundry({ ...ENV, AZURE_AI_FOUNDRY_ENDPOINT: "not a url secret-ish" });
+  assert.equal(verdict.status, "inactive");
+  assert.equal(verdict.error, "AZURE_AI_FOUNDRY_ENDPOINT is not a URL");
 });
 
 // ─── Who owns the credential ─────────────────────────────────────────────────

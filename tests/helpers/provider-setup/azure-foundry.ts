@@ -122,7 +122,9 @@ export async function validateAzureFoundry(
     return {
       status: "inactive",
       model: deployment,
-      error: `AZURE_AI_FOUNDRY_ENDPOINT is not a URL: "${endpoint}"`,
+      // Not echoed: the endpoint is a secret on every lane that declares it, and this
+      // message lands in providers.json, which ships as an unmasked artifact.
+      error: "AZURE_AI_FOUNDRY_ENDPOINT is not a URL",
     };
   }
 
@@ -139,10 +141,14 @@ export async function validateAzureFoundry(
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      // The status leads the message: Azure's rate-limit wording ("exceeded token rate
+      // limit … retry after N seconds") carries neither `429` nor `quota`, so without it
+      // collect-models' BILLING_OR_QUOTA test read a transient 429 as a dead key.
+      const message = body?.error?.message;
       return {
         status: "inactive",
         model: deployment,
-        error: body?.error?.message ?? `HTTP ${res.status}`,
+        error: message ? `HTTP ${res.status}: ${message}` : `HTTP ${res.status}`,
       };
     }
     return { status: "active", model: deployment, error: null };
