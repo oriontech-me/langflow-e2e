@@ -10,8 +10,9 @@ import { langflowProviderName } from "./provider-config";
  * Unlike the keyed setups, this never opens the provider panel: the provider is
  * configured over the API (`ensureAzureFoundryConfigured`), which `globalSetup` has
  * normally already done before any worker started. Calling it again here is the
- * fallback for a run whose pre-configuration did not happen, and costs one
- * variables read plus one enable when it did.
+ * fallback for a run whose pre-configuration did not happen. When it did, the first
+ * call in a worker costs one variables read plus one enable — which Langflow turns
+ * into a blocking validation call to Azure — and every later call the read alone.
  *
  * When that fallback had to CREATE a variable, the page loaded before the provider
  * existed and its model options are stale, so the page is reloaded before the picker

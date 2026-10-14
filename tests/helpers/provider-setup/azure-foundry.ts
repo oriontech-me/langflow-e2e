@@ -207,9 +207,25 @@ export interface AzureFoundryConfigureResult {
  * Returns a result instead of throwing: `globalSetup` must never die on it, and
  * `setupAzureFoundry` turns a failure into an attributed error.
  */
+/**
+ * Deployments THIS process has already seen enabled, keyed by endpoint and deployment.
+ *
+ * The enable is not a cheap write: Langflow validates the credentials on every
+ * `POST /api/v1/models/enabled_models` that enables a model, already enabled or not
+ * (`api/v1/models.py`, `update_enabled_models`), and for Foundry that is a synchronous
+ * HTTP call to Azure on the backend's event loop. Made once per test, it froze the
+ * backend whenever Azure was slow — measured on the QA VM 2026-10-14 (run
+ * 20261014T134518Z): 8 s outages on two shards' independent backends 2 s apart, and the
+ * two tests inside them failed at this enable with `400 Could not validate Azure AI
+ * Foundry credentials`. So a worker validates once, and later calls that find the
+ * variables already present trust that answer.
+ */
+const ENABLED_IN_THIS_PROCESS = new Set<string>();
+
 export async function ensureAzureFoundryConfigured(
   ctx: APIRequestContext,
   env: NodeJS.ProcessEnv = process.env,
+  enabledMemo: Set<string> = ENABLED_IN_THIS_PROCESS,
 ): Promise<AzureFoundryConfigureResult> {
   const declaration = azureFoundryDeclaration(env);
   if (!declaration.declared) {
@@ -265,6 +281,18 @@ export async function ensureAzureFoundryConfigured(
     };
   }
 
+  // Nothing was written and this process already saw the deployment enabled: the
+  // enable would only re-validate against Azure (see `ENABLED_IN_THIS_PROCESS`). A
+  // write always re-enables, since a new variable is what the enable validates.
+  const memoKey = `${declaration.endpoint}::${declaration.deployment}`;
+  if (!wrote && enabledMemo.has(memoKey)) {
+    return {
+      configured: true,
+      wrote: false,
+      detail: `${displayName} already configured with deployment "${declaration.deployment}" enabled (checked earlier in this worker)`,
+    };
+  }
+
   // Validates the deployment against Azure through Langflow's own path, so a wrong
   // key or endpoint already stored on the instance is reported here, by name.
   const enabled = await ctx.post("/api/v1/models/enabled_models", {
@@ -303,6 +331,7 @@ export async function ensureAzureFoundryConfigured(
     };
   }
 
+  enabledMemo.add(memoKey);
   return {
     configured: true,
     wrote,

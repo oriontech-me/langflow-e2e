@@ -229,6 +229,7 @@ test("writes the key BEFORE the endpoint, then enables the deployment under the 
       recorded,
     ),
     ENV,
+    new Set(),
   );
   assert.equal(result.configured, true, result.detail);
   assert.equal(result.wrote, true);
@@ -259,6 +260,7 @@ test("an already-configured instance is not written to, and reports wrote=false"
       recorded,
     ),
     ENV,
+    new Set(),
   );
   assert.equal(result.configured, true);
   assert.equal(result.wrote, false);
@@ -277,6 +279,7 @@ test("a duplicate 400 means another worker configured it — not an error", asyn
       [],
     ),
     ENV,
+    new Set(),
   );
   assert.equal(result.configured, true, result.detail);
   assert.equal(result.wrote, false);
@@ -296,6 +299,7 @@ test("a refused enable and a missing echo are both reported, never configured", 
       [],
     ),
     ENV,
+    new Set(),
   );
   assert.equal(refused.configured, false);
   assert.match(refused.detail, /Validation failed for Azure AI Foundry/);
@@ -310,14 +314,82 @@ test("a refused enable and a missing echo are both reported, never configured", 
       [],
     ),
     ENV,
+    new Set(),
   );
   assert.equal(silent.configured, false);
   assert.match(silent.detail, /did not report "Azure AI Foundry::llm::gpt-5\.6-sol"/);
 });
 
+test("a worker validates the deployment once: a later call with nothing to write sends no enable", async () => {
+  // Langflow re-validates against Azure on every enabling POST, synchronously; once per
+  // test froze the backend whenever Azure was slow (QA VM, 2026-10-14).
+  const memo = new Set<string>();
+  const replies = {
+    "GET /api/v1/auto_login": AUTH,
+    "GET /api/v1/variables/": {
+      body: [{ name: "AZURE_AI_FOUNDRY_API_KEY" }, { name: "AZURE_AI_FOUNDRY_ENDPOINT" }],
+    },
+    "POST /api/v1/models/enabled_models": ENABLED_OK,
+  };
+  const enables = (recorded: Recorded[]) =>
+    recorded.filter((r) => r.url === "/api/v1/models/enabled_models").length;
+
+  const first: Recorded[] = [];
+  assert.equal((await ensureAzureFoundryConfigured(fakeRequest(replies, first), ENV, memo)).configured, true);
+  assert.equal(enables(first), 1);
+
+  const second: Recorded[] = [];
+  const again = await ensureAzureFoundryConfigured(fakeRequest(replies, second), ENV, memo);
+  assert.equal(again.configured, true, again.detail);
+  assert.equal(enables(second), 0, "the second call must not re-validate against Azure");
+});
+
+test("the memo is set only by a confirmed enable, and a write always re-enables", async () => {
+  const memo = new Set<string>();
+  const present = {
+    body: [{ name: "AZURE_AI_FOUNDRY_API_KEY" }, { name: "AZURE_AI_FOUNDRY_ENDPOINT" }],
+  };
+  // A refused enable leaves nothing behind: the next call asks again.
+  await ensureAzureFoundryConfigured(
+    fakeRequest(
+      {
+        "GET /api/v1/auto_login": AUTH,
+        "GET /api/v1/variables/": present,
+        "POST /api/v1/models/enabled_models": { status: 400, body: { detail: "Validation failed" } },
+      },
+      [],
+    ),
+    ENV,
+    memo,
+  );
+  assert.equal(memo.size, 0);
+
+  await ensureAzureFoundryConfigured(
+    fakeRequest(
+      { "GET /api/v1/auto_login": AUTH, "GET /api/v1/variables/": present, "POST /api/v1/models/enabled_models": ENABLED_OK },
+      [],
+    ),
+    ENV,
+    memo,
+  );
+  assert.equal(memo.size, 1);
+
+  // Variables deleted since (a write is needed): the enable runs again despite the memo.
+  const recorded: Recorded[] = [];
+  await ensureAzureFoundryConfigured(
+    fakeRequest(
+      { "GET /api/v1/auto_login": AUTH, "GET /api/v1/variables/": { body: [] }, "POST /api/v1/models/enabled_models": ENABLED_OK },
+      recorded,
+    ),
+    ENV,
+    memo,
+  );
+  assert.equal(recorded.filter((r) => r.url === "/api/v1/models/enabled_models").length, 1);
+});
+
 test("an undeclared provider makes no request at all", async () => {
   const recorded: Recorded[] = [];
-  const result = await ensureAzureFoundryConfigured(fakeRequest({}, recorded), {});
+  const result = await ensureAzureFoundryConfigured(fakeRequest({}, recorded), {}, new Set());
   assert.equal(result.configured, false);
   assert.deepEqual(recorded, []);
 });
