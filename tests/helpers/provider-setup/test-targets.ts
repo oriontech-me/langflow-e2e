@@ -351,7 +351,7 @@ function resolveRoutedTarget(
   // routed" say nothing about whether the run spends money.
   if (config.credential !== "base-url") {
     return report(
-      `ANY_COMPLETION_PROVIDER="${routed}" is an API-key provider, and this variable ` +
+      `ANY_COMPLETION_PROVIDER="${routed}" is a hosted provider, and this variable ` +
         `routes the any-completion tier to a KEYLESS local one (credential: ` +
         `"base-url"). To narrow the tier to a hosted provider use MODEL_TEST_PROVIDER.`,
     );
@@ -423,7 +423,18 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
   //    given: the caller asked for that model, so `requires` is not second-guessed.
   if (env.MODEL_TEST_ID) {
     const model = env.MODEL_TEST_ID;
-    const record = allModels.find((m) => m.model === model);
+    // When the pair is set and a record matches BOTH, that record wins (#2281). A
+    // model id is not unique across providers: the Azure AI Foundry deployment a
+    // declared run pins is named `gpt-5.6-sol`, and OpenAI's catalog lists a model of the
+    // same name ahead of it, so the first-match lookup ran a `MODEL_TEST_PROVIDER=
+    // azure-ai-foundry` lane on OpenAI — measured, every target green and labelled
+    // `openai / gpt-5.6-sol`. The provider only DISAMBIGUATES here: with no record
+    // matching both, the id still outranks it (the cross-provider rule below), and the
+    // override is announced.
+    const record =
+      (env.MODEL_TEST_PROVIDER &&
+        allModels.find((m) => m.model === model && m.provider === env.MODEL_TEST_PROVIDER)) ||
+      allModels.find((m) => m.model === model);
     // An explicitly pinned id is honoured as given rather than silently swapped for
     // a capable one — but a model that cannot serve the declared capability must be
     // REPORTED, not run. A vision spec handed a non-vision model fails in a way that
@@ -450,6 +461,17 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
       return [{ label: `model:${model}`, options: { model }, skipReason: unfit }];
     }
     const provider = record.provider as Provider;
+    if (env.MODEL_TEST_PROVIDER && provider !== env.MODEL_TEST_PROVIDER) {
+      // The cross-provider rule is deliberate, but never silent: on a Foundry pin whose
+      // catalog lacks the deployment this is the #2281 symptom itself — every target
+      // running on OpenAI's `gpt-5.6-sol`, green, under a lane that declared Azure.
+      console.warn(
+        `MODEL_TEST_ID="${model}" has no record under MODEL_TEST_PROVIDER=` +
+          `"${env.MODEL_TEST_PROVIDER}" in models.json; it resolves to "${provider}" instead, ` +
+          `and the specs run there. If that is not what the pin meant, re-run ` +
+          `collect-models.spec.ts with the provider declared.`,
+      );
+    }
     return [
       {
         label: `${provider} / ${model}`,

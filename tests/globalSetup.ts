@@ -21,6 +21,10 @@ import {
 } from "./helpers/provider-setup/provider-health";
 import { isCredentialRejectedReason } from "./helpers/provider-setup/collect-models";
 import { preconfigureRoutedProvider } from "./helpers/provider-setup/preconfigure-routed-provider";
+import {
+  azureFoundryTargeted,
+  ensureAzureFoundryConfigured,
+} from "./helpers/provider-setup/azure-foundry";
 import { freezeModelCatalog } from "./helpers/provider-setup/catalog-snapshot";
 import {
   catalogVerdict,
@@ -271,6 +275,57 @@ async function preconfigureRouting(ctx: APIRequestContext): Promise<void> {
     `[preflight] WARNING: could not pre-configure the routed provider — ${result.detail}. ` +
       `Specs will try to configure it themselves, which is what races across workers ` +
       `(#1187); expect OLLAMA_PROVIDER_UNREACHABLE on one of them.`,
+  );
+}
+
+/**
+ * Configure Azure AI Foundry once, before any worker starts — only on a run whose
+ * agent specs target it (#2281).
+ *
+ * The collector deliberately leaves Foundry unconfigured (the Foundry provider spec
+ * needs that state), so on a run that targets it this is what gives the agent specs a
+ * provider. Doing it here rather than in each spec removes the concurrent-first-write
+ * race `preconfigure-routed-provider.ts` documents for Ollama, and it makes the
+ * Foundry provider spec find the instance configured from the start, so it yields
+ * instead of storing a credential and deleting it under a running agent spec.
+ *
+ * Skipped whenever `PREFLIGHT_SKIP_CREDENTIALS` is set. The case that matters is the
+ * `collect-models` invocation, which every lane runs with it: the rotation pin is
+ * chosen only AFTER that run, so the targeting predicate would read an unpinned run
+ * there and configure Foundry for a day whose agents run on another provider —
+ * leaving the Foundry provider spec skipped all day. The PR lane also sets it on runs
+ * that need no models; skipping there costs nothing, since no agent spec runs.
+ *
+ * Never fatal, never silent (#1012): `setupAzureFoundry` retries the configuration
+ * per spec and fails with the reason, so a failure here is announced as the likely
+ * cause of what it reports next.
+ */
+async function preconfigureAzureFoundry(ctx: APIRequestContext): Promise<void> {
+  if (truthy(process.env.PREFLIGHT_SKIP_CREDENTIALS)) return;
+  let targeted: boolean;
+  try {
+    targeted = azureFoundryTargeted();
+  } catch (e) {
+    console.warn(
+      `[preflight] WARNING: could not decide whether this run targets Azure AI Foundry — ` +
+        `${String(e)}. Not pre-configuring it; its specs will configure it themselves.`,
+    );
+    return;
+  }
+  if (!targeted) return;
+  const result = await ensureAzureFoundryConfigured(ctx).catch((e) => ({
+    configured: false,
+    wrote: false,
+    detail: `pre-configuration threw: ${String(e)}`,
+  }));
+  if (result.configured) {
+    console.log(`[preflight] Azure AI Foundry ready for this run's agent specs — ${result.detail}`);
+    return;
+  }
+  console.warn(
+    `[preflight] WARNING: this run targets Azure AI Foundry but it could not be ` +
+      `pre-configured — ${result.detail}. Its specs will try to configure it themselves ` +
+      `and report the reason if they cannot.`,
   );
 }
 
@@ -575,6 +630,7 @@ export default async function globalSetup(): Promise<void> {
       await checkProviderCredentials(ctx);
     }
     await preconfigureRouting(ctx);
+    await preconfigureAzureFoundry(ctx);
     await reportCatalogDrift(ctx);
     await reportApiSurfaceDrift(ctx);
   } finally {

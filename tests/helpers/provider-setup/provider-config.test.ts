@@ -54,13 +54,34 @@ test("every entry declares at least one env var, and keyed ones a placeholder + 
       // The invalid key must be recognisably invalid AND provider-shaped, so the
       // error the UI reports is an auth rejection rather than a parse failure.
       assert.match(config.invalidKey, /invalid/i, `${provider} invalid key`);
-    } else {
+    } else if (config.credential === "base-url") {
       assert.ok(
         config.variableInputTestId.startsWith("provider-variable-input-"),
         `${provider} variable input testid`,
       );
+    } else {
+      // A deployment provider's env gate is every variable it writes PLUS the
+      // deployment, so `hasProviderEnvKeys` cannot report it usable with a part of
+      // the configuration missing (#2281).
+      for (const variable of [...config.variables, config.deploymentEnvKey]) {
+        assert.ok(config.envKeys.includes(variable), `${provider}: ${variable} is not env-gated`);
+      }
+      assert.ok(config.variables.length > 0, `${provider} writes no variable`);
     }
   }
+});
+
+test("azure-ai-foundry is a DEPLOYMENT provider: not keyed, key written before the endpoint", () => {
+  // Not keyed (#2281): the UI sweep and the invalid-key journey iterate
+  // `keyedProviders`, and the Foundry provider spec needs the provider UNCONFIGURED,
+  // which a sweep that saves it for the whole run would break.
+  const azure = providerConfigMap["azure-ai-foundry"];
+  assert.equal(azure.credential, "deployment");
+  assert.ok(!keyedProviderNames.includes("azure-ai-foundry" as never));
+  // The backend validates on write and returns early while only one variable exists,
+  // so the endpoint must be written LAST to be the write that gets validated.
+  assert.deepEqual(azure.variables, ["AZURE_AI_FOUNDRY_API_KEY", "AZURE_AI_FOUNDRY_ENDPOINT"]);
+  assert.equal(azure.deploymentEnvKey, "AZURE_AI_FOUNDRY_TEST_DEPLOYMENT");
 });
 
 test("ollama's env gate is the base URL — nothing about it is a secret", () => {
@@ -112,6 +133,7 @@ test("langflowProviderName returns the name Langflow itself persists", () => {
   assert.equal(langflowProviderName("anthropic"), "Anthropic");
   assert.equal(langflowProviderName("google"), "Google Generative AI");
   assert.equal(langflowProviderName("ollama"), "Ollama");
+  assert.equal(langflowProviderName("azure-ai-foundry"), "Azure AI Foundry");
 });
 
 test("langflowProviderName never returns the testid prefix", () => {

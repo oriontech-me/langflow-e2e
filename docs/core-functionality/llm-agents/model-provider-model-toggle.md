@@ -1,6 +1,6 @@
 # Model Provider Model Toggle
 
-**Last validated:** Langflow 1.13.x (re-run on `1.13.0.dev8` after the scoped toggle write, #1679; measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev35`, on a run pinned to Azure AI Foundry, #2281; re-run on `1.13.0.dev8` after the scoped toggle write, #1679; measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -26,7 +26,7 @@ Both are pure UI/state assertions — no LLM call is made. No prior spec covered
 
 ## Step-by-step *(required)*
 
-Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys are set, otherwise the first provider in `providerConfigMap` with env keys configured. The file skips with an accurate reason when no provider has its env keys configured. The provider's display name (`provider-item-OpenAI`, etc.) comes from `provider-config.ts`.
+Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when it names a **keyed** provider and its env keys are set, otherwise the first keyed provider with env keys configured. A pin to Azure AI Foundry is deliberately not honoured (#2281): these tests disable a model in the pinned provider's panel, and on a Foundry-pinned run that panel lists the one deployment every parallel agent spec runs on. The file skips with an accurate reason when no provider has its env keys configured. The provider's display name (`provider-item-OpenAI`, etc.) comes from `provider-config.ts`.
 
 ### Test 1 — toggle changes immediately and persists across reopen
 

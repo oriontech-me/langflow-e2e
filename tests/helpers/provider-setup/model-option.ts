@@ -85,8 +85,26 @@ export type ResolveContext = {
    * the message then says LISTED, and no branch infers a toggle is off from it.
    */
   checkedModels?: string[];
-  /** Provider the caller is configuring, for the message only. */
+  /**
+   * Provider the caller is configuring. Used in the messages, and to DISAMBIGUATE a
+   * model id two providers share (#2281): OpenAI's catalog carries `gpt-5.6-sol`, the
+   * Azure AI Foundry deployment's name, so an id-only match could click the other
+   * provider's option. It never narrows a match away — when no option carries both
+   * the id and this provider, the id alone decides, exactly as before — unless
+   * `providerStrict` is set.
+   */
   providerLabel?: string;
+  /**
+   * With `providerLabel`, treat an option the picker attributes to ANOTHER provider as
+   * not this model at all: it is neither a match nor evidence of an unparsed identity.
+   * For a caller whose model id is operator-defined and may collide with a catalog id
+   * (#2281: the Foundry deployment `gpt-5.6-sol` against OpenAI's model of that name).
+   * Without it, a picker that does not offer the deployment yet resolves to the other
+   * provider's option, so the caller's reload-before-absent recovery never runs and
+   * the Agent ends up wired to the wrong provider. An option whose provider did not
+   * parse is still considered, so a markup change stays loud (#1461).
+   */
+  providerStrict?: boolean;
   /**
    * What the panel's own toggle batch did before the panel was closed —
    * `enableAndSettleModelToggles`' return value.
@@ -207,14 +225,23 @@ export function resolveModelOption(
     };
   }
 
-  const exact = options.find((option) => option.model === requested);
+  const strict = Boolean(context.providerStrict && context.providerLabel);
+  const candidates = strict
+    ? options.filter((option) => option.provider === null || option.provider === context.providerLabel)
+    : options;
+  const exact =
+    (context.providerLabel &&
+      candidates.find(
+        (option) => option.model === requested && option.provider === context.providerLabel,
+      )) ||
+    (strict ? undefined : candidates.find((option) => option.model === requested));
   if (exact) return { kind: "match", option: exact };
 
   // The model is in the picker but its identity did not parse — the exact shape
   // of the #1459 break, one markup change later. Absence is contradicted by the
   // picker itself, so this can never be a skip.
   const evidence: string[] = [];
-  for (const option of options) {
+  for (const option of candidates) {
     if (option.visibleLabel === requested) {
       evidence.push(`visible label "${option.visibleLabel}" (testid "${option.testId}")`);
     } else if (option.testId.endsWith(`-${requested}-option`)) {
@@ -314,7 +341,9 @@ export function resolveModelOption(
     };
   }
 
-  const nearest = nearestModels(requested, options);
+  // Over `candidates`: under `providerStrict` another provider's same-named option is
+  // not this model, and naming it as the nearest offered would contradict the verdict.
+  const nearest = nearestModels(requested, candidates);
   const toggleEvidence =
     listed === undefined
       ? "provider toggles were not observed on this path"
@@ -543,7 +572,9 @@ export type PinnedSelection =
  * defects and must never reach a caller that would skip on them. Only an
  * *established* absence is handed back, and even then the caller decides —
  * `absentBehavior: "return"` exists for `setup-openai`'s `fallbackToRanking`
- * consumers (#606), which must degrade rather than fail on a stale pin.
+ * consumers (#606), which must degrade rather than fail on a stale pin, and for
+ * `setupAzureFoundry`, which recovers by reloading and re-enabling and fails on its own
+ * terms rather than ever passing an absence on as a skip (#2281).
  */
 export async function selectPinnedModelOption(
   page: Page,
@@ -552,6 +583,8 @@ export async function selectPinnedModelOption(
     listedModels?: string[];
     checkedModels?: string[];
     providerLabel?: string;
+    /** See `ResolveContext.providerStrict`. */
+    providerStrict?: boolean;
     /**
      * `enableAndSettleModelToggles`' result. `write-stalled` is deliberately NOT
      * returnable through `absentBehavior: "return"`: that hatch exists for a stale
@@ -568,6 +601,7 @@ export async function selectPinnedModelOption(
     listedModels: opts.listedModels,
     checkedModels: opts.checkedModels,
     providerLabel: opts.providerLabel,
+    providerStrict: opts.providerStrict,
     toggleWrite: opts.toggleWrite,
   });
 

@@ -10,6 +10,7 @@ import {
   type Provider,
 } from "./provider-config";
 import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
+import { AZURE_FOUNDRY, validateAzureFoundry } from "./azure-foundry";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -406,6 +407,35 @@ async function collectProviders(
   }
 
   return merged;
+}
+
+/** Foundry's key-axis record and catalog contribution (#2281). */
+export const AZURE_FOUNDRY_ENABLEMENT_DETAIL =
+  "not enabled by the sweep: Azure AI Foundry is configured in Langflow only by a run " +
+  "that targets it (globalSetup / setupAzureFoundry), never by collect-models (#2281)";
+
+export async function collectAzureFoundry(
+  validate: () => ReturnType<typeof validateAzureFoundry> = () => validateAzureFoundry(),
+): Promise<{ record: ProviderRecord; models: ModelRecord[] }> {
+  const verdict = await validate();
+  const record: ProviderRecord = {
+    provider: AZURE_FOUNDRY,
+    model: verdict.model,
+    status: verdict.status,
+    error: verdict.error,
+    checkedAt: new Date().toISOString(),
+    targetEnablement: null,
+    targetEnablementDetail: verdict.status === "active" ? AZURE_FOUNDRY_ENABLEMENT_DETAIL : null,
+  };
+  const icon = record.status === "active" ? "✅" : "❌";
+  console.log(
+    `${icon} ${AZURE_FOUNDRY} (${record.model ?? "no deployment declared"})` +
+      (record.error ? ` — ${record.error}` : ""),
+  );
+  return {
+    record,
+    models: verdict.model ? [{ provider: AZURE_FOUNDRY, model: verdict.model }] : [],
+  };
 }
 
 // ─── Model collection (UI navigation) ─────────────────────────────────────────
@@ -1843,6 +1873,17 @@ export async function collectAll(page: Page): Promise<void> {
   // Step 3: Validate the key axis and merge both verdicts
   const providers = await collectProviders(models, buildAxis, stalls, rejections);
 
+  // Step 3a: Azure AI Foundry, validated against Azure directly and NEVER configured in
+  // Langflow here (#2281). The sweep above leaves every provider it saves configured
+  // for the whole run, and the Foundry provider spec needs Foundry unconfigured — see
+  // `azure-foundry.ts`. Its model is the declared deployment, so models.json gains it
+  // only when one is declared: an undeclared provider is not a target, and a
+  // declared-but-dead one stays a target so its specs SKIP with the reason instead of
+  // vanishing from the run (#1012).
+  const azure = await collectAzureFoundry();
+  providers.push(azure.record);
+  models.push(...azure.models);
+
   // BOTH data files are written BEFORE the target-model step, and providers.json is
   // then patched with its verdict. Order matters more than it looks: step 3b spends
   // up to one write per keyed provider plus a read against a single-worker backend,
@@ -1888,6 +1929,10 @@ export async function collectAll(page: Page): Promise<void> {
     }),
   );
   for (const record of providers) {
+    // Foundry carries its own verdict from step 3a (#2281) and is never in
+    // `displayNames`, so it got no enable above; skipping it here keeps its record's
+    // `targetEnablementDetail` from being overwritten with "not in providerConfigMap".
+    if (record.provider === AZURE_FOUNDRY) continue;
     const providerDisplayName = displayNames.get(record.provider);
     const verdict = providerDisplayName ? enablement.get(providerDisplayName) : undefined;
     if (record.status !== "active" || !record.model) {

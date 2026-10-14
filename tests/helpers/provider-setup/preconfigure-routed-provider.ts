@@ -129,7 +129,7 @@ export async function preconfigureRoutedProvider(
     return {
       attempted: true,
       configured: false,
-      detail: `ANY_COMPLETION_PROVIDER="${routed}" is an API-key provider — nothing to pre-configure`,
+      detail: `ANY_COMPLETION_PROVIDER="${routed}" is a hosted provider — nothing to pre-configure`,
     };
   }
 

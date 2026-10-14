@@ -101,7 +101,9 @@ async function openRoutedPlayground(
   provider: Provider,
   model?: string,
 ): Promise<PlaygroundPage> {
-  const keyless = providerConfigMap[provider].credential !== "api-key";
+  // `=== "base-url"`, not `!== "api-key"`: a `deployment` provider (Azure AI Foundry,
+  // #2281) is hosted, so it gets the hosted-pin skip, not the keyless path.
+  const keyless = providerConfigMap[provider].credential === "base-url";
   test.skip(!keyless && provider !== "openai", HOSTED_PIN_UNSUPPORTED);
 
   if (provider === "openai") return openConfiguredPlayground(page, flowId);

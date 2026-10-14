@@ -46,7 +46,7 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
     .map((option) => (option.model ?? option.visibleLabel).trim())
     .filter(Boolean);
 
-  const envModel = process.env.MODEL_TEST_ID?.trim();
+  const envModel = openAIModelPin();
   const chosen =
     (envModel && labels.find((label) => label === envModel)) ||
     PREFERRED_CHAT_MODELS.find((model) => labels.includes(model)) ||
@@ -101,7 +101,7 @@ async function enablePreferredModelToggle(page: Page): Promise<void> {
   const toggles = page.locator('[data-testid^="llm-toggle-"]');
   await toggles.first().waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
 
-  const envModel = process.env.MODEL_TEST_ID?.trim();
+  const envModel = openAIModelPin();
   const candidates = [envModel, ...PREFERRED_CHAT_MODELS].filter(Boolean) as string[];
 
   for (const model of candidates) {
@@ -355,6 +355,23 @@ const NON_REASONING_CHAT_MODELS = [
   "gpt-5.1-chat-latest",
 ];
 
+/**
+ * `MODEL_TEST_ID`, but only when the run's pin is OpenAI's (#2281).
+ *
+ * The lanes emit `MODEL_TEST_ID` together with `MODEL_TEST_PROVIDER`, and the id names
+ * the PINNED provider's model — `claude-haiku-4-5` on an Anthropic day, `gpt-5.6-sol` on
+ * an Azure AI Foundry one. Read unconditionally, this OpenAI helper looked for that id
+ * among OpenAI's options: a Claude id in an OpenAI picker, or — worse — OpenAI's own
+ * `gpt-5.6-sol`, a REASONING model (the #569 120 s hang), because the Foundry deployment
+ * shares its name. A pin to another provider says nothing about which OpenAI model to
+ * use, so it is ignored here.
+ */
+export function openAIModelPin(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const pinnedProvider = env.MODEL_TEST_PROVIDER?.trim();
+  if (pinnedProvider && pinnedProvider !== "openai") return undefined;
+  return env.MODEL_TEST_ID?.trim() || undefined;
+}
+
 // The backend tags every *reasoning* model by self-listing its own name in
 // `metadata.reasoning_models`; plain chat models omit the field. This is the
 // authoritative, build-agnostic signal — the hardcoded name lists drift as the
@@ -408,7 +425,7 @@ export async function setAgentModelViaApi(page: Page, flowId: string): Promise<s
       !AVOID_MODEL.test(nameOf(o) ?? ""),
   );
 
-  const envModel = process.env.MODEL_TEST_ID?.trim();
+  const envModel = openAIModelPin();
   const preferred = [envModel, ...NON_REASONING_CHAT_MODELS].filter(Boolean) as string[];
 
   let chosenOption =

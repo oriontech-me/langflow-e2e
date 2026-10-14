@@ -326,14 +326,69 @@ test("ALL_MODELS=true sweeps every provider", () => {
   assert.equal(targets.length, CATALOG.length);
 });
 
-test("MODEL_TEST_ID outranks MODEL_TEST_PROVIDER across providers", () => {
+test("the pair picks the record matching BOTH when a model id exists under two providers (#2281)", () => {
+  // Measured before the fix: OpenAI's catalog also lists `gpt-5.6-sol`, the name of the
+  // Azure AI Foundry deployment, ahead of it — and the first-match lookup ran a lane
+  // pinned to azure-ai-foundry entirely on OpenAI, green.
+  const catalog: ModelRecord[] = [
+    { provider: "openai", model: "gpt-5.6-sol" },
+    { provider: "azure-ai-foundry", model: "gpt-5.6-sol" },
+  ];
+  const pinned = resolve(
+    { MODEL_TEST_PROVIDER: "azure-ai-foundry", MODEL_TEST_ID: "gpt-5.6-sol" },
+    { models: catalog },
+  );
+  assert.deepEqual(labels(pinned), ["azure-ai-foundry / gpt-5.6-sol"]);
+  // Without a provider the id alone still infers the FIRST record, as before.
+  assert.deepEqual(
+    labels(resolve({ MODEL_TEST_ID: "gpt-5.6-sol" }, { models: catalog })),
+    ["openai / gpt-5.6-sol"],
+  );
+});
+
+test("MODEL_TEST_ID outranks MODEL_TEST_PROVIDER across providers, and says so", () => {
   // Behaviour change for the two copies that had no MODEL_TEST_ID branch, made
-  // explicit so it is a decision and not a regression discovered later.
-  const targets = resolve({
-    MODEL_TEST_PROVIDER: "openai",
-    MODEL_TEST_ID: "claude-sonnet-5",
-  });
+  // explicit so it is a decision and not a regression discovered later. Announced
+  // since #2281: a Foundry pin with no Foundry record ran on OpenAI with nothing said.
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (msg: unknown) => void warnings.push(String(msg));
+  let targets: TestTarget[];
+  let paired: TestTarget[];
+  try {
+    targets = resolve({
+      MODEL_TEST_PROVIDER: "openai",
+      MODEL_TEST_ID: "claude-sonnet-5",
+    });
+    paired = resolve(
+      { MODEL_TEST_PROVIDER: "azure-ai-foundry", MODEL_TEST_ID: "gpt-5.6-sol" },
+      { models: [{ provider: "azure-ai-foundry", model: "gpt-5.6-sol" }] },
+    );
+  } finally {
+    console.warn = original;
+  }
   assert.deepEqual(labels(targets), ["anthropic / claude-sonnet-5"]);
+  assert.deepEqual(labels(paired), ["azure-ai-foundry / gpt-5.6-sol"]);
+  assert.equal(warnings.length, 1, "only the override warns, never a pair that matched");
+  assert.match(warnings[0], /no record under MODEL_TEST_PROVIDER="openai".*resolves to "anthropic"/);
+});
+
+test("#2281: a Foundry pin whose catalog lacks the deployment warns that it runs on OpenAI", () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (msg: unknown) => void warnings.push(String(msg));
+  let targets: TestTarget[];
+  try {
+    targets = resolve(
+      { MODEL_TEST_PROVIDER: "azure-ai-foundry", MODEL_TEST_ID: "gpt-5.6-sol" },
+      { models: [{ provider: "openai", model: "gpt-5.6-sol" }] },
+    );
+  } finally {
+    console.warn = original;
+  }
+  assert.deepEqual(labels(targets), ["openai / gpt-5.6-sol"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /"azure-ai-foundry".*resolves to "openai"/);
 });
 
 test("an id absent from the catalog returns a provider-less target AND warns", () => {
@@ -581,7 +636,7 @@ test("a KEYED provider is rejected and pointed at MODEL_TEST_PROVIDER", () => {
     ),
   );
   assert.equal(targets[0].label, "provider:openai (routed)");
-  assert.match(targets[0].skipReason ?? "", /API-key provider/);
+  assert.match(targets[0].skipReason ?? "", /hosted provider/);
   assert.match(targets[0].skipReason ?? "", /MODEL_TEST_PROVIDER/);
 });
 

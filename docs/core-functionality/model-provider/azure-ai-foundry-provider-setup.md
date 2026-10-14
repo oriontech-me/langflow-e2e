@@ -1,6 +1,6 @@
 # Azure AI Foundry — unified provider setup (deployment names, not catalog IDs)
 
-**Last validated:** Langflow 1.13.x (nightly `latest`, 2026-10-01, #1480: all six tests on a real Azure AI Foundry resource via `manual.yml`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev35`, 2026-10-14, #2281: 6/6 on a run pinned to OpenAI, and all six skipped with the stated reason on a run pinned to Azure AI Foundry. Earlier: nightly `latest`, 2026-10-01, #1480, all six on a real resource via `manual.yml`)
 
 ---
 
@@ -136,13 +136,30 @@ missing-dependency contract `google-provider.spec.ts` carries for
 
 - Serial (`test.describe.configure({ mode: "serial" })`) and run with
   `--workers=1`: every test drives the same account-wide Settings state.
-- No `collect-models` run needed — Azure AI Foundry is deliberately **not** added
-  to `providerConfigMap` (`tests/helpers/provider-setup/provider-config.ts`).
-  That map feeds the `collect-models` sweep and the keyed-provider surfaces; a
-  two-variable provider does not fit its `api-key` / `base-url` union, and adding
-  it would couple every lane's pre-flight to an Azure resource. The spec keeps
-  its env gating local, exactly as `groq-provider.spec.ts` and
-  `mistral-provider.spec.ts` do.
+- No `collect-models` run needed. Since #2281 Azure AI Foundry **is** in
+  `providerConfigMap` (`tests/helpers/provider-setup/provider-config.ts`), as a
+  `deployment` provider so the agent specs can run on it — but it is **not** keyed,
+  so the `collect-models` UI sweep never configures it in Langflow: the collector
+  validates the declared deployment against Azure directly and leaves the instance
+  untouched. That is what keeps this spec's unconfigured-state tests runnable on
+  every run that does not target Azure. The spec keeps its own env gating
+  (`probeFoundry`) for tests 5–6.
+- **The whole file yields on a run whose agent specs target Azure AI Foundry**
+  (#2281). On such a run `globalSetup` configures Foundry before any worker starts
+  and the agent specs use it in parallel, so a `beforeEach` skips every test with
+  that reason: tests 1, 2 and 4 need the unconfigured state (the seed catalog, the
+  read-only panel, a fake deployment accepted without a credential to validate it),
+  test 3 would save bogus credentials over the stored one, and tests 5 and 6 would
+  store a credential and delete it under a running agent spec. "Targets" is decided by `azureFoundryTargeted()`
+  (`tests/helpers/provider-setup/azure-foundry.ts`), the same predicate
+  `globalSetup` uses, derived from `resolveTestTargets` — so a run pinned to another
+  provider (every daily rotation slot and the PR lane, today) runs this file in full.
+  Foundry is pinned only by a declared run (`DECLARED_MODEL_PROVIDER` on the VM,
+  `MODEL_TEST_PROVIDER` by hand) or targeted by an unpinned run whose catalog lists it
+  — which includes a `manual.yml` dispatch with `provider=auto` (the default) or
+  `all-models`, since that lane hands the Azure secrets to `Collect models`. To
+  exercise this file's credential tests through `manual.yml`, dispatch it pinned to a
+  keyed provider (`provider=openai`).
 
 ---
 
@@ -530,7 +547,8 @@ OpenRouter so the asserts cannot pass on a page-wide string.
 
 ## When to review this test *(optional)*
 
-- When the Azure credentials land as CI secrets (tests 5–6 stop skipping there).
+- When Azure AI Foundry joins the daily rotation: this file then skips, by design,
+  on Azure's slot (see Preconditions).
 - If the Foundry hint / placeholder strings change (`modelProviders.*` i18n keys)
   — the assert is on the substrings `deployment names` and
   `not catalog model IDs`.

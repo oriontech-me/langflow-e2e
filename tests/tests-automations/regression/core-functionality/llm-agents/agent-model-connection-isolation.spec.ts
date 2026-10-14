@@ -35,9 +35,25 @@ function resolveTarget(): LoadSimpleAgentOptions | undefined {
   }
 
   if (process.env.MODEL_TEST_ID) {
-    const record = models.find((m) => m.model === process.env.MODEL_TEST_ID);
+    // The record matching BOTH pins wins, as in `resolveTestTargets` (#2281): a model
+    // id is not unique across providers — OpenAI's catalog lists `gpt-5.6-sol`, the
+    // Azure AI Foundry deployment's name, ahead of it — so a first match on the id
+    // alone ran a Foundry-pinned run of this spec on OpenAI.
+    const record =
+      (process.env.MODEL_TEST_PROVIDER &&
+        models.find(
+          (m) =>
+            m.model === process.env.MODEL_TEST_ID && m.provider === process.env.MODEL_TEST_PROVIDER,
+        )) ||
+      models.find((m) => m.model === process.env.MODEL_TEST_ID);
     const provider = (record?.provider ??
       process.env.MODEL_TEST_PROVIDER) as Provider | undefined;
+    if (process.env.MODEL_TEST_PROVIDER && provider !== process.env.MODEL_TEST_PROVIDER) {
+      console.warn(
+        `MODEL_TEST_ID="${process.env.MODEL_TEST_ID}" has no record under MODEL_TEST_PROVIDER=` +
+          `"${process.env.MODEL_TEST_PROVIDER}" in models.json; this spec runs it on "${provider}".`,
+      );
+    }
     return { provider, model: process.env.MODEL_TEST_ID };
   }
 

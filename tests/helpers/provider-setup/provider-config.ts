@@ -1,4 +1,4 @@
-export type Provider = "openai" | "anthropic" | "google" | "ollama";
+export type Provider = "openai" | "anthropic" | "google" | "ollama" | "azure-ai-foundry";
 
 /**
  * How a provider is configured in Settings → Model Providers.
@@ -16,7 +16,7 @@ export type Provider = "openai" | "anthropic" | "google" | "ollama";
  * keyless provider. `keyedProviders` in `index.ts` is the ready-made narrowing for
  * "every provider that has a key".
  */
-export type ProviderCredentialKind = "api-key" | "base-url";
+export type ProviderCredentialKind = "api-key" | "base-url" | "deployment";
 
 interface ProviderConfigBase {
   providerTestId: string;
@@ -36,7 +36,43 @@ export interface BaseUrlProviderConfig extends ProviderConfigBase {
   variableInputTestId: string;
 }
 
-export type ProviderConfig = ApiKeyProviderConfig | BaseUrlProviderConfig;
+/**
+ * A provider whose model identities are OPERATOR-DEFINED deployments rather than a
+ * catalog the provider publishes (#2281). Azure AI Foundry is the first: inference
+ * addresses the portal deployment name, and the provider is configured by more than
+ * one variable (an API key AND an endpoint).
+ *
+ * Three things set it apart from `api-key`, and each decides where it may NOT go:
+ *
+ *  - It is never configured by the `collect-models` UI sweep. The sweep leaves every
+ *    keyed provider configured for the whole run, and the Foundry provider spec
+ *    (`azure-ai-foundry-provider-setup.spec.ts`) needs it UNCONFIGURED to test that
+ *    surface — tests 2, 3, 5 and 6 skip on a configured instance, tests 1 and 4
+ *    assert unconfigured-only state, and tests 5 and 6 delete the credential they
+ *    store. So the sweep validates the deployment against Azure directly and
+ *    records it, and Langflow is configured only when a run actually targets it
+ *    (`azure-foundry.ts`).
+ *  - Its model is DECLARED, not collected: `deploymentEnvKey` names the deployment,
+ *    because the resource's deployment list is the operator's, not a catalog.
+ *  - It is not in `keyedProviders`. Those consumers' subject is one key typed into one
+ *    field (the invalid-key journey, the UI sweep, the build-axis table), and a
+ *    two-variable provider fits none of them.
+ */
+export interface DeploymentProviderConfig extends ProviderConfigBase {
+  credential: "deployment";
+  /**
+   * The Langflow variables that configure the provider, in WRITE order. Each is
+   * written under its own name, from the env var of the same name. Order matters:
+   * the backend validates on write and returns early while only one of them exists,
+   * so the last one written is the write that gets validated (measured in the
+   * Foundry provider spec).
+   */
+  variables: string[];
+  /** The env var naming the deployment the agent specs run against. */
+  deploymentEnvKey: string;
+}
+
+export type ProviderConfig = ApiKeyProviderConfig | BaseUrlProviderConfig | DeploymentProviderConfig;
 
 // ─── Single source of per-provider configuration ──────────────────────────────
 // When adding a new provider, add an entry here.
@@ -84,6 +120,19 @@ export const providerConfigMap = {
     providerTestId: "provider-item-Ollama",
     variableInputTestId: "provider-variable-input-OLLAMA_BASE_URL",
     envKeys: ["OLLAMA_BASE_URL"],
+  },
+  // OPERATOR-DEFINED deployments behind a key AND an endpoint (#2281). Configured on
+  // demand, never by the UI sweep — see `DeploymentProviderConfig`.
+  "azure-ai-foundry": {
+    credential: "deployment",
+    providerTestId: "provider-item-Azure AI Foundry",
+    variables: ["AZURE_AI_FOUNDRY_API_KEY", "AZURE_AI_FOUNDRY_ENDPOINT"],
+    deploymentEnvKey: "AZURE_AI_FOUNDRY_TEST_DEPLOYMENT",
+    envKeys: [
+      "AZURE_AI_FOUNDRY_API_KEY",
+      "AZURE_AI_FOUNDRY_ENDPOINT",
+      "AZURE_AI_FOUNDRY_TEST_DEPLOYMENT",
+    ],
   },
 } satisfies Record<Provider, ProviderConfig>;
 

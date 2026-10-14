@@ -1,6 +1,6 @@
 # Agent Model Connection Isolation
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev35`, pinned to Azure AI Foundry, #2281). Earlier: 1.11.x
 
 ---
 
@@ -22,7 +22,7 @@ This is a pure UI/state assertion — no LLM call is made.
 
 ## Step-by-step *(required)*
 
-1. Resolve a single `{ provider, model }` target: `MODEL_TEST_ID` wins (its provider is inferred from `models.json`, falling back to `MODEL_TEST_PROVIDER`); otherwise the first model of `MODEL_TEST_PROVIDER` (or of the first env-configured provider) is read from `helpers/provider-setup/data/models.json`. The test skips with an accurate reason when no provider resolves — either no provider has its env keys configured, or a given `MODEL_TEST_ID` could not be mapped to a provider.
+1. Resolve a single `{ provider, model }` target: `MODEL_TEST_ID` wins (its provider is inferred from `models.json`, falling back to `MODEL_TEST_PROVIDER`; when both are set, the record matching both wins, because a model id can exist under two providers — OpenAI's catalog and the Azure AI Foundry deployment both carry `gpt-5.6-sol`, #2281); otherwise the first model of `MODEL_TEST_PROVIDER` (or of the first env-configured provider) is read from `helpers/provider-setup/data/models.json`. The test skips with an accurate reason when no provider resolves — either no provider has its env keys configured, or a given `MODEL_TEST_ID` could not be mapped to a provider.
 2. `SimpleAgentTemplatePage.load({ provider, model })` — loads the Simple Agent template, configures the provider via the unified model picker (Manage Model Providers → API key → enable models) and selects the resolved model. `MODEL_NOT_AVAILABLE` is caught and turned into a skip.
 3. Assert the picker trigger `model_model` is visible.
 4. Capture the selected model label from `value-dropdown-model_model` and assert it is non-empty and not the `"Select a model"` placeholder (a concrete model is selected — the precondition).

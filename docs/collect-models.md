@@ -818,6 +818,17 @@ the default.
   is what makes a *declared per-provider expectation map* unnecessary — every
   provider this spec knows about is one the image is expected to ship, so "component
   missing" is unambiguously a failure here.
+- **Does not configure Azure AI Foundry in Langflow** (#2281). Foundry is in
+  `providerConfigMap` as a `deployment` provider, not a keyed one: the sweep
+  validates the deployment named by `AZURE_AI_FOUNDRY_TEST_DEPLOYMENT` against Azure
+  directly (`validateAzureFoundry` in `tests/helpers/provider-setup/azure-foundry.ts`)
+  and records it in `providers.json` / `models.json`, but never saves it in the
+  Settings UI and never enables it — so its record carries `targetEnablement: null`
+  and the target-enablement step skips it by name. Leaving it configured, as the sweep
+  does for the keyed three, would turn the Foundry provider spec's unconfigured-state
+  tests into a permanent skip. A run that targets Foundry configures it in
+  `globalSetup` instead. Its key-axis verdict DOES gate like the others: a declared
+  Foundry that probes inactive for a non-billing reason fails the env-keyed step.
 - **Does not detect a package that is present but broken at call time.** An
   incompatible `langchain-*` version that imports cleanly and fails on `invoke`
   (the #643 class) builds fine and passes this axis.
