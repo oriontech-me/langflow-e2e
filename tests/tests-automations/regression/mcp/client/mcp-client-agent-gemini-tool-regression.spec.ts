@@ -151,11 +151,11 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
   // `sendAndAwaitPlaygroundTurn` (#2123), so the poll starts after the turn ends.
   // Quarantined for #2176 and lifted there with `@stable` still off. The VM lane
   // persisted the final reply as "Echo: hello m" on 2026-09-10 (1.13.0.dev8) and
-  // 2026-10-05 (1.13.0.dev33). That is a Langflow defect, not a test one: `lfx`
-  // drops the plain-string items of a mixed list content when it keeps a round's
-  // text. See the spec doc's "Known product defect". The test is right to fail
-  // when it fires, so `@stable` returns only once the upstream fix lands, and step
-  // 8 now names the cause when it does fail.
+  // 2026-10-05 (1.13.0.dev33). That was a Langflow defect, not a test one: `lfx`
+  // dropped the plain-string items of a mixed list content when it kept a round's
+  // text (LE-2919). langflow-ai/langflow#15650 fixed it in 1.13.0.dev37, and
+  // `@stable` was restored under #2176 with no test-side change. Step 8 still
+  // names the cause if the defect returns. See the spec doc's "Known product defect".
   test(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
     // `@stable` was auto-removed by the daily of 2026-08-10 (commit c954cd9, run
@@ -166,7 +166,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
     // the source — the catalog is now frozen per run, see
     // `helpers/provider-setup/catalog-snapshot.ts` (#1386) — and the assertion itself
     // re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with google configured.
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
+    { tag: ["@stable", "@mcp", "@agents", "@regression", "@model-provider"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(
