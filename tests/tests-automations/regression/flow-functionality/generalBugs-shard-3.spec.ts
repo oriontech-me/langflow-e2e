@@ -7,6 +7,7 @@ import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { fillSidebarSearch } from "../../../helpers/flows/fill-sidebar-search";
+import { openBlankFlowFromModal } from "../../../helpers/flows/open-blank-flow-from-modal";
 import { providerSkipGate } from "../../../helpers/provider-setup/provider-health";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
@@ -128,7 +129,9 @@ test(
       timeout: 30000,
     });
 
-    await page.getByTestId("blank-flow").click();
+    // Not a bare click: the creation can be refused under parallel workers, and
+    // a refused one leaves the modal over the editor for good (#2237).
+    await openBlankFlowFromModal(page);
     await page.waitForSelector('[data-testid="sidebar-search-input"]', {
       timeout: 30000,
     });
@@ -228,12 +231,12 @@ const PLAYGROUND_DIALOG = { role: "dialog" as const, name: "Playground" };
 // #2197: the click on `playground-btn-flow-io` timed out because the Chat Output
 // drag was issued while the editor was still read-only (see `dragFromSidebar`),
 // so no node landed and only the disabled twin was ever rendered.
-// Quarantined for #2237: recurrent flake on the VM lane (2026-09-22, 2026-10-09 on 1.13.0.dev37),
-// the disabled `playground-btn-flow` is not rendered within the 45 s editor budget on a blank flow.
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2237's deliverable.
-test.fixme(
+// #2237: the first assertion found no trigger at all because the blank flow was
+// never created — the backend refused it (`400 Name must be unique`) and the
+// templates modal stayed open over the welcome overlay, which hides the toolbar.
+test(
   "playground button should be enabled or disabled",
-  { tag: ["@release", "@workspace", "@playground"] },
+  { tag: ["@stable", "@release", "@workspace", "@playground"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -242,12 +245,26 @@ test.fixme(
       timeout: 30000,
     });
 
-    await page.getByTestId("blank-flow").click();
+    // The backend derives a unique name with a check-then-insert, so a creation
+    // racing another worker's is refused with `400 Name must be unique`. Upstream
+    // then leaves the templates modal open, and the placeholder's welcome overlay
+    // under it: the editor never opens, and no timeout below could help. The
+    // helper waits for the modal to close and clicks once more if it has not;
+    // measured on 1.13.0.dev42, the second POST is answered 201 (#2237).
+    await openBlankFlowFromModal(page);
+
+    // The editor renders no toolbar while the welcome overlay is open, so a stuck
+    // overlay is reported here as itself rather than as a missing trigger.
+    await expect(
+      page.getByTestId("flow-builder-welcome-panel"),
+      "the Flow Builder welcome overlay still covers the blank flow; the editor " +
+        "renders no toolbar while it is open, so neither Playground trigger can appear",
+    ).toBeHidden();
 
     // The editor mounts twice on the way in, and between the two mounts the
-    // toolbar is not in the DOM at all — measured up to ~4.3 s unforced, which
-    // the 5 s default lost on 2026-09-22 (#2197). The trigger is still asserted
-    // as the disabled twin; it is only given the editor-mount budget.
+    // toolbar is not in the DOM at all — measured up to ~4.3 s unforced (#2197),
+    // more than the 5 s default leaves on a loaded host. The trigger is still
+    // asserted as the disabled twin; it is only given the editor-mount budget.
     await expect(page.getByTestId("playground-btn-flow")).toBeDisabled({
       timeout: EDITOR_READY_TIMEOUT_MS,
     });

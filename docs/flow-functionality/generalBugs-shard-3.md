@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/flow-functionality/generalBugs-shard-3.spec.ts`
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev34`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev42`)
 
 ---
 
@@ -17,11 +17,12 @@ Both tests in this file are active and `@stable`. The second —
 **"playground button should be enabled or disabled"** — asserts the Playground
 entry point's own gate: with a blank flow the trigger is rendered disabled, and
 after one Chat Output is dropped on the canvas the same trigger opens the
-Playground dialog. It has been quarantined twice, for two unrelated causes: with
-`test.skip` until #1791 (a stale expectation — see *The quarantine was right about
-the failure and wrong about the cause*), and with `test.fixme` for #2197 (the
-dropped Chat Output never reached the canvas — see *#2197: the drop that never
-landed*).
+Playground dialog. It has been quarantined three times, for three unrelated
+causes: with `test.skip` until #1791 (a stale expectation — see *The quarantine was
+right about the failure and wrong about the cause*), with `test.fixme` for #2197
+(the dropped Chat Output never reached the canvas — see *#2197: the drop that never
+landed*), and with `test.fixme` for #2237 (the blank flow was never created, so the
+editor never opened — see *#2237: the blank flow that was never created*).
 
 > **Fix (#614).** The spec failed deterministically on the 1.11 nightly because
 > the OpenAI model node's handle testids drifted: the node type id changed from
@@ -34,34 +35,43 @@ landed*).
 
 **Test 1 — "should copy code from playground modal"**
 
-1. Blank flow → drag Chat Output, Chat Input, and the OpenAI model node. Each
+1. Open a blank flow from the templates modal, and only continue once the modal
+   has **closed** — the creation went through and the editor opened (see *#2237*
+   below). A creation the backend refused is repaired by one more click; a second
+   refusal fails by name.
+2. Drag Chat Output, Chat Input, and the OpenAI model node. Each
    drag is issued only once its sidebar entry is draggable — the editor's
    write-permission verdict has resolved (see *#2197* below) — and each is
    verified to have added one node of its type before the next step.
-2. Configure the OpenAI node (`initialGPTsetup`), fill the API key.
-3. Wire Chat Input → OpenAI → Chat Output via the node handles (current testids).
-4. Open the Playground, send a message, open the API-access Python tab, click
+3. Configure the OpenAI node (`initialGPTsetup`), fill the API key.
+4. Wire Chat Input → OpenAI → Chat Output via the node handles (current testids).
+5. Open the Playground, send a message, open the API-access Python tab, click
    **Copy code**.
-5. Assert the clipboard content is non-empty and contains "Hello" (the sent
+6. Assert the clipboard content is non-empty and contains "Hello" (the sent
    message text embedded in the generated snippet).
 
 **Test 2 — "playground button should be enabled or disabled"**
 
-1. Open a blank flow. The editor mounts twice on the way in, and between the two
-   mounts the toolbar is not in the DOM at all, so the first assertion is given
-   the editor-mount budget (30 s) rather than the 5 s default.
-2. Assert the Playground trigger is the **disabled twin** `playground-btn-flow`
+1. Open a blank flow from the templates modal, and only continue once the modal
+   has **closed** — the same barrier as Test 1, with the same single repair click
+   for a refused creation (see *#2237* below).
+2. Assert the Flow Builder welcome overlay (`flow-builder-welcome-panel`) is
+   hidden: the editor renders no toolbar at all while it is open, so a stuck
+   overlay is reported as the overlay rather than as a missing trigger.
+3. Assert the Playground trigger is the **disabled twin** `playground-btn-flow`
    (disabled), and the Playground dialog (`role="dialog"`, name "Playground") is
-   hidden.
-3. Search the sidebar for **Chat Output** and wait until its entry is draggable
+   hidden. The editor mounts twice on the way in, and between the two mounts the
+   toolbar is not in the DOM at all, so this assertion is given the editor-ready
+   budget (45 s) rather than the 5 s default.
+4. Search the sidebar for **Chat Output** and wait until its entry is draggable
    (`draggable="true"`) — the editor's write-permission verdict has resolved,
    and before that the entry refuses the gesture by design. Then drag it onto
    the canvas once and verify the drop **landed**: exactly one Chat Output node
    is on the canvas. A drop that does not land is reported as such, by name —
    never as the Playground trigger that later fails to appear.
-4. Assert the enabled trigger `playground-btn-flow-io` is rendered and enabled
+5. Assert the enabled trigger `playground-btn-flow-io` is rendered and enabled
    and the disabled twin is gone — the state change is waited on, not the click.
-5. Click `playground-btn-flow-io` and assert the Playground dialog is visible.
+6. Click `playground-btn-flow-io` and assert the Playground dialog is visible.
 
 ---
 
@@ -71,8 +81,9 @@ landed*).
 
 `@playground` is the functional half for both tests (the code-copy modal and the
 Playground gate); `@workspace` covers the second test's canvas work. Both are
-`@stable` since #1791; the second lost the tag to the #2197 quarantine and gets it
-back with that fix.
+`@stable` since #1791; the second lost the tag to the #2197 quarantine and got it
+back with that fix, then lost it again to the #2237 quarantine and gets it back
+with this one.
 
 > The previous justification for withholding `@stable` — *"it depends on a live
 > OpenAI key"* — does not hold in this repo and is recorded here so it is not
@@ -93,16 +104,22 @@ back with that fix.
 opening the API-access Python tab, the **Copy code** button yields clipboard
 content with length > 0 that contains "Hello".
 
-The test fails if any handle cannot be clicked (wiring drift) or the code cannot
-be copied.
+The test fails if the blank flow cannot be opened (the templates modal is still
+up after one repair click — see Test 2), any handle cannot be clicked (wiring
+drift) or the code cannot be copied.
 
-**Test 2.** On a ready blank flow the Playground trigger is the disabled twin
+**Test 2.** After **Blank Flow** is clicked, the templates modal closes
+(`role="dialog"` count 0) and the welcome overlay `flow-builder-welcome-panel` is
+hidden; on that blank flow the Playground trigger is the disabled twin
 `playground-btn-flow` and no Playground dialog is open; once **one Chat Output
 node is verified on the canvas**, `playground-btn-flow-io` is rendered **enabled**
 (the disabled twin gone), and clicking it opens `getByRole("dialog", { name:
 "Playground" })`.
 
-The test fails, each with its own message, when: the blank-flow trigger is not
+The test fails, each with its own message, when: the templates modal is still open
+after a second Blank Flow click (the creation was refused twice — the message
+names `400 POST /api/v1/flows/` as the thing to look for); the welcome overlay
+still covers the editor; the blank-flow trigger is not
 the disabled twin (the gate regressed open); the Chat Output sidebar entry never
 becomes draggable (the editor never leaves its permission-pending, read-only
 state); the drop of a draggable entry does not land on the canvas (the add
@@ -119,7 +136,16 @@ the enabled trigger does not open the Playground dialog.
   cf. #772). On a quota-blocked key the send may error and the code-copy step can
   still not be reachable.
 - Helpers: `initialGPTsetup`, `clearApiKeyBadges`, `adjustScreenView`,
-  `awaitBootstrapTest`, `fillSidebarSearch`.
+  `awaitBootstrapTest`, `fillSidebarSearch`, `openBlankFlowFromModal`.
+- `POST /api/v1/flows/` — the blank-flow creation. The backend derives a unique
+  name with a check-then-insert (`_deduplicate_flow_name` in upstream
+  `src/backend/base/langflow/api/v1/flows_helpers.py`), so a creation racing
+  another one by the same user can be refused with `400 Name must be unique` —
+  see *#2237* below.
+- The Flow Builder welcome overlay and the toolbar it hides — upstream
+  `src/frontend/src/components/core/flowBuilderWelcome/flow-builder-welcome-mount.tsx`,
+  `src/frontend/src/modals/templatesModal/index.tsx` (`handleCreateBlankFlow`)
+  and `src/frontend/src/pages/FlowPage/components/PageComponent/index.tsx`.
 - `POST /api/v1/authz/me/permissions` — the editor's write-permission verdict.
   Every sidebar drag in both tests waits for it, read off the entry's
   `draggable` attribute — upstream
@@ -260,3 +286,62 @@ now its own failure, reported by name. And `canvas_controls_dropdown` was
 **rejected** as the readiness barrier the first draft of this doc named: the
 controls render on the editor's *first* mount and vanish with it, so they are
 present before the permission verdict exists.
+
+### #2237: the blank flow that was never created
+
+Quarantined a third time after the test's **first** assertion failed on two VM
+dailies — `toBeDisabled` on `playground-btn-flow`, `element(s) not found`, on
+2026-09-22 (`1.13.0.dev19`, 5 s budget) and again on 2026-10-09 (`1.13.0.dev37`)
+after #2205 had raised that budget to 45 s. Both passed on retry, with no outage
+overlapping either. The triage read the failure snapshot as the welcome overlay
+over the canvas and suspected a slow editor mount.
+
+**The editor never opened, because the blank flow was never created.** The
+2026-10-09 failure screenshot, taken 51 s after the click, shows the **templates
+modal still open** with its **Blank Flow** button, over the placeholder flow that
+New Flow had created ("New Flow (31)" in the header). The whole of that shard's
+log carries exactly one `400 Bad Request - /api/v1/flows/`. Upstream's
+`handleCreateBlankFlow` dismisses the welcome overlay and navigates only once
+`addFlow()` **resolves**; when the creation is refused, it shows a "Flow creation
+error" toast that expires and leaves both the modal and the placeholder's welcome
+overlay in place. `PageComponent` renders the toolbar only while that overlay is
+**closed** (`{!view && !isWelcomeOpen && (… <FlowToolbar /> …)}`), so neither
+trigger can appear at any timeout. The 45 s wait was waiting for an editor that was
+never going to open.
+
+**Why the creation was refused: a known backend race, not new in 1.13.** The
+backend derives a unique name with a check-then-insert. It selects the
+`<name> (N)` rows, computes the next name, and inserts in a separate statement.
+Two creations by the same user that interleave between those steps resolve to the
+same name, and the second insert violates `UNIQUE (flow.user_id, flow.name)`. That
+is the defect recorded in `docs/upstream-bugs/UPSTREAM-BUG-concurrent-flow-create-500.md`
+(not filed upstream). It answered 500 on `1.12.0.dev7` and answers
+`400 {"detail":"Name must be unique"}` on 1.13. The suite exposes it because every
+worker of a shard drives the same superuser, and each test creates "New Flow"
+placeholders and blank flows. A sequential collision is harmless: measured on
+`1.13.0.dev42`, a flow created through the API with the very name the client had
+picked, just before the client's own POST, left the client a `201`, because the
+check deduplicates against committed rows. Only a truly concurrent creation fails.
+
+Measured on `1.13.0.dev42` with a genuine race, not a mocked response: three
+same-name `POST /api/v1/flows/` calls fired through the API concurrently with the
+client's own blank-flow POST.
+
+- **The old sequence (one bare click).** The client's POST lost the race in 2 of
+  4 runs, and every one of those two ended in the daily's state: `400 Name must be
+  unique`, the modal still open (`role="dialog"` = 1), and `playground-btn-flow`
+  never rendered.
+- **The fix (`openBlankFlowFromModal`).** It clicks, waits up to 8 s for the
+  modal to close, and clicks once more if it has not. 10 of 10 runs reached the
+  disabled twin. In 5 of them the client's first POST lost the race (`400`), and
+  the repair click's POST was answered `201` every time, because by then the
+  conflicting row is committed and the check sees it.
+
+The repair is one more click, not a longer wait. A refused creation is not slow,
+nothing is in flight, and the modal will sit there for as long as anyone waits. A
+second refusal fails naming the 400 to look for, so a backend that refuses every
+creation is still a red test with its cause in the message. Test 1 opens its blank
+flow the same way and gets the same barrier. The welcome-overlay assertion that
+now follows the modal is attribution, not a fix: it cannot fail while the creation
+succeeds, because the overlay is dismissed in the same tick as the navigation.
+
