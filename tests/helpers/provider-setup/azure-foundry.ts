@@ -87,6 +87,15 @@ export interface AzureFoundryValidation {
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
+ * Ceiling for the key-axis probe. It runs inside the `collect-models` sweep BEFORE
+ * providers.json and models.json are written, so an endpoint that accepts the
+ * connection and never answers would otherwise hold the sweep for undici's ~300 s
+ * default and risk the spec's own timeout — which discards the whole sweep output,
+ * the #570/#1012 trap. Langflow bounds the same resource (`AZURE_AI_FOUNDRY_REQUEST_TIMEOUT`).
+ */
+export const AZURE_FOUNDRY_PROBE_TIMEOUT_MS = 30_000;
+
+/**
  * The key axis for Foundry: one tiny chat completion against the declared deployment,
  * from the test host, with no Langflow involved.
  *
@@ -120,6 +129,7 @@ export async function validateAzureFoundry(
     const res = await fetchImpl(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "api-key": apiKey },
+      signal: AbortSignal.timeout(AZURE_FOUNDRY_PROBE_TIMEOUT_MS),
       body: JSON.stringify({
         model: deployment,
         messages: [{ role: "user", content: "hi" }],

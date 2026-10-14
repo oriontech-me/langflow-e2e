@@ -33,9 +33,16 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 // answers "are this provider's env vars set", and for Ollama that is a base URL — so
 // on a box with OLLAMA_BASE_URL exported and no API key, an unscoped `.find()` would
 // silently hand this spec a local provider it was never validated against.
+//
+// The pin itself is honoured only when it names a KEYED provider (#2281). Azure AI
+// Foundry is pinnable but not keyed, and this spec DISABLES a model in the pinned
+// provider's panel: on a Foundry-pinned run that panel lists the one deployment every
+// parallel agent spec is running on, so honouring the pin would switch it off under
+// them. Falling back to a keyed provider costs nothing — the behaviour under test is
+// provider-agnostic.
 const envProvider = process.env.MODEL_TEST_PROVIDER as Provider | undefined;
 const provider: Provider | undefined =
-  envProvider && hasProviderEnvKeys(envProvider)
+  envProvider && keyedProviderNames.includes(envProvider as never) && hasProviderEnvKeys(envProvider)
     ? envProvider
     : keyedProviderNames.find(hasProviderEnvKeys);
 

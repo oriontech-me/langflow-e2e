@@ -424,8 +424,8 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
   if (env.MODEL_TEST_ID) {
     const model = env.MODEL_TEST_ID;
     // When the pair is set and a record matches BOTH, that record wins (#2281). A
-    // model id is not unique across providers: the Azure AI Foundry deployment the
-    // rotation pins is named `gpt-5.6-sol`, and OpenAI's catalog lists a model of the
+    // model id is not unique across providers: the Azure AI Foundry deployment a
+    // declared run pins is named `gpt-5.6-sol`, and OpenAI's catalog lists a model of the
     // same name ahead of it, so the first-match lookup ran a `MODEL_TEST_PROVIDER=
     // azure-ai-foundry` lane on OpenAI — measured, every target green and labelled
     // `openai / gpt-5.6-sol`. The provider only DISAMBIGUATES here: with no record

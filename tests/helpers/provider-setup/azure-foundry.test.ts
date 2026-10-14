@@ -321,3 +321,12 @@ test("an undeclared provider makes no request at all", async () => {
   assert.equal(result.configured, false);
   assert.deepEqual(recorded, []);
 });
+
+test("the probe is bounded — a hung endpoint must not hold the sweep before its files are written", async () => {
+  let signal: AbortSignal | undefined | null;
+  await validateAzureFoundry(ENV, async (_url, init) => {
+    signal = init.signal;
+    return new Response("{}", { status: 200 });
+  });
+  assert.ok(signal instanceof AbortSignal, "the probe must carry an abort signal");
+});

@@ -289,11 +289,12 @@ async function preconfigureRouting(ctx: APIRequestContext): Promise<void> {
  * Foundry provider spec find the instance configured from the start, so it yields
  * instead of storing a credential and deleting it under a running agent spec.
  *
- * Skipped on the credential-importing run (`PREFLIGHT_SKIP_CREDENTIALS`), which is the
- * `collect-models` invocation itself: the rotation pin is chosen only AFTER it, so the
- * targeting predicate would read an unpinned run there and configure Foundry for a
- * day whose agents run on another provider — leaving the Foundry provider spec
- * skipped all day.
+ * Skipped whenever `PREFLIGHT_SKIP_CREDENTIALS` is set. The case that matters is the
+ * `collect-models` invocation, which every lane runs with it: the rotation pin is
+ * chosen only AFTER that run, so the targeting predicate would read an unpinned run
+ * there and configure Foundry for a day whose agents run on another provider —
+ * leaving the Foundry provider spec skipped all day. The PR lane also sets it on runs
+ * that need no models; skipping there costs nothing, since no agent spec runs.
  *
  * Never fatal, never silent (#1012): `setupAzureFoundry` retries the configuration
  * per spec and fails with the reason, so a failure here is announced as the likely

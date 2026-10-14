@@ -153,7 +153,9 @@ missing-dependency contract `google-provider.spec.ts` carries for
   spec. "Targets" is decided by `azureFoundryTargeted()`
   (`tests/helpers/provider-setup/azure-foundry.ts`), the same predicate
   `globalSetup` uses, derived from `resolveTestTargets` — so a run pinned to another
-  provider (the daily's other weekdays, the PR lane) runs this file in full.
+  provider (every daily rotation slot and the PR lane, today) runs this file in full.
+  Foundry is pinned only by a declared run (`DECLARED_MODEL_PROVIDER` on the VM,
+  `MODEL_TEST_PROVIDER` by hand) or targeted by an unpinned run whose catalog lists it.
 
 ---
 
@@ -542,7 +544,7 @@ OpenRouter so the asserts cannot pass on a page-wide string.
 ## When to review this test *(optional)*
 
 - When Azure AI Foundry joins the daily rotation: this file then skips, by design,
-  on Azure's weekday (see Preconditions).
+  on Azure's slot (see Preconditions).
 - If the Foundry hint / placeholder strings change (`modelProviders.*` i18n keys)
   — the assert is on the substrings `deployment names` and
   `not catalog model IDs`.

@@ -1929,8 +1929,9 @@ export async function collectAll(page: Page): Promise<void> {
     }),
   );
   for (const record of providers) {
-    // Foundry carries its own verdict from step 3a: enabling its deployment here would
-    // configure it, which is exactly what the sweep must not do (#2281).
+    // Foundry carries its own verdict from step 3a (#2281) and is never in
+    // `displayNames`, so it got no enable above; skipping it here keeps its record's
+    // `targetEnablementDetail` from being overwritten with "not in providerConfigMap".
     if (record.provider === AZURE_FOUNDRY) continue;
     const providerDisplayName = displayNames.get(record.provider);
     const verdict = providerDisplayName ? enablement.get(providerDisplayName) : undefined;
