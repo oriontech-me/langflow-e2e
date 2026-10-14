@@ -1,6 +1,6 @@
 # Azure AI Foundry — unified provider setup (deployment names, not catalog IDs)
 
-**Last validated:** Langflow 1.13.x (nightly `latest`, 2026-10-01, #1480: all six tests on a real Azure AI Foundry resource via `manual.yml`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev35`, 2026-10-14, #2281: 6/6 on a run pinned to OpenAI, and all six skipped with the stated reason on a run pinned to Azure AI Foundry. Earlier: nightly `latest`, 2026-10-01, #1480, all six on a real resource via `manual.yml`)
 
 ---
 
