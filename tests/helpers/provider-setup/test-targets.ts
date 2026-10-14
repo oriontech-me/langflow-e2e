@@ -351,7 +351,7 @@ function resolveRoutedTarget(
   // routed" say nothing about whether the run spends money.
   if (config.credential !== "base-url") {
     return report(
-      `ANY_COMPLETION_PROVIDER="${routed}" is an API-key provider, and this variable ` +
+      `ANY_COMPLETION_PROVIDER="${routed}" is a hosted provider, and this variable ` +
         `routes the any-completion tier to a KEYLESS local one (credential: ` +
         `"base-url"). To narrow the tier to a hosted provider use MODEL_TEST_PROVIDER.`,
     );

@@ -52,11 +52,24 @@ export async function setupAzureFoundry(page: Page, modelTestId?: string): Promi
   }
 
   const providerLabel = langflowProviderName("azure-ai-foundry");
+  const requested = modelTestId ?? declaration.deployment;
   await hideInspectorPanel(page);
   await openModelPickerAfterPanelClose(page, { providerLabel });
-  await selectPinnedModelOption(page, {
-    requested: modelTestId ?? declaration.deployment,
+  const first = await selectPinnedModelOption(page, {
+    requested,
     providerLabel,
-    absentBehavior: "throw",
+    absentBehavior: "return",
   });
+  if (first.status === "selected") return;
+
+  // `wrote` is false when ANOTHER worker created the variables (a duplicate 400), so a
+  // page loaded before that write can still hold the pre-configuration option list.
+  // One reload before calling the deployment absent: an `absent` verdict carries the
+  // MODEL_NOT_AVAILABLE prefix that callers turn into a SKIP, and a stale cache must
+  // not become one.
+  await page.reload();
+  await modelDropdown.waitFor({ state: "visible", timeout: 60000 });
+  await hideInspectorPanel(page);
+  await openModelPickerAfterPanelClose(page, { providerLabel });
+  await selectPinnedModelOption(page, { requested, providerLabel, absentBehavior: "throw" });
 }

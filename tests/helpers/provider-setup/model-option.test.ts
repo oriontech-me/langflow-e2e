@@ -467,3 +467,17 @@ test("a listed model with its toggle OFF stays a setup failure even under a stal
   });
   assert.equal(verdict.kind, "not-enabled");
 });
+
+test("#2281: a model id two providers share resolves to the caller's provider", () => {
+  // OpenAI lists `gpt-5.6-sol` too, ahead of the Azure AI Foundry deployment of the
+  // same name; an id-only match clicked OpenAI's option for a Foundry setup.
+  const options = [option("OpenAI", "gpt-5.6-sol", "1 of 2"), option("Azure AI Foundry", "gpt-5.6-sol", "2 of 2")];
+  const verdict = resolveModelOption("gpt-5.6-sol", options, { providerLabel: "Azure AI Foundry" });
+  assert.equal(verdict.kind, "match");
+  assert.equal((verdict as { option: ModelOption }).option.provider, "Azure AI Foundry");
+  // With no label, or a label no option carries, the id alone still decides.
+  const unlabelled = resolveModelOption("gpt-5.6-sol", options);
+  assert.equal((unlabelled as { option: ModelOption }).option.provider, "OpenAI");
+  const unknown = resolveModelOption("gpt-5.6-sol", options, { providerLabel: "Groq" });
+  assert.equal(unknown.kind, "match");
+});

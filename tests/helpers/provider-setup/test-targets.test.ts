@@ -601,7 +601,7 @@ test("a KEYED provider is rejected and pointed at MODEL_TEST_PROVIDER", () => {
     ),
   );
   assert.equal(targets[0].label, "provider:openai (routed)");
-  assert.match(targets[0].skipReason ?? "", /API-key provider/);
+  assert.match(targets[0].skipReason ?? "", /hosted provider/);
   assert.match(targets[0].skipReason ?? "", /MODEL_TEST_PROVIDER/);
 });
 

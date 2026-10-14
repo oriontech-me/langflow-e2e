@@ -5,11 +5,11 @@
 // The sweep saves every keyed provider through the Settings UI and leaves it
 // configured for the whole run. Doing that for Foundry would break the Foundry
 // provider spec (`azure-ai-foundry-provider-setup.spec.ts`), whose subject includes
-// the UNCONFIGURED surface: its tests 2-6 skip on an instance that already holds a
-// Foundry credential, and tests 5-6 store one and delete it in their teardown. A
-// sweep-configured Foundry would therefore turn five `@stable` tests into a skip on
-// every run, and their teardown would delete the credential under any agent spec
-// running on Azure in parallel.
+// the UNCONFIGURED surface: tests 2, 3, 5 and 6 skip on an instance that already
+// holds a Foundry credential, tests 1 and 4 assert state only an unconfigured
+// provider shows, and tests 3, 5 and 6 store one and delete it in their teardown. A
+// sweep-configured Foundry would therefore cost those tests on every run, and their
+// teardown would delete the credential under any agent spec running on Azure.
 //
 // So the split is:
 //

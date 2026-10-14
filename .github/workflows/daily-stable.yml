@@ -727,12 +727,13 @@ jobs:
           # NAME its inference is addressed by — a portal name, not a catalog id,
           # which is the whole point of that coverage.
           #
-          # Read ONLY here, never by the `Collect models` step above: Azure is
-          # deliberately absent from `providerConfigMap` (a two-variable provider
-          # does not fit its `api-key | base-url` union — see
-          # tests/helpers/provider-setup/provider-config.ts), so the sweep neither
-          # imports nor validates these. Absent, the spec's own probe skips its two
-          # credential tests with the concrete reason; the other four run regardless.
+          # Read ONLY here, never by the `Collect models` step above. Since #2281
+          # Azure IS in `providerConfigMap` (as a `deployment` provider) and the sweep
+          # validates a declared deployment — but that step gets none of these, so on
+          # this lane Azure records `inactive … not set`, is never an agent target, and
+          # the Foundry provider spec runs in full. Absent here, the spec's own probe
+          # skips its two credential tests with the concrete reason; the other four
+          # run regardless.
           AZURE_AI_FOUNDRY_API_KEY: ${{ secrets.AZURE_AI_FOUNDRY_API_KEY }}
           AZURE_AI_FOUNDRY_ENDPOINT: ${{ secrets.AZURE_AI_FOUNDRY_ENDPOINT }}
           AZURE_AI_FOUNDRY_TEST_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_TEST_DEPLOYMENT }}

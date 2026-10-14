@@ -205,7 +205,7 @@ test("refuses a provider that is not keyless, naming the right knob", async () =
   });
   assert.equal(result.attempted, true);
   assert.equal(result.configured, false);
-  assert.match(result.detail, /API-key provider/);
+  assert.match(result.detail, /hosted provider/);
 });
 
 test("refuses an unknown provider", async () => {

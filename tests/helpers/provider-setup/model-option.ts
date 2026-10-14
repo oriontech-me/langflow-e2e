@@ -85,7 +85,13 @@ export type ResolveContext = {
    * the message then says LISTED, and no branch infers a toggle is off from it.
    */
   checkedModels?: string[];
-  /** Provider the caller is configuring, for the message only. */
+  /**
+   * Provider the caller is configuring. Used in the messages, and to DISAMBIGUATE a
+   * model id two providers share (#2281): OpenAI's catalog carries `gpt-5.6-sol`, the
+   * Azure AI Foundry deployment's name, so an id-only match could click the other
+   * provider's option. It never narrows a match away — when no option carries both
+   * the id and this provider, the id alone decides, exactly as before.
+   */
   providerLabel?: string;
   /**
    * What the panel's own toggle batch did before the panel was closed —
@@ -207,7 +213,12 @@ export function resolveModelOption(
     };
   }
 
-  const exact = options.find((option) => option.model === requested);
+  const exact =
+    (context.providerLabel &&
+      options.find(
+        (option) => option.model === requested && option.provider === context.providerLabel,
+      )) ||
+    options.find((option) => option.model === requested);
   if (exact) return { kind: "match", option: exact };
 
   // The model is in the picker but its identity did not parse — the exact shape

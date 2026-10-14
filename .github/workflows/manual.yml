@@ -264,6 +264,13 @@ jobs:
       # naming which variable is missing, and a wrong value skips naming the
       # resource's answer instead — the probe distinguishes the two.
       #
+      # Since #2281 that holds only for a dispatch pinned to a keyed provider
+      # (`provider=openai|anthropic|google`). These variables are job-level, so
+      # `Collect models` sees them and adds the deployment to models.json; an
+      # unpinned dispatch (`auto`, the default, or `all-models`) then TARGETS Azure
+      # with the agent specs, `globalSetup` configures it for them, and the Foundry
+      # provider spec skips all six tests by design (it needs Foundry unconfigured).
+      #
       # Scoped to the Docker job on purpose. The external-URL job below runs no
       # `collect-models` because writing our provider credentials as global
       # variables into an instance we do not own is not ours to do (#1055), and

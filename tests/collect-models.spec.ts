@@ -265,8 +265,16 @@ test(
 
       const hardFailures: ProviderRecord[] = [];
       for (const p of providers) {
-        const envKeys = providerConfigMap[p.provider as Provider]?.envKeys ?? [];
-        const hasEnvKey = envKeys.some((k: string) => !!process.env[k]);
+        const config = providerConfigMap[p.provider as Provider];
+        const envKeys = config?.envKeys ?? [];
+        // A deployment provider (Azure AI Foundry, #2281) gates only when it is fully
+        // DECLARED: its three variables were optional and partial for the Foundry
+        // provider spec's own env gating long before #2281, so a key with no
+        // deployment is a provider nobody asked to run, not a broken one.
+        const hasEnvKey =
+          config?.credential === "deployment"
+            ? envKeys.every((k: string) => !!process.env[k])
+            : envKeys.some((k: string) => !!process.env[k]);
         if (!hasEnvKey || p.status === "active") continue;
         // A provider the COLLECTOR never configured is not a key/account/config
         // verdict at all — its key was never probed (#1370). It gets its own

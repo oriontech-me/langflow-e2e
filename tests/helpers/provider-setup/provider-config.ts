@@ -47,8 +47,8 @@ export interface BaseUrlProviderConfig extends ProviderConfigBase {
  *  - It is never configured by the `collect-models` UI sweep. The sweep leaves every
  *    keyed provider configured for the whole run, and the Foundry provider spec
  *    (`azure-ai-foundry-provider-setup.spec.ts`) needs it UNCONFIGURED to test that
- *    surface — its tests 2-6 skip on a configured instance and delete the credential
- *    they store. So the sweep validates the deployment against Azure directly and
+ *    surface — tests 2, 3, 5 and 6 skip on a configured instance, tests 1 and 4 assert
+ *    unconfigured-only state, and tests 3, 5 and 6 delete the credential they store. So the sweep validates the deployment against Azure directly and
  *    records it, and Langflow is configured only when a run actually targets it
  *    (`azure-foundry.ts`).
  *  - Its model is DECLARED, not collected: `deploymentEnvKey` names the deployment,

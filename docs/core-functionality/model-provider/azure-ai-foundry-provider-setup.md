@@ -155,7 +155,11 @@ missing-dependency contract `google-provider.spec.ts` carries for
   `globalSetup` uses, derived from `resolveTestTargets` — so a run pinned to another
   provider (every daily rotation slot and the PR lane, today) runs this file in full.
   Foundry is pinned only by a declared run (`DECLARED_MODEL_PROVIDER` on the VM,
-  `MODEL_TEST_PROVIDER` by hand) or targeted by an unpinned run whose catalog lists it.
+  `MODEL_TEST_PROVIDER` by hand) or targeted by an unpinned run whose catalog lists it
+  — which includes a `manual.yml` dispatch with `provider=auto` (the default) or
+  `all-models`, since that lane hands the Azure secrets to `Collect models`. To
+  exercise this file's credential tests through `manual.yml`, dispatch it pinned to a
+  keyed provider (`provider=openai`).
 
 ---
 
