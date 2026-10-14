@@ -17,8 +17,9 @@ import { langflowProviderName } from "./provider-config";
  * When that fallback had to CREATE a variable, the page loaded before the provider
  * existed and its model options are stale, so the page is reloaded before the picker
  * is opened. And when the picker still does not offer the deployment — another worker
- * may have made the write this page loaded before — it reloads once more before
- * calling it absent, because an absence becomes a SKIP in the callers.
+ * may have made the write this page loaded before, or a concurrent enable for another
+ * provider may have dropped it — it re-enables it and reloads once more before calling
+ * it absent, because an absence becomes a SKIP in the callers.
  *
  * The deployment is chosen in the picker — never written into the flow by name —
  * because the picker's options carry the live listing's metadata, and that metadata
@@ -67,9 +68,20 @@ export async function setupAzureFoundry(page: Page, modelTestId?: string): Promi
 
   // `wrote` is false when ANOTHER worker created the variables (a duplicate 400), so a
   // page loaded before that write can still hold the pre-configuration option list.
-  // One reload before calling the deployment absent: an `absent` verdict carries the
-  // MODEL_NOT_AVAILABLE prefix that callers turn into a SKIP, and a stale cache must
-  // not become one.
+  // And the enable itself can be lost after this worker saw it land: the enabled set
+  // is one per-user variable that every `enabled_models` POST reads, validates for
+  // seconds, and rewrites whole, so a concurrent enable for another provider can save
+  // a list without the deployment. The per-worker memo would then never send it again,
+  // so the recovery re-enables for real (a fresh memo) before the reload. An `absent`
+  // verdict carries the MODEL_NOT_AVAILABLE prefix that callers turn into a SKIP, and
+  // neither a stale cache nor a lost enable may become one.
+  const again = await ensureAzureFoundryConfigured(page.request, process.env, new Set());
+  if (!again.configured) {
+    throw new Error(
+      `AZURE_FOUNDRY_NOT_CONFIGURED: the picker did not offer deployment "${requested}", ` +
+        `and re-enabling it failed — ${again.detail}.`,
+    );
+  }
   await page.reload();
   await modelDropdown.waitFor({ state: "visible", timeout: 60000 });
   await hideInspectorPanel(page);
