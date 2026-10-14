@@ -90,9 +90,21 @@ export type ResolveContext = {
    * model id two providers share (#2281): OpenAI's catalog carries `gpt-5.6-sol`, the
    * Azure AI Foundry deployment's name, so an id-only match could click the other
    * provider's option. It never narrows a match away — when no option carries both
-   * the id and this provider, the id alone decides, exactly as before.
+   * the id and this provider, the id alone decides, exactly as before — unless
+   * `providerStrict` is set.
    */
   providerLabel?: string;
+  /**
+   * With `providerLabel`, treat an option the picker attributes to ANOTHER provider as
+   * not this model at all: it is neither a match nor evidence of an unparsed identity.
+   * For a caller whose model id is operator-defined and may collide with a catalog id
+   * (#2281: the Foundry deployment `gpt-5.6-sol` against OpenAI's model of that name).
+   * Without it, a picker that does not offer the deployment yet resolves to the other
+   * provider's option, so the caller's reload-before-absent recovery never runs and
+   * the Agent ends up wired to the wrong provider. An option whose provider did not
+   * parse is still considered, so a markup change stays loud (#1461).
+   */
+  providerStrict?: boolean;
   /**
    * What the panel's own toggle batch did before the panel was closed —
    * `enableAndSettleModelToggles`' return value.
@@ -213,19 +225,23 @@ export function resolveModelOption(
     };
   }
 
+  const strict = Boolean(context.providerStrict && context.providerLabel);
+  const candidates = strict
+    ? options.filter((option) => option.provider === null || option.provider === context.providerLabel)
+    : options;
   const exact =
     (context.providerLabel &&
-      options.find(
+      candidates.find(
         (option) => option.model === requested && option.provider === context.providerLabel,
       )) ||
-    options.find((option) => option.model === requested);
+    (strict ? undefined : candidates.find((option) => option.model === requested));
   if (exact) return { kind: "match", option: exact };
 
   // The model is in the picker but its identity did not parse — the exact shape
   // of the #1459 break, one markup change later. Absence is contradicted by the
   // picker itself, so this can never be a skip.
   const evidence: string[] = [];
-  for (const option of options) {
+  for (const option of candidates) {
     if (option.visibleLabel === requested) {
       evidence.push(`visible label "${option.visibleLabel}" (testid "${option.testId}")`);
     } else if (option.testId.endsWith(`-${requested}-option`)) {
@@ -564,6 +580,8 @@ export async function selectPinnedModelOption(
     listedModels?: string[];
     checkedModels?: string[];
     providerLabel?: string;
+    /** See `ResolveContext.providerStrict`. */
+    providerStrict?: boolean;
     /**
      * `enableAndSettleModelToggles`' result. `write-stalled` is deliberately NOT
      * returnable through `absentBehavior: "return"`: that hatch exists for a stale
@@ -580,6 +598,7 @@ export async function selectPinnedModelOption(
     listedModels: opts.listedModels,
     checkedModels: opts.checkedModels,
     providerLabel: opts.providerLabel,
+    providerStrict: opts.providerStrict,
     toggleWrite: opts.toggleWrite,
   });
 

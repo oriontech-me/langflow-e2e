@@ -59,6 +59,7 @@ export async function setupAzureFoundry(page: Page, modelTestId?: string): Promi
   const first = await selectPinnedModelOption(page, {
     requested,
     providerLabel,
+    providerStrict: true,
     absentBehavior: "return",
   });
   if (first.status === "selected") return;
@@ -72,5 +73,10 @@ export async function setupAzureFoundry(page: Page, modelTestId?: string): Promi
   await modelDropdown.waitFor({ state: "visible", timeout: 60000 });
   await hideInspectorPanel(page);
   await openModelPickerAfterPanelClose(page, { providerLabel });
-  await selectPinnedModelOption(page, { requested, providerLabel, absentBehavior: "throw" });
+  await selectPinnedModelOption(page, {
+    requested,
+    providerLabel,
+    providerStrict: true,
+    absentBehavior: "throw",
+  });
 }
