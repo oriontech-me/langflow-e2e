@@ -48,6 +48,12 @@ function resolveTarget(): LoadSimpleAgentOptions | undefined {
       models.find((m) => m.model === process.env.MODEL_TEST_ID);
     const provider = (record?.provider ??
       process.env.MODEL_TEST_PROVIDER) as Provider | undefined;
+    if (process.env.MODEL_TEST_PROVIDER && provider !== process.env.MODEL_TEST_PROVIDER) {
+      console.warn(
+        `MODEL_TEST_ID="${process.env.MODEL_TEST_ID}" has no record under MODEL_TEST_PROVIDER=` +
+          `"${process.env.MODEL_TEST_PROVIDER}" in models.json; this spec runs it on "${provider}".`,
+      );
+    }
     return { provider, model: process.env.MODEL_TEST_ID };
   }
 

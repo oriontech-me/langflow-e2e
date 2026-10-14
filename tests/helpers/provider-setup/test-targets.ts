@@ -429,7 +429,8 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
     // same name ahead of it, so the first-match lookup ran a `MODEL_TEST_PROVIDER=
     // azure-ai-foundry` lane on OpenAI — measured, every target green and labelled
     // `openai / gpt-5.6-sol`. The provider only DISAMBIGUATES here: with no record
-    // matching both, the id still outranks it (the cross-provider rule below).
+    // matching both, the id still outranks it (the cross-provider rule below), and the
+    // override is announced.
     const record =
       (env.MODEL_TEST_PROVIDER &&
         allModels.find((m) => m.model === model && m.provider === env.MODEL_TEST_PROVIDER)) ||
@@ -460,6 +461,17 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
       return [{ label: `model:${model}`, options: { model }, skipReason: unfit }];
     }
     const provider = record.provider as Provider;
+    if (env.MODEL_TEST_PROVIDER && provider !== env.MODEL_TEST_PROVIDER) {
+      // The cross-provider rule is deliberate, but never silent: on a Foundry pin whose
+      // catalog lacks the deployment this is the #2281 symptom itself — every target
+      // running on OpenAI's `gpt-5.6-sol`, green, under a lane that declared Azure.
+      console.warn(
+        `MODEL_TEST_ID="${model}" has no record under MODEL_TEST_PROVIDER=` +
+          `"${env.MODEL_TEST_PROVIDER}" in models.json; it resolves to "${provider}" instead, ` +
+          `and the specs run there. If that is not what the pin meant, re-run ` +
+          `collect-models.spec.ts with the provider declared.`,
+      );
+    }
     return [
       {
         label: `${provider} / ${model}`,
