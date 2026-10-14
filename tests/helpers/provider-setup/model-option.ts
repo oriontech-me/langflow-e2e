@@ -341,7 +341,9 @@ export function resolveModelOption(
     };
   }
 
-  const nearest = nearestModels(requested, options);
+  // Over `candidates`: under `providerStrict` another provider's same-named option is
+  // not this model, and naming it as the nearest offered would contradict the verdict.
+  const nearest = nearestModels(requested, candidates);
   const toggleEvidence =
     listed === undefined
       ? "provider toggles were not observed on this path"

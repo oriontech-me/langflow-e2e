@@ -500,3 +500,23 @@ test("#2281: providerStrict never resolves to another provider's option of the s
   const unparsed: ModelOption = { ...option("Azure AI Foundry", "gpt-5.6-sol"), provider: null, model: null };
   assert.equal(resolveModelOption("gpt-5.6-sol", [...openaiOnly, unparsed], ctx).kind, "unmatchable");
 });
+
+test("#2281: under providerStrict a provider-less option never matches by id alone", () => {
+  // `toModelOption` gives an option whose data-value lost its provider `model =
+  // visibleLabel`; without strict that id-only match would select it as the deployment.
+  const providerless: ModelOption = { ...option("Azure AI Foundry", "gpt-5.6-sol"), provider: null };
+  const ctx = { providerLabel: "Azure AI Foundry", providerStrict: true };
+  assert.notEqual(resolveModelOption("gpt-5.6-sol", [providerless], ctx).kind, "match");
+  assert.equal(resolveModelOption("gpt-5.6-sol", [providerless], { providerLabel: "Azure AI Foundry" }).kind, "match");
+});
+
+test("#2281: under providerStrict the absent message never names the other provider's option", () => {
+  const options = [option("OpenAI", "gpt-5.6-sol", "1 of 2"), option("Azure AI Foundry", "gpt-4.1", "2 of 2")];
+  const verdict = resolveModelOption("gpt-5.6-sol", options, {
+    providerLabel: "Azure AI Foundry",
+    providerStrict: true,
+  });
+  assert.equal(verdict.kind, "absent");
+  const nearest = (verdict as { message: string }).message.match(/Nearest offered: (.*?)\. The model/)?.[1];
+  assert.equal(nearest, "gpt-4.1");
+});
