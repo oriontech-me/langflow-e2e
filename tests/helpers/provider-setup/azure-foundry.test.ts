@@ -408,6 +408,33 @@ test("the memo is set only by a confirmed enable, and a write always re-enables"
   assert.equal(recorded.filter((r) => r.url === "/api/v1/models/enabled_models").length, 1);
 });
 
+test("a pinned deployment other than the declared one is the one enabled and remembered", async () => {
+  const memo = new Set<string>();
+  const recorded: Recorded[] = [];
+  const result = await ensureAzureFoundryConfigured(
+    fakeRequest(
+      {
+        "GET /api/v1/auto_login": AUTH,
+        "GET /api/v1/variables/": {
+          body: [{ name: "AZURE_AI_FOUNDRY_API_KEY" }, { name: "AZURE_AI_FOUNDRY_ENDPOINT" }],
+        },
+        "POST /api/v1/models/enabled_models": {
+          body: { enabled_models: ["Azure AI Foundry::llm::grok-4.6"], disabled_models: [] },
+        },
+      },
+      recorded,
+    ),
+    ENV,
+    memo,
+    "grok-4.6",
+  );
+  assert.equal(result.configured, true, result.detail);
+  const enable = recorded.find((r) => r.url === "/api/v1/models/enabled_models");
+  assert.equal((enable?.data as Array<{ model_id: string }>)[0].model_id, "grok-4.6");
+  // The declared deployment was not confirmed, so it is not remembered.
+  assert.equal([...memo].some((k) => k.endsWith("::gpt-5.6-sol")), false);
+});
+
 test("an undeclared provider makes no request at all", async () => {
   const recorded: Recorded[] = [];
   const result = await ensureAzureFoundryConfigured(fakeRequest({}, recorded), {}, new Set());

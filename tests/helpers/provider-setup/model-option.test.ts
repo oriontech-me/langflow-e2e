@@ -502,8 +502,8 @@ test("#2281: providerStrict never resolves to another provider's option of the s
 });
 
 test("#2281: under providerStrict a provider-less option never matches by id alone", () => {
-  // `toModelOption` gives an option whose data-value lost its provider `model =
-  // visibleLabel`; without strict that id-only match would select it as the deployment.
+  // When an option's data-value carries no provider, `toModelOption` falls back to
+  // `model = visibleLabel`; without strict, that id-only match would select it.
   const providerless: ModelOption = { ...option("Azure AI Foundry", "gpt-5.6-sol"), provider: null };
   const ctx = { providerLabel: "Azure AI Foundry", providerStrict: true };
   assert.notEqual(resolveModelOption("gpt-5.6-sol", [providerless], ctx).kind, "match");

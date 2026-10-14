@@ -41,7 +41,9 @@ export async function setupAzureFoundry(page: Page, modelTestId?: string): Promi
     );
   }
 
-  const result = await ensureAzureFoundryConfigured(page.request);
+  const providerLabel = langflowProviderName("azure-ai-foundry");
+  const requested = modelTestId ?? declaration.deployment;
+  const result = await ensureAzureFoundryConfigured(page.request, process.env, undefined, requested);
   if (!result.configured) {
     throw new Error(
       `AZURE_FOUNDRY_NOT_CONFIGURED: Azure AI Foundry could not be configured in ` +
@@ -49,47 +51,55 @@ export async function setupAzureFoundry(page: Page, modelTestId?: string): Promi
         `collect-models, so a failure here is Langflow's side of the configuration.`,
     );
   }
-  if (result.wrote) {
-    await page.reload();
-    await modelDropdown.waitFor({ state: "visible", timeout: 60000 });
-  }
+  if (result.wrote) await reloadToAgent(page);
 
-  const providerLabel = langflowProviderName("azure-ai-foundry");
-  const requested = modelTestId ?? declaration.deployment;
-  await hideInspectorPanel(page);
-  await openModelPickerAfterPanelClose(page, { providerLabel });
-  const first = await selectPinnedModelOption(page, {
-    requested,
-    providerLabel,
-    providerStrict: true,
-    absentBehavior: "return",
-  });
-  if (first.status === "selected") return;
+  const pick = async (): Promise<boolean> => {
+    await hideInspectorPanel(page);
+    await openModelPickerAfterPanelClose(page, { providerLabel });
+    const outcome = await selectPinnedModelOption(page, {
+      requested,
+      providerLabel,
+      providerStrict: true,
+      absentBehavior: "return",
+    });
+    return outcome.status === "selected";
+  };
+  if (await pick()) return;
 
-  // `wrote` is false when ANOTHER worker created the variables (a duplicate 400), so a
-  // page loaded before that write can still hold the pre-configuration option list.
-  // And the enable itself can be lost after this worker saw it land: the enabled set
-  // is one per-user variable that every `enabled_models` POST reads, validates for
-  // seconds, and rewrites whole, so a concurrent enable for another provider can save
-  // a list without the deployment. The per-worker memo would then never send it again,
-  // so the recovery re-enables for real (a fresh memo) before the reload. An `absent`
-  // verdict carries the MODEL_NOT_AVAILABLE prefix that callers turn into a SKIP, and
-  // neither a stale cache nor a lost enable may become one.
-  const again = await ensureAzureFoundryConfigured(page.request, process.env, new Set());
+  // 1. A stale page. `wrote` is false when ANOTHER worker created the variables (a
+  //    duplicate 400), so a page loaded before that write can still hold the
+  //    pre-configuration option list. A reload alone settles it, with no call to Azure.
+  await reloadToAgent(page);
+  if (await pick()) return;
+
+  // 2. A lost enable. The enabled set is one per-user variable that every
+  //    `enabled_models` POST reads, validates for seconds and rewrites whole, so a
+  //    concurrent enable for another provider can save a list without the deployment,
+  //    and the per-worker memo would never send it again. Re-enable for real (a fresh
+  //    memo), then look once more.
+  const again = await ensureAzureFoundryConfigured(page.request, process.env, new Set(), requested);
   if (!again.configured) {
     throw new Error(
       `AZURE_FOUNDRY_NOT_CONFIGURED: the picker did not offer deployment "${requested}", ` +
-        `and re-enabling it failed — ${again.detail}.`,
+        `and re-enabling it failed — ${again.detail}. The provider was validated against ` +
+        `Azure by collect-models, so a failure here is Langflow's side of the configuration.`,
     );
   }
+  await reloadToAgent(page);
+  if (await pick()) return;
+
+  // Never a skip: the server has just echoed the deployment as enabled, so its absence
+  // from the picker is not an absent model. A MODEL_NOT_AVAILABLE here would let the
+  // callers skip the test on exactly the lane this provider exists for.
+  throw new Error(
+    `AZURE_FOUNDRY_ENABLE_LOST: deployment "${requested}" was enabled (the server echoed ` +
+      `it) but the Agent's model picker still does not offer it for ${providerLabel} after ` +
+      `a reload — the enabled set was rewritten again by a concurrent request, or the ` +
+      `picker does not read it. Reported as a FAILURE, not a skip (#1012).`,
+  );
+}
+
+async function reloadToAgent(page: Page): Promise<void> {
   await page.reload();
-  await modelDropdown.waitFor({ state: "visible", timeout: 60000 });
-  await hideInspectorPanel(page);
-  await openModelPickerAfterPanelClose(page, { providerLabel });
-  await selectPinnedModelOption(page, {
-    requested,
-    providerLabel,
-    providerStrict: true,
-    absentBehavior: "throw",
-  });
+  await page.getByTestId("model_model").waitFor({ state: "visible", timeout: 60000 });
 }

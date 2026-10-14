@@ -232,6 +232,8 @@ export async function ensureAzureFoundryConfigured(
   ctx: APIRequestContext,
   env: NodeJS.ProcessEnv = process.env,
   enabledMemo: Set<string> = ENABLED_IN_THIS_PROCESS,
+  /** The deployment to enable; the declared one unless a run pins another (MODEL_TEST_ID). */
+  deploymentOverride?: string,
 ): Promise<AzureFoundryConfigureResult> {
   const declaration = azureFoundryDeclaration(env);
   if (!declaration.declared) {
@@ -287,15 +289,16 @@ export async function ensureAzureFoundryConfigured(
     };
   }
 
+  const deployment = deploymentOverride ?? declaration.deployment;
   // Nothing was written and this process already saw the deployment enabled: the
   // enable would only re-validate against Azure (see `ENABLED_IN_THIS_PROCESS`). A
   // write always re-enables, since a new variable is what the enable validates.
-  const memoKey = `${declaration.endpoint}::${declaration.deployment}`;
+  const memoKey = `${declaration.endpoint}::${deployment}`;
   if (!wrote && enabledMemo.has(memoKey)) {
     return {
       configured: true,
       wrote: false,
-      detail: `${displayName} already configured with deployment "${declaration.deployment}" enabled (checked earlier in this worker)`,
+      detail: `${displayName} already configured with deployment "${deployment}" enabled (checked earlier in this worker)`,
     };
   }
 
@@ -306,7 +309,7 @@ export async function ensureAzureFoundryConfigured(
     data: [
       {
         provider: displayName,
-        model_id: declaration.deployment,
+        model_id: deployment,
         enabled: true,
         model_type: "llm",
       },
@@ -318,13 +321,13 @@ export async function ensureAzureFoundryConfigured(
       configured: false,
       wrote,
       detail:
-        `the variables are set, but enabling deployment "${declaration.deployment}" failed ` +
+        `the variables are set, but enabling deployment "${deployment}" failed ` +
         `(HTTP ${enabled.status()}: ${body.slice(0, 300)})`,
     };
   }
   const echo = (await enabled.json().catch(() => null)) as { enabled_models?: unknown } | null;
   const echoed = Array.isArray(echo?.enabled_models) ? echo.enabled_models : [];
-  const expectedKey = `${displayName}::llm::${declaration.deployment}`;
+  const expectedKey = `${displayName}::llm::${deployment}`;
   if (!echoed.includes(expectedKey)) {
     // An unknown provider name is accepted with HTTP 200 and enables nothing, so the
     // echo is the only proof the enable landed.
@@ -341,6 +344,6 @@ export async function ensureAzureFoundryConfigured(
   return {
     configured: true,
     wrote,
-    detail: `${displayName} configured with deployment "${declaration.deployment}" enabled`,
+    detail: `${displayName} configured with deployment "${deployment}" enabled`,
   };
 }
