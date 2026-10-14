@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-12
+> **Last updated:** 2026-10-14
 
 ---
 
@@ -1636,7 +1636,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 734 `test()` calls carrying the `@stable` tag, distributed across 284 spec
+> 735 `test()` calls carrying the `@stable` tag, distributed across 284 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2276,6 +2276,7 @@
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
 - [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
+- [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
 - [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
