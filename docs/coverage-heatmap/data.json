@@ -133,7 +133,7 @@
   },
   {
    "area": "13/14 MCP",
-   "residualRisk": 7.8,
+   "residualRisk": 7.5,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -144,20 +144,20 @@
     "weightedBugs": 56.6,
     "weightedChurn": 1.36
    },
-   "mitigationBulletDerived": 0.69,
+   "mitigationBulletDerived": 0.7,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 12,
+    "stableSpecs": 13,
     "penalty": 0
    },
-   "mitigation": 0.69,
+   "mitigation": 0.7,
    "checklistBullets": 35,
    "bulletStates": {
-    "x": 29,
-    "-": 2,
+    "x": 30,
     " ": 3,
+    "-": 1,
     "~": 1
    },
    "previous": {
@@ -174,7 +174,7 @@
    "upstreamBugCount": 69,
    "specCounts": {
     "specs": 13,
-    "stable": 12
+    "stable": 13
    }
   },
   {
@@ -432,7 +432,7 @@
   },
   {
    "area": "15 Canvas / UI",
-   "residualRisk": 5,
+   "residualRisk": 5.2,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
@@ -447,11 +447,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 27,
-    "penalty": 0
+    "penalty": 0.014
    },
-   "mitigation": 0.75,
+   "mitigation": 0.74,
    "checklistBullets": 59,
    "bulletStates": {
     "x": 54,
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-14",
+ "refreshed": "2026-10-15",
  "refreshWindow": {
-  "testHealthSince": "2026-08-30",
+  "testHealthSince": "2026-08-31",
   "days": 45
  }
 }

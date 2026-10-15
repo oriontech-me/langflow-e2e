@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-14",
+ "refreshed": "2026-10-15",
  "refreshWindow": {
-  "testHealthSince": "2026-08-30",
+  "testHealthSince": "2026-08-31",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -39,8 +39,8 @@
   "newThisGeneration": 3,
   "cappedByProduct": 2,
   "bullets": 822,
-  "bulletsAutomatedUnwatched": 126,
-  "residualRiskTotal": 107.2
+  "bulletsAutomatedUnwatched": 125,
+  "residualRiskTotal": 107.1
  },
  "areas": [
   {
@@ -107,12 +107,12 @@
    "key": "mcp",
    "label": "13/14 MCP",
    "rank": 2,
-   "residualRisk": 7.8,
+   "residualRisk": 7.5,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.69,
-   "mitigationBulletDerived": 0.69,
+   "mitigation": 0.7,
+   "mitigationBulletDerived": 0.7,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
@@ -123,20 +123,20 @@
    },
    "bullets": {
     "total": 35,
-    "validated": 29,
-    "automatedUnwatched": 2,
+    "validated": 30,
+    "automatedUnwatched": 1,
     "partial": 1,
     "flaky": 0,
     "empty": 3
    },
    "specs": {
     "specs": 13,
-    "stable": 12
+    "stable": 13
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 12,
+    "stableSpecs": 13,
     "penalty": 0
    },
    "upstreamBugsByYear": {
@@ -150,7 +150,7 @@
     "mitigation": 0.58
    },
    "delta": {
-    "residualRisk": -2.7,
+    "residualRisk": -3,
     "rank": 0,
     "direction": "improved"
    },
@@ -496,11 +496,11 @@
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
    "rank": 9,
-   "residualRisk": 5,
+   "residualRisk": 5.2,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
-   "mitigation": 0.75,
+   "mitigation": 0.74,
    "mitigationBulletDerived": 0.75,
    "mitigationOverride": null,
    "axes": {
@@ -524,9 +524,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 27,
-    "penalty": 0
+    "penalty": 0.014
    },
    "upstreamBugsByYear": {
     "2023": 4,
@@ -541,9 +541,9 @@
     "mitigation": 0.75
    },
    "delta": {
-    "residualRisk": -0.1,
+    "residualRisk": 0.1,
     "rank": 1,
-    "direction": "improved"
+    "direction": "worsened"
    },
    "isNew": false,
    "cappedByProduct": false,
