@@ -26,9 +26,11 @@
 #   scenario   fresh (the target alone) | upgrade (source, seeded, then the target)
 #   + auth     AUTO_LOGIN off on the target, in the four upgrade cells
 #
-# pip+sqlite upgrades in the same venv with the default configuration: the default
+# pip+sqlite upgrades in the same venv with the default database location: the default
 # database lives inside the installed package (site-packages/langflow/langflow.db,
 # measured on 1.12.4), so an install that drops or moves it is the 1.7.0 class of loss.
+# Auth is never left to the default: every cell sets LANGFLOW_AUTO_LOGIN, because the
+# default differs by mode and by version (images off; pip off from 1.13, 5ae4b9ec3).
 # docker+sqlite keeps the database in the config volume (LANGFLOW_SAVE_DB_IN_CONFIG_DIR).
 # docker+postgres runs upstream's own docker_example compose file, as the Actions job
 # did, with ports overridden so nothing binds outside this lane.
@@ -317,6 +319,11 @@ migration_up_pip() {
     [ "$MC_DB" = postgres ] && export LANGFLOW_DATABASE_URL="postgresql://langflow:langflow@127.0.0.1:$MC_PG/langflow"
     if [ "$auth" = off ]; then
       export LANGFLOW_AUTO_LOGIN=false LANGFLOW_SUPERUSER="$MC_SU" LANGFLOW_SUPERUSER_PASSWORD="$MC_SU_PW"
+    else
+      # Explicit, as in the docker cells: from 1.13 a pip install defaults to auto-login
+      # OFF too (upstream 5ae4b9ec3), and a target started on the default exits for
+      # lack of a password. The instance being upgraded was used with it on.
+      export LANGFLOW_AUTO_LOGIN=true
     fi
     exec "$venv/bin/langflow" run --host 127.0.0.1 --port "$MC_PORT" --backend-only
   ) >> "$MC_LOG" 2>&1 8>&- &
