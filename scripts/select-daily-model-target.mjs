@@ -26,17 +26,27 @@
  * that window matters.
  *
  * Rotating costs exactly the same — one provider per run — and bounds the window to
- * **≤3 days, automatically**.
+ * one week at most, automatically.
  *
- * The weekday mapping is FIXED rather than an even round-robin:
+ * The weekday mapping is FIXED rather than an even round-robin, and it is written out
+ * as a table with one entry per weekday (#2287):
  *
- *   Mon → openai   Tue → anthropic   Wed → google   Thu → openai   Fri → anthropic
+ *   Mon → openai   Tue → anthropic   Wed → google   Thu → azure-ai-foundry   Fri → anthropic
  *
- * so every Monday resolves the same provider and two Mondays are comparable. The
- * price is an uneven 2/2/1 split across three providers over a Mon-Fri week, which is
- * the right trade: comparability is what triage needs, evenness buys nothing. `openai`
- * leads because it is the cheapest and is already the PR lane's target, so a Monday
- * red is directly comparable to a PR red.
+ * so every Monday resolves the same provider and two Mondays are comparable:
+ * comparability is what triage needs, evenness buys nothing. `openai` leads because it
+ * is the cheapest and is already the PR lane's target, so a Monday red is directly
+ * comparable to a PR red. Thursday was openai's second slot until Azure AI Foundry
+ * joined (#2287): openai is the provider that loses least by giving one up, since the
+ * PR lane pins it on every pull request (#1169). Anthropic keeps two slots.
+ *
+ * Why a table and not an order taken modulo the weekday, which is what this was until
+ * #2287: with an order, adding a provider moves every later weekday. Appending Azure to
+ * `openai, anthropic, google` would have put it on Thursday and ALSO moved Friday from
+ * anthropic to openai, a change nobody chose. In a table each weekday names its own
+ * provider, so one slot changes at a time. A provider may own more than one weekday.
+ * When there are more providers than weekdays, this becomes a two-week table; nothing
+ * here does that yet.
  *
  * ## Why the fallback is the whole point
  *
@@ -45,8 +55,8 @@
  * and it is not hypothetical: the daily recorded **zero tests on 2026-07-28 and
  * 2026-07-31**, and the shared anthropic key drained mid-window (#1169).
  *
- * So this walks the rotation order from the day's slot and takes the first provider
- * `collect-models` probed `active`:
+ * So this walks the week forward from the day's slot, each provider once, and takes the
+ * first one `collect-models` probed `active`:
  *
  *  - day's provider active            → use it.
  *  - inactive / absent from the file  → advance to the next, with a `::warning::`
@@ -86,7 +96,7 @@
  * Run:
  *   node scripts/select-daily-model-target.mjs \
  *     --providers-file tests/helpers/provider-setup/data/providers.json \
- *     --order openai,anthropic,google
+ *     --schedule openai,anthropic,google,azure-ai-foundry,anthropic
  *
  * Side effect: appends `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` to `$GITHUB_ENV` when
  * it pins. Always prints the decision as JSON on stdout.
@@ -101,13 +111,16 @@ import {
   selectPrModelTarget as selectSettledTarget,
 } from "./select-pr-model-target.mjs";
 
-const DEFAULT_ORDER = ["openai", "anthropic", "google"];
+// Monday to Friday, one entry per weekday (#2287). See the header for why each slot is
+// what it is; `rotationSlot` maps a date onto an index here.
+const DEFAULT_SCHEDULE = ["openai", "anthropic", "google", "azure-ai-foundry", "anthropic"];
+const WEEKDAYS_PER_SCHEDULE = 5;
 
 const HELP = `Usage: node scripts/select-daily-model-target.mjs [options]
 
   --providers-file PATH  providers.json written by collect-models
-  --order LIST           comma-separated rotation order
-                         (default: ${DEFAULT_ORDER.join(",")})
+  --schedule LIST        comma-separated providers for Mon,Tue,Wed,Thu,Fri, exactly
+                         five (default: ${DEFAULT_SCHEDULE.join(",")})
   --date ISO             UTC instant deciding the weekday (default: now)
   --provider NAME        a DECLARED provider: no rotation, no fallback — refused
                          (exit 3) when collect-models did not probe it active
@@ -178,25 +191,61 @@ export function selectDeclaredModelTarget(providers, models, declared) {
 }
 
 /**
- * The rotation slot for a UTC date. Monday is slot 0 — the daily's cron is 05:00 BRT
+ * A schedule is exactly one provider name per weekday, Monday first (#2287). Anything
+ * else is refused rather than stretched over the week: a list of three taken modulo
+ * the weekday is the shape this replaced, and accepting one would bring back the
+ * silent reshuffle the table exists to stop.
+ * @param {unknown} schedule
+ * @returns {string[]}
+ * @throws {Error} when it is not five non-empty provider names
+ */
+export function validateSchedule(schedule) {
+  if (
+    !Array.isArray(schedule) ||
+    schedule.length !== WEEKDAYS_PER_SCHEDULE ||
+    !schedule.every((p) => typeof p === "string" && p.trim() !== "")
+  ) {
+    throw new Error(
+      `the rotation schedule must name exactly ${WEEKDAYS_PER_SCHEDULE} providers, ` +
+        `Monday to Friday; got ${JSON.stringify(schedule)}`,
+    );
+  }
+  return schedule;
+}
+
+/**
+ * The schedule index for a UTC date. Monday is 0 — the daily's cron is 05:00 BRT
  * = 08:00 UTC, so the UTC weekday and the Brazilian one always agree for this lane.
- * Saturday and Sunday map onto the same slots as Mon/Tue rather than being rejected:
- * the lane is Mon-Fri on schedule, but a `workflow_dispatch` on a weekend must still
+ * Saturday and Sunday map onto Monday's and Tuesday's slots rather than being
+ * rejected: the lane is Mon-Fri on schedule, but a dispatch on a weekend must still
  * resolve a provider instead of erroring.
  * @param {Date} date
- * @param {number} orderLength
- * @returns {number}
+ * @returns {number} 0..4
  */
-export function rotationSlot(date, orderLength) {
+export function rotationSlot(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
     throw new Error(`--date is not a valid instant: ${date}`);
   }
-  if (!Number.isInteger(orderLength) || orderLength < 1) {
-    throw new Error(`rotation order must have at least one provider`);
-  }
   // getUTCDay(): Sunday 0 … Saturday 6. Shift so Monday is 0.
   const mondayFirst = (date.getUTCDay() + 6) % 7;
-  return mondayFirst % orderLength;
+  return mondayFirst % WEEKDAYS_PER_SCHEDULE;
+}
+
+/**
+ * The providers to try, in order: the day's own, then each other provider in the
+ * order its next slot comes round, each once. Anthropic owns two weekdays, so without
+ * the dedup a dry anthropic key would be tried twice and reported twice.
+ * @param {string[]} schedule
+ * @param {number} start
+ * @returns {string[]}
+ */
+function fallbackCandidates(schedule, start) {
+  const candidates = [];
+  for (let i = 0; i < schedule.length; i++) {
+    const provider = schedule[(start + i) % schedule.length];
+    if (!candidates.includes(provider)) candidates.push(provider);
+  }
+  return candidates;
 }
 
 /**
@@ -231,20 +280,15 @@ function advanceReason(providers, provider) {
  * Resolve the day's target, advancing through the rotation past unusable providers.
  *
  * @param {unknown} providers  parsed providers.json
- * @param {{ order?: string[], date?: Date }} [options]
+ * @param {{ schedule?: string[], date?: Date }} [options]
  * @returns {{ ok: boolean, provider: string|null, model: string|null, reason: string|null, warnings: string[], skipped: Array<{provider: string, reason: string}> }}
  * @throws {Error} when the payload is not a readable provider record list, or the
- *   rotation order is empty — both are undecidable, not "nothing to pin" (#1035).
+ *   schedule is not one provider per weekday — both are undecidable, not "nothing to
+ *   pin" (#1035).
  */
 export function selectDailyModelTarget(providers, options = {}) {
-  const order = options.order ?? DEFAULT_ORDER;
-  if (!Array.isArray(order) || order.length === 0) {
-    throw new Error("rotation order must be a non-empty list of provider names");
-  }
-  const start = rotationSlot(options.date ?? new Date(), order.length);
-
-  // Rotate the order so the day's provider is first, then the fallbacks in order.
-  const candidates = order.map((_, i) => order[(start + i) % order.length]);
+  const schedule = validateSchedule(options.schedule ?? DEFAULT_SCHEDULE);
+  const candidates = fallbackCandidates(schedule, rotationSlot(options.date ?? new Date()));
 
   const skipped = [];
   for (const provider of candidates) {
@@ -278,7 +322,7 @@ export function selectDailyModelTarget(providers, options = {}) {
     provider: null,
     model: null,
     reason:
-      `no provider in the rotation (${order.join(", ")}) is usable, so there is no ` +
+      `no provider in the rotation (${candidates.join(", ")}) is usable, so there is no ` +
       `settled model to pin to — the lane keeps its default per-provider ` +
       `parametrization. With every key down that costs nothing extra and keeps the ` +
       `failure attributable. Per provider: ` +
@@ -293,33 +337,31 @@ export function selectDailyModelTarget(providers, options = {}) {
  *
  * DERIVED from the rotation rather than looked up in the run history, and that is
  * the whole reason this function exists (#1456). What a displaced slot COSTS is a
- * property of the schedule — the cron is Mon-Fri and the slot repeats every
- * `order.length` weekdays — so it is computable on the day it happens. The
+ * property of the schedule — the cron is Mon-Fri and the table repeats every week —
+ * so it is computable on the day it happens. The
  * retrospective question ("when did google last actually run?") is NOT computable:
  * `reports/daily-history.jsonl` records `param` per FAILING test, so a green day
  * leaves no record of which provider it resolved. Answering that needs a run-level
  * field the appender does not write today, which is a separate decision.
  *
  * Weekends are skipped rather than counted, because the schedule does not run them.
- * That is what makes google's cost 7 days and not 3: with the default three-provider
- * order it owns Wednesday alone, and Saturday's slot — which would also be its — is
- * not a run.
+ * A provider with one weekday (google, azure-ai-foundry, openai in the default table)
+ * waits 7 days; anthropic, with Tuesday and Friday, waits 3 or 4, because any weekday
+ * it owns counts and not only the first one in the table.
  *
  * @param {string} provider
- * @param {string[]} order rotation order
+ * @param {string[]} schedule one provider per weekday, Monday first
  * @param {Date} from the displaced run's own instant
- * @returns {{ days: number, date: Date }|null} null when the provider is not in the
- *   order at all, or when no weekday in the next fortnight resolves to it (only
- *   possible for an order longer than the working week)
+ * @returns {{ days: number, date: Date }|null} null when the provider owns no weekday
  */
-export function nextScheduledSlot(provider, order, from) {
-  const slot = order.indexOf(provider);
-  if (slot < 0) return null;
-  for (let days = 1; days <= 14; days++) {
+export function nextScheduledSlot(provider, schedule, from) {
+  validateSchedule(schedule);
+  if (!schedule.includes(provider)) return null;
+  for (let days = 1; days <= 7; days++) {
     const date = new Date(from.getTime() + days * 86400000);
     const weekday = date.getUTCDay();
     if (weekday === 0 || weekday === 6) continue; // the cron is Mon-Fri
-    if (rotationSlot(date, order.length) === slot) return { days, date };
+    if (schedule[rotationSlot(date)] === provider) return { days, date };
   }
   return null;
 }
@@ -347,12 +389,12 @@ function isoDay(date) {
  * was in the daily's log for weeks and read by nobody.
  *
  * @param {{ ok: boolean, provider: string|null, skipped: Array<{provider: string, reason: string}> }} result
- * @param {{ order?: string[], date?: Date }} [options]
+ * @param {{ schedule?: string[], date?: Date }} [options]
  */
 export function rotationDisplacement(result, options = {}) {
   const skipped = result?.skipped ?? [];
   if (skipped.length === 0) return null;
-  const order = options.order ?? DEFAULT_ORDER;
+  const schedule = options.schedule ?? DEFAULT_SCHEDULE;
   const date = options.date ?? new Date();
   return {
     weekday: WEEKDAY_NAMES[date.getUTCDay()],
@@ -365,7 +407,7 @@ export function rotationDisplacement(result, options = {}) {
     // a fallback a next-slot gap it does not have.
     displaced: skipped.map((entry, index) => {
       const owns = index === 0;
-      const next = owns ? nextScheduledSlot(entry.provider, order, date) : null;
+      const next = owns ? nextScheduledSlot(entry.provider, schedule, date) : null;
       return {
         provider: entry.provider,
         reason: entry.reason,
@@ -533,7 +575,7 @@ export function renderRotationSummary(displacement, { compact = false } = {}) {
 function parseArgs(argv) {
   const args = {
     providersFile: "tests/helpers/provider-setup/data/providers.json",
-    order: DEFAULT_ORDER,
+    schedule: DEFAULT_SCHEDULE,
     date: undefined,
     help: false,
   };
@@ -546,12 +588,8 @@ function parseArgs(argv) {
     const value = argv[i + 1];
     if (value === undefined) throw new Error(`${flag} needs a value`);
     if (flag === "--providers-file") args.providersFile = value;
-    else if (flag === "--order") {
-      args.order = value
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean);
-      if (args.order.length === 0) throw new Error("--order is empty");
+    else if (flag === "--schedule") {
+      args.schedule = validateSchedule(value.split(",").map((p) => p.trim()));
     } else if (flag === "--date") args.date = new Date(value);
     else if (flag === "--provider") args.provider = value;
     else if (flag === "--model") args.model = value;
@@ -649,7 +687,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           warnings: [],
           skipped: [],
         }
-      : selectDailyModelTarget(providers, { order: args.order, date: args.date });
+      : selectDailyModelTarget(providers, { schedule: args.schedule, date: args.date });
   } catch (error) {
     // Fail loud (#1035): a payload this cannot read must not read as "nothing to
     // pin". The lane is expected to fail here rather than quietly pay for a
@@ -668,7 +706,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // already looks; the log lines carry the same fact to the VM lane, which runs this
   // script outside Actions and has no step summary.
   const displacement = rotationDisplacement(result, {
-    order: args.order,
+    schedule: args.schedule,
     date: args.date ?? new Date(),
   });
   for (const line of displacementLines(displacement)) {

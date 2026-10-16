@@ -14,16 +14,19 @@
  * for one short of editing a workflow file.
  *
  * The rotation bounds the detection window for a provider-specific regression, but not
- * as tightly as #1185's "≤3 days" reads. That figure is the *intra-week* gap; the
- * schedule is Mon-Fri only, so the real per-provider latency is:
+ * as tightly as #1185's "≤3 days" reads. That figure was the *intra-week* gap; the
+ * schedule is Mon-Fri only, and since #2287 it is an explicit weekday table, so the
+ * real per-provider latency is:
  *
- *   openai     Mon, Thu  → ≤4 days (Thu → Mon)
- *   anthropic  Tue, Fri  → ≤4 days (Fri → Tue)
- *   google     Wed       → ≤7 days
+ *   openai            Mon       → ≤7 days
+ *   anthropic         Tue, Fri  → ≤4 days (Fri → Tue)
+ *   google            Wed       → ≤7 days
+ *   azure-ai-foundry  Thu       → ≤7 days
  *
  * `google` runs once a week, and google is the provider of #963 (`mcp-client-agent`
- * returning "Message empty." on gemini while the tool fires). That gap is what this
- * escape hatch exists for.
+ * returning "Message empty." on gemini while the tool fires). Gaps like that are what
+ * this escape hatch exists for. openai's week is softened by the PR lane, which pins
+ * it on every pull request (#1169).
  *
  * Those are BEST cases, not bounds: `selectDailyModelTarget` advances past an inactive
  * provider, so a Wednesday with a dry google key gives google no coverage that week and
