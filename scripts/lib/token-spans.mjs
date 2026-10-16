@@ -105,7 +105,9 @@ export function spanModelUsage(spans) {
 //    drained key gets `status: "error"` and the message. A Stop-button cancellation
 //    gets `status: "ok"` and `error: ""`, because str(CancelledError()) is empty
 //    (native.py sets ERROR only for a truthy error), so the test is on the TYPE of
-//    `error`: a call that answered ends with `error: null`. A cancelled call may have
+//    `error`: a call that answered ends with `error: null`. (The one `error=None`
+//    failure, a LangGraph interrupt, is raised from a node or a tool, not from inside
+//    a model call, so it never reaches an llm span.) A cancelled call may have
 //    billed its prompt, and that partial spend stays unrecorded, as it was before
 //    #2288; counting it would make the daily that runs the @stable Stop test a floor
 //    every day and take every line out of the anomaly baseline.
