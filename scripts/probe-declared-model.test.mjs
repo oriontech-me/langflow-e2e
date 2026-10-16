@@ -295,11 +295,13 @@ test("azure: neither the key, the endpoint nor its host reaches the reason", asy
     new TypeError(`getaddrinfo ENOTFOUND orion-secret-host.openai.azure.com`),
     new TypeError(`request to ${AZURE.AZURE_AI_FOUNDRY_ENDPOINT}/chat/completions failed`),
     json(401, { error: { message: `Key ${AZURE.AZURE_AI_FOUNDRY_API_KEY} is not valid for ${AZURE.AZURE_AI_FOUNDRY_ENDPOINT}` } }),
+    // In the operator's casing, where URL.host has lowered it.
+    json(404, { error: { message: "No deployment on Orion-Secret-Host.openai.azure.com" } }),
   ];
   for (const answer of leaky) {
     const p = provider({ "*": answer });
     const d = await probeDeclared({ provider: "azure-ai-foundry", env: AZURE, fetchImpl: p.fetchImpl });
-    assert.doesNotMatch(d.reason, /orion-secret-host/, d.reason);
+    assert.doesNotMatch(d.reason, /orion-secret-host/i, d.reason);
     assert.doesNotMatch(d.reason, /azure-key-0123456789/, d.reason);
   }
   const bad = await probeDeclared({ provider: "azure-ai-foundry", env: { ...AZURE, AZURE_AI_FOUNDRY_ENDPOINT: "orion-secret-host no scheme" } });

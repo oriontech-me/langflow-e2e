@@ -220,7 +220,11 @@ export async function probeOnce(provider, model, key, fetchImpl = fetch, endpoin
 export function cleanReason(text, secrets = []) {
   // The exact keys first: a key holding a newline would no longer match once flattened.
   let s = String(text);
-  for (const k of secrets) if (k && k.length >= 8) s = s.split(k).join("<key>");
+  // Case-insensitively: a host is case-insensitive, and an error body may quote it in
+  // the operator's casing where URL.host has lowered it.
+  for (const k of secrets) {
+    if (k && k.length >= 8) s = s.replace(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "<key>");
+  }
   s = s.replace(/[\r\n]+/g, " ");
   s = s.replace(/\b(?:sk-|AIza)[A-Za-z0-9_*-]+/g, "<key>");
   // Any other masked key a provider echoes, e.g. openai's "tes*****1234".

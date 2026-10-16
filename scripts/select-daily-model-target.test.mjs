@@ -62,17 +62,20 @@ test("the weekday mapping is Mon→openai, Tue→anthropic, Wed→google, Thu→
   assert.equal(on(FRI).provider, "anthropic");
 });
 
-test("adding a slot to the table moves no other weekday (#2287)", () => {
-  // The shape this replaced was an order taken modulo the weekday: appending a fourth
-  // provider to openai,anthropic,google put it on Thursday AND moved Friday from
-  // anthropic to openai. A table changes one weekday at a time.
-  const before = ["openai", "anthropic", "google", "openai", "anthropic"];
-  const after = ["openai", "anthropic", "google", "azure-ai-foundry", "anthropic"];
-  for (const [day, changes] of [[MON, false], [TUE, false], [WED, false], [THU, true], [FRI, false]]) {
-    const a = selectDailyModelTarget(healthy(), { date: day, schedule: before }).provider;
-    const b = selectDailyModelTarget(healthy(), { date: day, schedule: after }).provider;
-    assert.equal(a !== b, changes, `${day.toISOString().slice(0, 10)}: ${a} → ${b}`);
+test("Azure took Thursday from the week the modulo rotation used to run, and nothing else (#2287)", () => {
+  // Until #2287 the day was ["openai","anthropic","google"][mondayFirst % 3]. Spelled
+  // out here as that formula, not as a table, so the comparison is against what the
+  // daily actually ran: only Thursday may differ. Appending azure to that ORDER would
+  // have moved Friday too, which is the reshuffle the table exists to stop.
+  const legacy = (d) => ["openai", "anthropic", "google"][((d.getUTCDay() + 6) % 7) % 3];
+  for (const day of [MON, TUE, WED, THU, FRI]) {
+    const now = selectDailyModelTarget(healthy(), { date: day }).provider;
+    const changed = now !== legacy(day);
+    assert.equal(changed, day === THU, `${day.toISOString().slice(0, 10)}: ${legacy(day)} → ${now}`);
   }
+  const appended = (d) =>
+    ["openai", "anthropic", "google", "azure-ai-foundry"][((d.getUTCDay() + 6) % 7) % 4];
+  assert.notEqual(appended(FRI), selectDailyModelTarget(healthy(), { date: FRI }).provider);
 });
 
 test("the pinned model is the one collect-models settled on, never a hardcoded id", () => {
@@ -221,7 +224,7 @@ test("every provider down declines to pin instead of pretending, and explains pe
   assert.equal(result.provider, null);
   assert.equal(result.model, null);
   assert.match(result.reason, /no provider in the rotation/);
-  for (const name of ["openai", "anthropic", "google"]) {
+  for (const name of ["openai", "anthropic", "google", "azure-ai-foundry"]) {
     assert.match(result.reason, new RegExp(`${name} is dry`));
   }
 });
