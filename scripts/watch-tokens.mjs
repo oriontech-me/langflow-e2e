@@ -479,6 +479,11 @@ export async function summarize({
     by_spec: agg.bySpec,
     unattributed: agg.unattributed,
     unpriced_models: agg.unpricedModels,
+    // #2288: LLM calls whose usage never reached the trace. Defined in
+    // reports/README.md's token-history.jsonl row; `calls > 0` makes every token
+    // and dollar figure on this line a floor, and keeps the line out of the
+    // anomaly baseline (token-anomaly.mjs).
+    unmeasured: agg.unmeasured,
     // §4.3: what the attribution sidecar COST this run — the price, on the same
     // line as the benefit it bought. Without it the ceiling is a claim in a doc
     // comment that nobody can check against a real run.
@@ -585,6 +590,10 @@ export async function summarize({
       // here: the ingest RPC destructures the five fields named above and ignores
       // everything else.
       unpriced_models: agg.unpricedModels,
+      // #2288: same reasoning as `unpriced_models` -- the ingest ignores it today,
+      // and without it a Thursday on Azure AI Foundry reaches the platform as a run
+      // that spent nothing on its agent specs, with nothing to say otherwise.
+      unmeasured: agg.unmeasured,
       rows: agg.bySpecModel,
     };
     try {
@@ -597,12 +606,21 @@ export async function summarize({
   // "no price entry" is only true when the table was READABLE; when it was not,
   // every model is unpriced for one shared reason and saying it per model points
   // at the wrong fix (#1300 review).
-  const floor = agg.unpricedModels.length
+  const unpricedFloor = agg.unpricedModels.length
     ? pricesReadable
       ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
       : " (a FLOOR — the price table could not be read, so NOTHING in this run is priced; see the" +
         " recorder's log for the parse error)"
     : "";
+  // #2288: a call whose usage never reached the trace makes the TOKEN count a floor
+  // too, not only the dollars, and the reader is told which model and why.
+  const unmeasuredFloor = agg.unmeasured.calls
+    ? ` (a FLOOR — ${agg.unmeasured.calls} LLM call(s) reported no token usage, so their spend is ` +
+      `unmeasured, not zero: ${agg.unmeasured.by_model
+        .map((m) => `${m.model}${m.provider ? ` on ${m.provider}` : ""} × ${m.calls}`)
+        .join(", ")})`
+    : "";
+  const floor = `${unpricedFloor}${unmeasuredFloor}`;
   // Every dollar figure below is a LOCAL ESTIMATE, and says so (#1255 item 3). USD is
   // computed twice — here, from scripts/lib/model-prices.json at run time, and on the
   // QA Platform, which re-prices each row from its `price_key` against its own copy of

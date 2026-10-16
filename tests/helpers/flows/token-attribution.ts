@@ -107,6 +107,8 @@ type BuildProbeFn = (
   status: string | null;
   total_tokens: number | null;
   models: unknown[];
+  /** Present only when a call reported no usage (#2288); see scripts/lib/token-spans.mjs. */
+  unmeasured?: unknown[];
 };
 
 async function loadBuildProbe(): Promise<BuildProbeFn> {

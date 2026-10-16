@@ -36,12 +36,21 @@ const ROUND_RATIO_DECIMALS = 2;
 const roundUsd = (n) => Math.round(n * 10 ** ROUND_USD_DECIMALS) / 10 ** ROUND_USD_DECIMALS;
 const roundRatio = (n) => Math.round(n * 10 ** ROUND_RATIO_DECIMALS) / 10 ** ROUND_RATIO_DECIMALS;
 
+// A line or spec entry that carries unmeasured calls (#2288) is a FLOOR, not a cost:
+// on a Thursday on Azure AI Foundry the agent specs report 0 tokens because the usage
+// never reached the trace. Kept out of every baseline, or each such day would lower
+// the bar the next run is measured against. A floor can still be the RUN being
+// judged: an upward comparison holds for a floor, since the true figure is at least it.
+const isFloor = (count) => Number(count) > 0;
+
 export function detectAnomalies({ run, history = [], minBaseline = 5, ratio = 3 } = {}) {
   const anomalies = [];
   if (!run || history.length < minBaseline) return anomalies;
 
   const runUsd = Number(run?.totals?.usd_estimated) || 0;
-  const runBaseline = median(history.map((h) => h?.totals?.usd_estimated));
+  const measuredRuns = history.filter((h) => !isFloor(h?.unmeasured?.calls));
+  const runBaseline =
+    measuredRuns.length >= minBaseline ? median(measuredRuns.map((h) => h?.totals?.usd_estimated)) : null;
   if (runBaseline && runUsd / runBaseline >= ratio) {
     anomalies.push({
       scope: "run",
@@ -55,7 +64,7 @@ export function detectAnomalies({ run, history = [], minBaseline = 5, ratio = 3 
   for (const spec of run?.by_spec ?? []) {
     const past = history
       .flatMap((h) => h?.by_spec ?? [])
-      .filter((s) => s?.file === spec.file)
+      .filter((s) => s?.file === spec.file && !isFloor(s?.unmeasured_calls))
       .map((s) => s.usd_estimated);
     if (past.length < minBaseline) continue;
     const baseline = median(past);

@@ -408,6 +408,11 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     usd_estimated: 0,
     reason: UNATTRIBUTED_REASON,
   };
+  // Calls whose usage never reached the trace (#2288): counted, never priced, and
+  // never read as zero spend. Any call here makes every token and dollar figure on
+  // the line a FLOOR, the same status an unpriced model gives the dollars.
+  const unmeasuredByModel = new Map();
+  const unmeasured = { calls: 0, traces: 0, by_model: [] };
 
   for (const probe of probes) {
     if (!probe?.trace_id) continue;
@@ -490,7 +495,10 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
       // any provider row can check what it is made of.
       // Reachable today only through #1211's band-uncovered date; the rule is
       // written down because the next dated entry is what makes it live.
-      const providerKey = resolveProvider(m.model, prices, date);
+      // The span's own class first (#2288), because the price table is keyed by id
+      // and one id can be billed by two accounts; the table answers when the class
+      // names no provider, exactly as before.
+      const providerKey = m.provider ?? resolveProvider(m.model, prices, date);
       const bucket =
         providers.get(providerKey) ??
         {
@@ -548,6 +556,22 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     // against its real span sum. `Number.isFinite` on the raw value rejects
     // `null` (and a missing/undefined field) without coercion, so both correctly
     // fall through to `spanTotal` below.
+    let traceUnmeasured = 0;
+    for (const u of probe.unmeasured ?? []) {
+      const calls = Number(u?.calls) || 0;
+      if (!u?.model || calls <= 0) continue;
+      const provider = u.provider ?? resolveProvider(u.model, prices, date);
+      const key = `${u.model}\u0000${provider ?? ""}`;
+      const acc = unmeasuredByModel.get(key) ?? { model: u.model, provider, calls: 0 };
+      acc.calls += calls;
+      unmeasuredByModel.set(key, acc);
+      traceUnmeasured += calls;
+    }
+    if (traceUnmeasured) {
+      unmeasured.calls += traceUnmeasured;
+      unmeasured.traces += 1;
+    }
+
     const traceTotal = probe.total_tokens;
     const runTotal = Number.isFinite(traceTotal) ? traceTotal : spanTotal;
     if (Number.isFinite(traceTotal) && traceTotal !== spanTotal) {
@@ -578,6 +602,9 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     spec.traces += 1;
     spec.total_tokens += runTotal;
     spec.usd_estimated += traceUsd;
+    // Only when non-zero, so a fully measured spec keeps its pre-#2288 shape. A spec
+    // carrying it is a floor, and the anomaly baseline leaves it out (token-anomaly.mjs).
+    if (traceUnmeasured) spec.unmeasured_calls = (spec.unmeasured_calls ?? 0) + traceUnmeasured;
     specs.set(key, spec);
   }
 
@@ -618,6 +645,12 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     attrib_calls: attribCalls,
     unattributed,
     unpricedModels: [...unpriced].sort(),
+    unmeasured: {
+      ...unmeasured,
+      by_model: [...unmeasuredByModel.values()].sort(
+        (a, b) => b.calls - a.calls || a.model.localeCompare(b.model),
+      ),
+    },
     mismatches,
   };
 }
