@@ -1919,3 +1919,43 @@ test("an UNREADABLE price table says so, instead of telling a reader to add rows
   );
   assert.match(md, /`gpt-4o-mini`/, "the ids are still named");
 });
+
+// --- #2288: a Thursday on Azure AI Foundry reads as unmeasured, never as $0 ---
+
+test("summarize carries unmeasured calls to the history line, the tokens block and the summary", async () => {
+  const foundryProbe = JSON.stringify({
+    trace_id: "t2",
+    flow_id: "f2",
+    start_time: "2026-10-22T08:30:00Z",
+    status: "ok",
+    total_tokens: 0,
+    models: [],
+    unmeasured: [{ model: "gpt-5.6-sol", provider: "azure", calls: 3 }],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n${foundryProbe}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, RUN_DATE: "2026-10-22", TOKENS_SUMMARY_OUT: "tokens-block.json" };
+  assert.equal(await summarize({ env, ...fs2, log: () => {} }), 0);
+
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  const expected = { calls: 3, traces: 1, by_model: [{ model: "gpt-5.6-sol", provider: "azure", calls: 3 }] };
+  assert.deepEqual(line.unmeasured, expected);
+  assert.equal(line.totals.total_tokens, 88, "nothing is invented for the unmeasured calls");
+  assert.deepEqual(JSON.parse(fs2.written["tokens-block.json"]).unmeasured, expected);
+  assert.match(fs2.written["summary.md"], /a FLOOR — 3 LLM call\(s\) reported no token usage/);
+  assert.match(fs2.written["summary.md"], /gpt-5\.6-sol on azure × 3/);
+});
+
+test("a fully measured run records unmeasured as zero and prints no unmeasured floor", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.deepEqual(line.unmeasured, { calls: 0, traces: 0, by_model: [] });
+  assert.doesNotMatch(fs2.written["summary.md"], /reported no token usage/);
+});

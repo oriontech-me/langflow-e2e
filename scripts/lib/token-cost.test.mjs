@@ -1382,3 +1382,77 @@ test("no model the suite actually measured rolls up as an unknown provider", () 
   // And the axes stay distinct: the Foundry deployment is not openai spend.
   assert.equal(resolveProvider("gpt-5-mini", prices, "2026-08-05"), "azure");
 });
+
+// ─── Unmeasured calls and the span's provider (#2288) ────────────────────────
+// Shaped like a Thursday on Azure AI Foundry: the trace's own total is 0 and its
+// provider span arrives as an unmeasured call, next to a measured OpenAI trace.
+
+const ROTATION_PRICES = {
+  "gpt-4o-mini": { provider: "openai", inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  // The real row says openai: the id is shared with OpenAI's catalog.
+  "gpt-5.6-sol": { provider: "openai", inputPerMillion: 5, outputPerMillion: 30 },
+};
+const OPENAI_TRACE = {
+  trace_id: "t-openai",
+  total_tokens: 88,
+  models: [{ model: "gpt-4o-mini", provider: "openai", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
+};
+const FOUNDRY_TRACE = {
+  trace_id: "t-foundry",
+  total_tokens: 0,
+  models: [],
+  unmeasured: [{ model: "gpt-5.6-sol", provider: "azure", calls: 2 }],
+};
+
+test("unmeasured calls are counted and named, and add no tokens and no dollars", () => {
+  const agg = aggregate({
+    probes: [OPENAI_TRACE, FOUNDRY_TRACE],
+    attributions: [{ trace_id: "t-foundry", file: "llm-agents/agent-system-prompt.spec.ts", test: "agent > replies" }],
+    prices: ROTATION_PRICES,
+    date: "2026-10-22",
+  });
+  assert.deepEqual(agg.unmeasured, {
+    calls: 2,
+    traces: 1,
+    by_model: [{ model: "gpt-5.6-sol", provider: "azure", calls: 2 }],
+  });
+  assert.equal(agg.totals.total_tokens, 88, "the zero adds nothing, and nothing is invented");
+  assert.ok(!agg.unpricedModels.includes("gpt-5.6-sol"), "unmeasured is not unpriced");
+  assert.equal(agg.byModel.length, 1, "no zero-token gpt-5.6-sol row reaches by_model or the platform rows");
+  assert.equal(agg.bySpecModel.length, 1);
+  const spec = agg.bySpec.find((s) => s.file.endsWith("agent-system-prompt.spec.ts"));
+  assert.equal(spec.unmeasured_calls, 2, "the spec says its figure is a floor");
+});
+
+test("a fully measured run reports zero unmeasured calls and no per-spec marker", () => {
+  const agg = aggregate({
+    probes: [OPENAI_TRACE],
+    attributions: [{ trace_id: "t-openai", file: "a.spec.ts", test: "t" }],
+    prices: ROTATION_PRICES,
+    date: "2026-10-22",
+  });
+  assert.deepEqual(agg.unmeasured, { calls: 0, traces: 0, by_model: [] });
+  assert.ok(!("unmeasured_calls" in agg.bySpec[0]));
+});
+
+test("the span's provider wins over the price row's, so a Foundry call to a shared id books to azure", () => {
+  const measured = {
+    trace_id: "t-foundry-measured",
+    total_tokens: 30,
+    models: [{ model: "gpt-5.6-sol", provider: "azure", prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, calls: 1 }],
+  };
+  const openaiSameId = {
+    trace_id: "t-openai-sol",
+    total_tokens: 15,
+    models: [{ model: "gpt-5.6-sol", provider: "openai", prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, calls: 1 }],
+  };
+  const noClass = {
+    trace_id: "t-no-class",
+    total_tokens: 15,
+    models: [{ model: "gpt-5.6-sol", prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, calls: 1 }],
+  };
+  const agg = aggregate({ probes: [measured, openaiSameId, noClass], prices: ROTATION_PRICES, date: "2026-10-22" });
+  const byProvider = Object.fromEntries(agg.byProvider.map((b) => [b.provider, b.total_tokens]));
+  assert.deepEqual(byProvider, { azure: 30, openai: 30 }, "no class falls back to the row, which says openai");
+  assert.equal(agg.byModel.find((m) => m.model === "gpt-5.6-sol").total_tokens, 60, "by_model still keys on the id");
+});
