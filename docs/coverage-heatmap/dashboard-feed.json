@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-15",
+ "refreshed": "2026-10-16",
  "refreshWindow": {
-  "testHealthSince": "2026-08-31",
+  "testHealthSince": "2026-09-01",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,18 +40,18 @@
   "cappedByProduct": 2,
   "bullets": 822,
   "bulletsAutomatedUnwatched": 125,
-  "residualRiskTotal": 107.1
+  "residualRiskTotal": 106.9
  },
  "areas": [
   {
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 1,
-   "residualRisk": 9,
+   "residualRisk": 8.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.64,
+   "mitigation": 0.65,
    "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
@@ -75,9 +75,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 9,
+    "chronicFlaky": 8,
     "stableSpecs": 37,
-    "penalty": 0.089
+    "penalty": 0.079
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -91,7 +91,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": 1.6,
+    "residualRisk": 1.4,
     "rank": 3,
     "direction": "worsened"
    },
