@@ -150,7 +150,7 @@ test.describe("Connections page — row actions and the non-interactive opt-in",
 
   test(
     "Rename, Check credential, Revoke and Delete each act on the row, and the API agrees",
-    { tag: ["@stable", "@integrations", "@settings"] },
+    { tag: ["@integrations", "@settings"] },
     async ({ page, request }) => {
       const headers = { Authorization: await getAuthToken(request) };
       const connection = await createConnectionViaApi(request, headers, { label: "rowactions" });
