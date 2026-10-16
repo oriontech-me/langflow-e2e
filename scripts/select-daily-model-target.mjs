@@ -455,7 +455,7 @@ export function displacementLines(displacement) {
     }
     const cost =
       entry.days === null
-        ? "it has no further slot in the next fortnight"
+        ? "it owns no weekday in the schedule"
         : `its next slot is ${entry.nextWeekday} ${entry.nextDay}, ${entry.days} day(s) ` +
           `from this run — nothing runs an agent spec against it until then`;
     return (
@@ -488,7 +488,7 @@ function renderCompactRotationNote(displacement) {
   if (!owner) return "";
   const gap =
     owner.days === null
-      ? "no further slot in the next fortnight"
+      ? "no weekday of its own in the schedule"
       : `next ${owner.nextWeekday} ${owner.nextDay}, ${owner.days} day(s)`;
   const outcome = displacement.resolved
     ? `the lane ran \`${displacement.resolved}\``
@@ -556,7 +556,7 @@ export function renderRotationSummary(displacement, { compact = false } = {}) {
           ? "—"
           : entry.nextDay
             ? `${entry.nextWeekday} ${entry.nextDay}`
-            : "none in the next fortnight"
+            : "none in the schedule"
       } | ${!entry.owns || entry.days === null ? "—" : `${entry.days} day(s)`} | ${
         tableCell(entry.reason)
       } |`,

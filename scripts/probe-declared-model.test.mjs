@@ -309,6 +309,13 @@ test("azure: neither the key, the endpoint nor its host reaches the reason", asy
   assert.equal(bad.reason, "AZURE_AI_FOUNDRY_ENDPOINT is not a URL");
 });
 
+test("azure: a project endpoint's path does not reach the reason either, only its host would be scrubbed otherwise", async () => {
+  const env = { ...AZURE, AZURE_AI_FOUNDRY_ENDPOINT: "https://orion-secret-host.services.ai.azure.com/api/projects/secret-project" };
+  const p = provider({ "*": new TypeError(`request to ${env.AZURE_AI_FOUNDRY_ENDPOINT} failed`) });
+  const d = await probeDeclared({ provider: "azure-ai-foundry", env, fetchImpl: p.fetchImpl });
+  assert.doesNotMatch(d.reason, /secret-project/, d.reason);
+});
+
 test("azure: the three variables come from the .env too, as dotenv reads them", () => {
   const text = Object.entries(AZURE).map(([k, v]) => `${k}=${v}`).join("\n");
   assert.deepEqual(keysFromDotenv(text), AZURE);

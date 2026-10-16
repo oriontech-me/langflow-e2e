@@ -18,6 +18,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { APIRequestContext } from "@playwright/test";
 import {
+  AZURE_FOUNDRY_PROBE_TIMEOUT_MS,
   azureFoundryChatUrl,
   azureFoundryDeclaration,
   azureFoundryTargeted,
@@ -67,6 +68,7 @@ test("the on-demand pre-build probe asks the same URL with the same variables (#
   const config = providerConfigMap["azure-ai-foundry"];
   assert.deepEqual(Object.values(probe.AZURE_ENV).sort(), [...config.envKeys].sort());
   assert.equal(probe.AZURE_ENV.deployment, config.deploymentEnvKey);
+  assert.equal(probe.TIMEOUT_MS_BY_PROVIDER["azure-ai-foundry"], AZURE_FOUNDRY_PROBE_TIMEOUT_MS);
   for (const endpoint of [
     "https://res.services.ai.azure.com/api/projects/Orion-e2e",
     "https://res.services.ai.azure.com/api/projects/Orion-e2e/",

@@ -52,8 +52,8 @@
  *   node scripts/probe-declared-model.mjs --provider anthropic [--model claude-haiku-4-5]
  *
  * Reads OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY and the three
- * AZURE_AI_FOUNDRY_* variables from where the run reads them: the environment, else the working copy's `.env`, which playwright.config.ts's
- * `dotenv.config()` loads without overriding what is set (run-e2e.sh: the VM has no
+ * AZURE_AI_FOUNDRY_* variables from where the run reads them: the environment, else
+ * the working copy's `.env`, which playwright.config.ts's `dotenv.config()` loads without overriding what is set (run-e2e.sh: the VM has no
  * secrets store for them). Run from the suite's worktree, whose `.env` is the clone's.
  * Prints the decision as one JSON line, {verdict, provider, model, reason}; never a key.
  */
@@ -116,6 +116,10 @@ export const AZURE_ENV = {
 };
 const DOTENV_NAMES = [...Object.values(KEYS), ...Object.values(AZURE_ENV)];
 const TIMEOUT_MS = 20_000;
+// collect-models gives Foundry 30 s (AZURE_FOUNDRY_PROBE_TIMEOUT_MS in azure-foundry.ts),
+// so a deployment answering in 20-30 s is active for the run: the probe waits as long,
+// rather than calling undecided what the run would accept.
+export const TIMEOUT_MS_BY_PROVIDER = { "azure-ai-foundry": 30_000 };
 
 /**
  * The chat-completions URL for a Foundry endpoint, with the one rewrite Langflow
@@ -195,11 +199,12 @@ export function probeRequest(provider, model, key, endpoint) {
  */
 export async function probeOnce(provider, model, key, fetchImpl = fetch, endpoint = undefined) {
   const req = probeRequest(provider, model, key, endpoint);
+  const timeoutMs = TIMEOUT_MS_BY_PROVIDER[provider] ?? TIMEOUT_MS;
   let res;
   try {
-    res = await fetchImpl(req.url, { ...req.init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    res = await fetchImpl(req.url, { ...req.init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
-    return { outcome: "unknown", message: `no answer from ${provider}: ${e?.name === "TimeoutError" ? `timed out after ${TIMEOUT_MS / 1000}s` : e?.message ?? "unknown error"}` };
+    return { outcome: "unknown", message: `no answer from ${provider}: ${e?.name === "TimeoutError" ? `timed out after ${timeoutMs / 1000}s` : e?.message ?? "unknown error"}` };
   }
   if (res.ok) return { outcome: "ok", message: null };
   const body = await res.json().catch(() => null);
