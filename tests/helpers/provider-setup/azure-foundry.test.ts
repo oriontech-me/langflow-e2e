@@ -18,12 +18,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { APIRequestContext } from "@playwright/test";
 import {
+  AZURE_FOUNDRY_PROBE_TIMEOUT_MS,
   azureFoundryChatUrl,
   azureFoundryDeclaration,
   azureFoundryTargeted,
   ensureAzureFoundryConfigured,
   validateAzureFoundry,
 } from "./azure-foundry";
+import { providerConfigMap } from "./provider-config";
 
 const ENV = {
   AZURE_AI_FOUNDRY_API_KEY: "k",
@@ -54,6 +56,35 @@ test("the chat URL maps a Foundry PROJECT endpoint the way Langflow does", () =>
     azureFoundryChatUrl("https://res.openai.azure.com/openai/v1"),
     "https://res.openai.azure.com/openai/v1/chat/completions",
   );
+});
+
+test("the on-demand pre-build probe asks the same URL with the same variables (#2287)", async () => {
+  // scripts/probe-declared-model.mjs is plain ESM and cannot import this module, so it
+  // carries a copy of the URL mapping and of the variable names. A copy that drifts
+  // would probe a different URL than the one collect-models validates, and approve or
+  // refuse an on-demand request on a question the run never asks.
+  // @ts-expect-error -- dynamic import of a dependency-free ESM .mjs module; no .d.ts to resolve
+  const probe = await import("../../../scripts/probe-declared-model.mjs");
+  const config = providerConfigMap["azure-ai-foundry"];
+  assert.deepEqual(Object.values(probe.AZURE_ENV).sort(), [...config.envKeys].sort());
+  assert.equal(probe.AZURE_ENV.deployment, config.deploymentEnvKey);
+  assert.equal(probe.TIMEOUT_MS_BY_PROVIDER["azure-ai-foundry"], AZURE_FOUNDRY_PROBE_TIMEOUT_MS);
+  for (const endpoint of [
+    "https://res.services.ai.azure.com/api/projects/Orion-e2e",
+    "https://res.services.ai.azure.com/api/projects/Orion-e2e/",
+    "https://res.services.ai.azure.com/api/projects",
+    "https://res.openai.azure.com/openai/v1",
+    "https://res.openai.azure.com/openai/v1//",
+    "https://res.cognitiveservices.azure.com/",
+  ]) {
+    // As collect-models reaches it: through the declaration, which trims the endpoint.
+    const declared = azureFoundryDeclaration({ ...ENV, AZURE_AI_FOUNDRY_ENDPOINT: endpoint });
+    assert.equal(
+      probe.azureFoundryChatUrl(endpoint),
+      azureFoundryChatUrl((declared as { endpoint: string }).endpoint),
+      endpoint,
+    );
+  }
 });
 
 // ─── Key axis ────────────────────────────────────────────────────────────────

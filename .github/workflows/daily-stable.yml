@@ -635,9 +635,9 @@ jobs:
       # Rotation rather than a fixed pin, at identical cost: a fixed pin would make the
       # detection window for a provider-specific regression a standing human decision
       # (#643 anthropic streaming/`thinking`, #963 gemini "Message empty." — both real,
-      # both caught here). Rotating bounds it to <=3 days automatically. The weekday
-      # mapping is FIXED, not evenly distributed, so two Mondays are comparable:
-      #   Mon openai · Tue anthropic · Wed google · Thu openai · Fri anthropic
+      # both caught here). Rotating bounds it to a week at most, automatically. The
+      # weekday mapping is a FIXED table (#2287), so two Mondays are comparable:
+      #   Mon openai · Tue anthropic · Wed google · Thu azure-ai-foundry · Fri anthropic
       #
       # A drained key costs a DEVIATION, not the day: the script advances to the next
       # active provider in the rotation and says so with a ::warning::. It declines to

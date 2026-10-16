@@ -398,10 +398,10 @@ jobs:
       # default any more and there was no input to ask for one.
       #
       # The rotation bounds the detection window for a provider-specific regression,
-      # but the schedule is Mon-Fri, so the real per-provider latency is ≤4 days for
-      # openai and anthropic and SEVEN days for google (Wednesday's only slot) — and
-      # google is the provider of #963. This step is how that gap gets closed on
-      # demand.
+      # but the schedule is Mon-Fri and each provider but anthropic owns ONE weekday
+      # (#2287), so the real per-provider latency is ≤4 days for anthropic and SEVEN
+      # days for openai, google and azure-ai-foundry — and google is the provider of
+      # #963. This step is how that gap gets closed on demand.
       #
       # Placed between the health gate and the run, mirroring the other two lanes: it
       # is worthless before `Collect models` has written providers.json, and useless

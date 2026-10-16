@@ -35,6 +35,7 @@ const healthy = () => [
   { provider: "openai", status: "active", model: "gpt-4o-mini" },
   { provider: "anthropic", status: "active", model: "claude-sonnet-5" },
   { provider: "google", status: "active", model: "gemini-2.5-flash" },
+  { provider: "azure-ai-foundry", status: "active", model: "gpt-5.6-sol" },
 ];
 
 // 2026-07-27 is a Monday; the days below walk that week.
@@ -48,15 +49,33 @@ const SUN = new Date("2026-08-02T08:00:00Z");
 
 // ─── The rotation itself ─────────────────────────────────────────────────────
 
-test("the weekday mapping is Mon→openai, Tue→anthropic, Wed→google, Thu→openai, Fri→anthropic", () => {
+test("the weekday mapping is Mon→openai, Tue→anthropic, Wed→google, Thu→azure-ai-foundry, Fri→anthropic", () => {
   // Fixed rather than evenly distributed, on purpose: two Mondays must be
   // comparable. If this table changes, day-over-day triage comparisons break.
-  const on = (d) => selectDailyModelTarget(healthy(), { date: d }).provider;
-  assert.equal(on(MON), "openai");
-  assert.equal(on(TUE), "anthropic");
-  assert.equal(on(WED), "google");
-  assert.equal(on(THU), "openai");
-  assert.equal(on(FRI), "anthropic");
+  // Thursday was openai's until Azure AI Foundry joined (#2287).
+  const on = (d) => selectDailyModelTarget(healthy(), { date: d });
+  assert.equal(on(MON).provider, "openai");
+  assert.equal(on(TUE).provider, "anthropic");
+  assert.equal(on(WED).provider, "google");
+  assert.equal(on(THU).provider, "azure-ai-foundry");
+  assert.equal(on(THU).model, "gpt-5.6-sol", "the declared deployment collect-models validated");
+  assert.equal(on(FRI).provider, "anthropic");
+});
+
+test("Azure took Thursday from the week the modulo rotation used to run, and nothing else (#2287)", () => {
+  // Until #2287 the day was ["openai","anthropic","google"][mondayFirst % 3]. Spelled
+  // out here as that formula, not as a table, so the comparison is against what the
+  // daily actually ran: only Thursday may differ. Appending azure to that ORDER would
+  // have moved Friday too, which is the reshuffle the table exists to stop.
+  const legacy = (d) => ["openai", "anthropic", "google"][((d.getUTCDay() + 6) % 7) % 3];
+  for (const day of [MON, TUE, WED, THU, FRI]) {
+    const now = selectDailyModelTarget(healthy(), { date: day }).provider;
+    const changed = now !== legacy(day);
+    assert.equal(changed, day === THU, `${day.toISOString().slice(0, 10)}: ${legacy(day)} → ${now}`);
+  }
+  const appended = (d) =>
+    ["openai", "anthropic", "google", "azure-ai-foundry"][((d.getUTCDay() + 6) % 7) % 4];
+  assert.notEqual(appended(FRI), selectDailyModelTarget(healthy(), { date: FRI }).provider);
 });
 
 test("the pinned model is the one collect-models settled on, never a hardcoded id", () => {
@@ -72,18 +91,17 @@ test("a weekend dispatch still resolves a provider instead of erroring", () => {
   assert.equal(selectDailyModelTarget(healthy(), { date: SUN }).ok, true);
 });
 
-test("rotationSlot is Monday-zero and wraps on the order length", () => {
-  assert.equal(rotationSlot(MON, 3), 0);
-  assert.equal(rotationSlot(WED, 3), 2);
-  assert.equal(rotationSlot(THU, 3), 0);
-  assert.equal(rotationSlot(MON, 1), 0);
-  assert.equal(rotationSlot(FRI, 1), 0);
+test("rotationSlot is Monday-zero, and the weekend reuses Monday and Tuesday", () => {
+  assert.deepEqual(
+    [MON, TUE, WED, THU, FRI, SAT, SUN].map((d) => rotationSlot(d)),
+    [0, 1, 2, 3, 4, 0, 1],
+  );
 });
 
-test("a custom --order changes the rotation", () => {
-  const order = ["google", "openai"];
-  assert.equal(selectDailyModelTarget(healthy(), { date: MON, order }).provider, "google");
-  assert.equal(selectDailyModelTarget(healthy(), { date: TUE, order }).provider, "openai");
+test("a custom --schedule changes the rotation", () => {
+  const schedule = ["google", "openai", "openai", "openai", "openai"];
+  assert.equal(selectDailyModelTarget(healthy(), { date: MON, schedule }).provider, "google");
+  assert.equal(selectDailyModelTarget(healthy(), { date: TUE, schedule }).provider, "openai");
 });
 
 // ─── The fallback — the reason this is not a fixed pin ───────────────────────
@@ -157,14 +175,30 @@ test("it advances more than once when it has to", () => {
     { provider: "openai", status: "active", model: "gpt-4o-mini" },
     { provider: "anthropic", status: "inactive", model: null, error: "dry" },
     { provider: "google", status: "inactive", model: null, error: "spend cap" },
+    { provider: "azure-ai-foundry", status: "inactive", model: null, error: "401" },
   ];
   const result = selectDailyModelTarget(providers, { date: TUE });
   assert.equal(result.provider, "openai");
   assert.deepEqual(
     result.skipped.map((s) => s.provider),
-    ["anthropic", "google"],
+    ["anthropic", "google", "azure-ai-foundry"],
   );
-  assert.equal(result.warnings.length, 2);
+  assert.equal(result.warnings.length, 3);
+});
+
+test("a provider owning two weekdays is tried once, not once per weekday (#2287)", () => {
+  // Thursday walks azure, Friday's anthropic, Monday's openai, then Tuesday's anthropic
+  // again before Wednesday's google. Only google is up, so the walk reaches Tuesday,
+  // and anthropic must not be tried or reported a second time there.
+  const providers = healthy().map((p) =>
+    p.provider === "google" ? p : { ...p, status: "inactive", model: null, error: "down" },
+  );
+  const result = selectDailyModelTarget(providers, { date: THU });
+  assert.equal(result.provider, "google");
+  assert.deepEqual(
+    result.skipped.map((s) => s.provider),
+    ["azure-ai-foundry", "anthropic", "openai"],
+  );
 });
 
 test("a provider absent from providers.json is skipped like an inactive one", () => {
@@ -190,7 +224,7 @@ test("every provider down declines to pin instead of pretending, and explains pe
   assert.equal(result.provider, null);
   assert.equal(result.model, null);
   assert.match(result.reason, /no provider in the rotation/);
-  for (const name of ["openai", "anthropic", "google"]) {
+  for (const name of ["openai", "anthropic", "google", "azure-ai-foundry"]) {
     assert.match(result.reason, new RegExp(`${name} is dry`));
   }
 });
@@ -210,11 +244,14 @@ test("a malformed payload throws rather than falling back to the next provider",
   );
 });
 
-test("an empty rotation order throws instead of silently doing nothing", () => {
-  assert.throws(
-    () => selectDailyModelTarget(healthy(), { date: MON, order: [] }),
-    /non-empty list/,
-  );
+test("a schedule that is not one provider per weekday throws instead of being stretched", () => {
+  // Three names taken modulo the weekday is the shape the table replaced (#2287).
+  for (const schedule of [[], ["openai", "anthropic", "google"], ["a", "b", "c", "d", "e", "f"], ["a", "b", "", "d", "e"]]) {
+    assert.throws(
+      () => selectDailyModelTarget(healthy(), { date: MON, schedule }),
+      /exactly 5 providers, Monday to Friday/,
+    );
+  }
 });
 
 test("an unparseable --date throws", () => {
@@ -396,28 +433,25 @@ test("the daily emits the provider/model pair from the script, not from inline e
 // the surface #1252 measured nobody reading. What was missing is not the fact that a
 // provider was skipped; it is how long that provider then goes uncovered.
 
-const ORDER = ["openai", "anthropic", "google"];
+const SCHEDULE = ["openai", "anthropic", "google", "azure-ai-foundry", "anthropic"];
 
-test("google displaced on its Wednesday waits a full week, not three days", () => {
-  // The number the issue was written around. With three providers over a Mon-Fri
-  // cron, google owns Wednesday alone: Saturday's slot would also be its, and
-  // Saturday is not a run.
-  const next = nextScheduledSlot("google", ORDER, WED);
+test("a provider owning one weekday waits a full week when displaced", () => {
+  // google, azure-ai-foundry and (since #2287) openai each own one weekday.
+  const next = nextScheduledSlot("google", SCHEDULE, WED);
   assert.equal(next.days, 7);
   assert.equal(next.date.toISOString().slice(0, 10), "2026-08-05");
+  assert.equal(nextScheduledSlot("azure-ai-foundry", SCHEDULE, THU).days, 7);
+  assert.equal(nextScheduledSlot("openai", SCHEDULE, MON).days, 7);
 });
 
-test("openai and anthropic wait at most four days, and it depends on the day", () => {
-  // CLAUDE.md's "≤3 days" is the intra-week gap; the real bound is 4, because the
-  // cron does not run the weekend. Derived here rather than asserted in prose.
-  assert.equal(nextScheduledSlot("openai", ORDER, MON).days, 3); // Mon → Thu
-  assert.equal(nextScheduledSlot("openai", ORDER, THU).days, 4); // Thu → Mon
-  assert.equal(nextScheduledSlot("anthropic", ORDER, TUE).days, 3); // Tue → Fri
-  assert.equal(nextScheduledSlot("anthropic", ORDER, FRI).days, 4); // Fri → Tue
+test("anthropic owns two weekdays, so it waits 3 or 4 days and never a week", () => {
+  // Any weekday it owns counts, not only the first in the table.
+  assert.equal(nextScheduledSlot("anthropic", SCHEDULE, TUE).days, 3); // Tue → Fri
+  assert.equal(nextScheduledSlot("anthropic", SCHEDULE, FRI).days, 4); // Fri → Tue
 });
 
-test("a provider outside the rotation order has no slot to wait for", () => {
-  assert.equal(nextScheduledSlot("mistral", ORDER, WED), null);
+test("a provider outside the rotation has no slot to wait for", () => {
+  assert.equal(nextScheduledSlot("mistral", SCHEDULE, WED), null);
 });
 
 test("an undisplaced rotation reports nothing at all", () => {
@@ -437,11 +471,11 @@ test("a displaced Wednesday names the provider, the cause and the gap", () => {
   );
   const result = selectDailyModelTarget(providers, { date: WED });
   assert.equal(result.ok, true, "the day must still run — #980's trade");
-  assert.equal(result.provider, "openai");
+  assert.equal(result.provider, "azure-ai-foundry", "Thursday's provider is the next one");
 
   const displacement = rotationDisplacement(result, { date: WED });
   assert.equal(displacement.weekday, "Wednesday");
-  assert.equal(displacement.resolved, "openai");
+  assert.equal(displacement.resolved, "azure-ai-foundry");
   assert.deepEqual(
     displacement.displaced.map((d) => [d.provider, d.days]),
     [["google", 7]],
@@ -453,7 +487,7 @@ test("a displaced Wednesday names the provider, the cause and the gap", () => {
   assert.match(summary, /google/);
   assert.match(summary, /monthly spending cap/, "the cause the sweep measured");
   assert.match(summary, /7 day\(s\)/, "the cost, which is the point");
-  assert.match(summary, /openai/, "and what ran instead");
+  assert.match(summary, /azure-ai-foundry/, "and what ran instead");
 
   // The log line carries the same facts, for the VM lane — which runs this script
   // outside Actions and has no step summary.
@@ -476,7 +510,7 @@ test("declining to pin renders as a decline, not as an advance", () => {
   assert.equal(result.ok, false);
   const displacement = rotationDisplacement(result, { date: WED });
   assert.equal(displacement.resolved, null);
-  assert.equal(displacement.displaced.length, 3);
+  assert.equal(displacement.displaced.length, 4, "each provider once, anthropic included");
   const summary = renderRotationSummary(displacement);
   assert.match(summary, /could not pin/);
   assert.doesNotMatch(summary, /advanced to/);
@@ -550,14 +584,14 @@ test("two dead providers: the first owns the day, the second is a passed-over fa
   assert.deepEqual(
     displacement.displaced.map((d) => [d.provider, d.owns, d.days]),
     [
-      ["openai", true, 3], // Mon → Thu
+      ["openai", true, 7], // Mon → Mon: Thursday is azure-ai-foundry's since #2287
       ["anthropic", false, null], // a fallback loses no slot of its own here
     ],
   );
 
   const [ownerLine, fallbackLine] = displacementLines(displacement);
   assert.match(ownerLine, /Monday is "openai"'s slot/);
-  assert.match(ownerLine, /3 day\(s\)/);
+  assert.match(ownerLine, /7 day\(s\)/);
   assert.match(fallbackLine, /fallback "anthropic" was also unusable/);
   assert.doesNotMatch(fallbackLine, /Monday is "anthropic"/, "a fallback does not own the day");
   assert.doesNotMatch(fallbackLine, /day\(s\) from this run/, "and it has no gap to claim");
@@ -565,7 +599,7 @@ test("two dead providers: the first owns the day, the second is a passed-over fa
   const summary = renderRotationSummary(displacement);
   assert.match(summary, /belongs to `openai`/);
   assert.match(summary, /past `anthropic`, also unusable/);
-  assert.match(summary, /\| `openai` \| this weekday's slot \| Thursday/);
+  assert.match(summary, /\| `openai` \| this weekday's slot \| Monday/);
   assert.match(summary, /\| `anthropic` \| fallback, passed over \| — \| — \|/);
 });
 
