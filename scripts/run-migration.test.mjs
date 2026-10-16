@@ -33,7 +33,7 @@ const ALL = [
  * install: { version: exitCode }   uv pip install outcome per version
  * seed:    { cell: exitCode }
  */
-function migration({ target = "1.13.0.dev33", daily = null, dailyRuns = null, cells = "all", verify = {}, install = {}, installedBase = {}, seed = {}, previous = null, pypi = PYPI, healthDown = [], serveAs = {}, presentImages = [], probe = { out: "OpenAI credential probe: live — ok", rc: 0 }, lockBusy = false } = {}) {
+function migration({ target = "1.13.0.dev33", daily = null, dailyRuns = null, cells = "all", verify = {}, install = {}, installedBase = {}, seed = {}, previous = null, pypi = PYPI, healthDown = [], serveAs = {}, presentImages = [], probe = { out: "OpenAI credential probe: live — ok", rc: 0 }, lockBusy = false, callerEnv = {} } = {}) {
   const dir = makeTempDir("run-migration-");
   const repo = join(dir, "repo");
   for (const rel of ["ops/vm/lib/routine.sh", "ops/vm/run-migration.sh", "scripts/resolve-migration-pair.mjs"]) {
@@ -163,6 +163,7 @@ exit 0`);
     MIGRATION_UP_WAIT_S: "4",
   };
   if (target) env.MIGRATION_TARGET = target;
+  Object.assign(env, callerEnv);
   const r = spawnSync("bash", [join(repo, "ops/vm/run-migration.sh")], { encoding: "utf8", env, timeout: 120_000 });
   const readIf = (p) => (existsSync(p) ? readFileSync(p, "utf8") : "");
   const last = kv(readIf(join(state, "migration", "last.env")));
@@ -243,6 +244,19 @@ test("Postgres pip cells install a psycopg driver beside the extra; SQLite cells
 test("docker cells with auto-login on say so: the images default to off", () => {
   const r = migration({ cells: "sqlite-docker-fresh" });
   assert.match(r.docker, /run -d --name e2e-migration-sqlite-docker-fresh .*-e LANGFLOW_AUTO_LOGIN=true/);
+});
+
+test("pip cells with auto-login on say so, under the default name, whatever the caller exported (#2285)", () => {
+  const pip = ["sqlite-pip-fresh", "sqlite-pip-upgrade", "postgres-pip-fresh", "postgres-pip-upgrade"];
+  const r = migration({ cells: pip.join(" "), callerEnv: { LANGFLOW_SUPERUSER: "someone-else", LANGFLOW_SUPERUSER_PASSWORD: "leaked", LANGFLOW_AUTO_LOGIN: "false" } });
+  assert.equal(r.status, 0, r.log);
+  // Two starts per upgrade cell, one per fresh cell.
+  assert.equal(r.langflowEnvs.length, 6, r.log);
+  for (const e of r.langflowEnvs) {
+    assert.match(e, /^LANGFLOW_AUTO_LOGIN=true$/m);
+    assert.match(e, /^LANGFLOW_SUPERUSER=langflow$/m);
+    assert.doesNotMatch(e, /^LANGFLOW_SUPERUSER_PASSWORD=/m);
+  }
 });
 
 test("a seed that fails on the source is the machine's; on a fresh target it is the product's", () => {

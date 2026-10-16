@@ -26,9 +26,14 @@
 #   scenario   fresh (the target alone) | upgrade (source, seeded, then the target)
 #   + auth     AUTO_LOGIN off on the target, in the four upgrade cells
 #
-# pip+sqlite upgrades in the same venv with the default configuration: the default
+# pip+sqlite upgrades in the same venv with the default database location: the default
 # database lives inside the installed package (site-packages/langflow/langflow.db,
 # measured on 1.12.4), so an install that drops or moves it is the 1.7.0 class of loss.
+# Auth is never left to the default: every cell sets LANGFLOW_AUTO_LOGIN and the
+# superuser's name, because the default differs by mode and by version (images off;
+# release wheels off from 1.13, upstream #14993 and 5ae4b9ec3, measured from
+# 1.13.0.dev42), and a pip cell inherits the caller's environment where a container
+# does not.
 # docker+sqlite keeps the database in the config volume (LANGFLOW_SAVE_DB_IN_CONFIG_DIR).
 # docker+postgres runs upstream's own docker_example compose file, as the Actions job
 # did, with ports overridden so nothing binds outside this lane.
@@ -252,6 +257,8 @@ migration_up() {
   local version="$1" auth="$2"
   MC_SU="langflow"; MC_SU_PW=""
   if [ "$auth" = off ]; then MC_SU="migration-admin"; MC_SU_PW="Admin-$(head -c 9 /dev/urandom | od -An -tx1 | tr -d ' \n')"; fi
+  # Derived once, so no mode can leave the flag to a default that moved (#2285).
+  MC_AUTO=true; [ "$auth" = off ] && MC_AUTO=false
   MC_LOG="$MC_DIR/langflow-$version.log"
   case "$MC_MODE" in
     pip) migration_up_pip "$version" "$auth" ;;
@@ -315,9 +322,12 @@ migration_up_pip() {
     # and the decrypt check passed with nothing decrypted (review of #2194).
     unset OPENAI_API_KEY
     [ "$MC_DB" = postgres ] && export LANGFLOW_DATABASE_URL="postgresql://langflow:langflow@127.0.0.1:$MC_PG/langflow"
-    if [ "$auth" = off ]; then
-      export LANGFLOW_AUTO_LOGIN=false LANGFLOW_SUPERUSER="$MC_SU" LANGFLOW_SUPERUSER_PASSWORD="$MC_SU_PW"
-    fi
+    # From 1.13 a pip install defaults to auto-login OFF too, and a target started on
+    # the default exits for lack of a password. The name is set in every cell: unlike a
+    # container this process inherits the caller's environment, and a stray
+    # LANGFLOW_SUPERUSER would make the seed and the checks look at the wrong account.
+    export LANGFLOW_AUTO_LOGIN="$MC_AUTO" LANGFLOW_SUPERUSER="$MC_SU"
+    if [ "$auth" = off ]; then export LANGFLOW_SUPERUSER_PASSWORD="$MC_SU_PW"; else unset LANGFLOW_SUPERUSER_PASSWORD; fi
     exec "$venv/bin/langflow" run --host 127.0.0.1 --port "$MC_PORT" --backend-only
   ) >> "$MC_LOG" 2>&1 8>&- &
   MC_PID=$!
@@ -335,13 +345,9 @@ migration_up_docker() {
     MC_UP_VERDICT=failed; MC_UP_WHY="docker pull $image failed: $(migration_log_tail)"; return 1
   fi
   local name="e2e-migration-$MC_CELL" envs=(-e LANGFLOW_CONFIG_DIR=/app/langflow -e LANGFLOW_HOST=0.0.0.0 -e "OLLAMA_BASE_URL=$MIG_OLLAMA_URL" -e "LANGFLOW_SSRF_ALLOWED_HOSTS=$MIG_OLLAMA_HOST")
-  if [ "$auth" = off ]; then
-    envs+=(-e LANGFLOW_AUTO_LOGIN=false -e "LANGFLOW_SUPERUSER=$MC_SU" -e "LANGFLOW_SUPERUSER_PASSWORD=$MC_SU_PW")
-  else
-    # Explicit: the published images default to auto-login OFF (measured 2026-10-06),
-    # unlike a pip install. The instance being upgraded was used with it on.
-    envs+=(-e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER_PASSWORD=unused-with-auto-login)
-  fi
+  # Explicit: the published images default to auto-login OFF (measured 2026-10-06).
+  # The instance being upgraded was used with it on.
+  envs+=(-e "LANGFLOW_AUTO_LOGIN=$MC_AUTO" -e "LANGFLOW_SUPERUSER=$MC_SU" -e "LANGFLOW_SUPERUSER_PASSWORD=${MC_SU_PW:-unused-with-auto-login}")
   if [ "$MC_DB" = sqlite ]; then
     docker rm -f "$name" > /dev/null 2>&1
     docker run -d --name "$name" -p "127.0.0.1:$MC_PORT:7860" -v "$name-data:/app/langflow" \
@@ -364,7 +370,6 @@ migration_compose() {
       https://raw.githubusercontent.com/langflow-ai/langflow/main/docker_example/docker-compose.yml \
       || { MC_UP_VERDICT=failed; MC_UP_WHY="could not fetch upstream's docker_example compose file"; return 1; }
   fi
-  local env_auto="true"; [ "$auth" = off ] && env_auto="false"
   cat > "$MC_DIR/override.yml" <<EOF
 services:
   langflow:
@@ -376,7 +381,7 @@ services:
     environment:
       - OLLAMA_BASE_URL=$MIG_OLLAMA_URL
       - LANGFLOW_SSRF_ALLOWED_HOSTS=$MIG_OLLAMA_HOST
-      - LANGFLOW_AUTO_LOGIN=$env_auto
+      - LANGFLOW_AUTO_LOGIN=$MC_AUTO
       - LANGFLOW_SUPERUSER=$MC_SU
     # upstream's depends_on has no condition: a slow first postgres made Langflow exit
     # on its first connect, a machine race read as red (review of #2194).
