@@ -179,9 +179,10 @@ test("the real model-prices.json is syncable", () => {
     // to catch is a typo -- `openal` would sync happily and then split one
     // provider into two rows in the platform's by-model breakdown.
     //
-    // `azure` joined the vocabulary on 2026-08-04 and is NOT a rotation value:
-    // the rotation in select-daily-model-target.mjs is openai/anthropic/google,
-    // and the Azure AI Foundry spec runs on every lane, outside it. The field
+    // `azure` joined the vocabulary on 2026-08-04. It is the BILLING name, not
+    // the rotation's: select-daily-model-target.mjs calls the same provider
+    // `azure-ai-foundry` (its Thursday slot since #2287), and this vocabulary
+    // keeps `azure` so the platform's existing rows do not split. The field
     // names who BILLED the tokens, which is what e2e_model_prices is grouped by,
     // so a Foundry deployment must not be folded into the real openai lanes'
     // provider row -- they are different accounts.
