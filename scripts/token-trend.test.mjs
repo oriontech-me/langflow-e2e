@@ -294,3 +294,17 @@ test("the per-line usd column is labelled when the dollar TREND is withheld", ()
   assert.match(md, /usd\/call` column is each run's own figure/);
   assert.match(md, /No dollar TREND is computed/);
 });
+
+test("lines with unmeasured calls are named as floors, and the per-call rate is untouched (#2288)", () => {
+  const lines = five();
+  // A Thursday on Azure AI Foundry: 3 agent calls reported no usage.
+  lines[3] = { ...lines[3], unmeasured: { calls: 3, traces: 3, by_model: [] } };
+  const trend = readTrend(lines, { measurementStable: true });
+  const gap = trend.gaps.find((g) => /reported no token usage/.test(g));
+  assert.ok(gap, trend.gaps.join("\n"));
+  assert.match(gap, /^1 line\(s\).*\(3 call\(s\), #2288\)/);
+  assert.equal(readTrend(five(), { measurementStable: true }).gaps.some((g) => /reported no token usage/.test(g)), false);
+  // Unmeasured calls are not in by_model, so the rate is over measured calls alone.
+  assert.equal(describeLine(lines[3]).tokensPerCall, describeLine(five()[3]).tokensPerCall);
+  assert.equal(describeLine(lines[3]).unmeasuredCalls, 3);
+});

@@ -95,6 +95,10 @@ export function describeLine(line) {
     // dollar mean for the same reason a skipped file is excluded from a duration
     // table: it is not a low number, it is a partial one.
     priced: (line.unpriced_models ?? []).length === 0,
+    // #2288: calls whose usage never reached the trace. They are not in `by_model`,
+    // so the per-call rates below are rates over MEASURED calls and stay valid; the
+    // line's raw totals are a floor, which readTrend names rather than hides.
+    unmeasuredCalls: figure(line.unmeasured?.calls) ?? 0,
     tokensPerCall: calls > 0 && spanTokens !== null ? spanTokens / calls : null,
     usdPerCall: calls > 0 && typeof usd === "number" ? usd / calls : null,
     // The instrument shape this file can actually observe. Two lines whose shapes
@@ -189,6 +193,14 @@ export function readTrend(lines, { pricesStable = false, measurementStable = fal
     );
   } else if (dollarLines.length !== rated.length) {
     gaps.push(`${rated.length - dollarLines.length} line(s) have unpriced models — their dollars are a FLOOR, excluded`);
+  }
+  const floorLines = window.filter((l) => l.unmeasuredCalls > 0);
+  if (floorLines.length) {
+    gaps.push(
+      `${floorLines.length} line(s) in the window carry LLM calls that reported no token usage ` +
+        `(${floorLines.reduce((n, l) => n + l.unmeasuredCalls, 0)} call(s), #2288): the per-call ` +
+        "rates are over measured calls only, and those lines' raw totals are a FLOOR",
+    );
   }
   // Scoped to the WINDOW, and a hard gate rather than advice. Computing it over
   // the whole file raised the warning for a version change safely outside the

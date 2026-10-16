@@ -147,3 +147,17 @@ test("each span class measured on a real trace maps to its billing provider; any
   const unknown = spanModelUsage([{ name: "ChatOllama llama3.2:1b", type: "llm", modelName: "llama3.2:1b", tokenUsage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }]);
   assert.ok(!("provider" in unknown[0]));
 });
+
+test("a failed call reads {0, 0, 0} too, and is not unmeasured: it billed nothing", () => {
+  // Langflow ends an errored LLM span with the error and no counts, keeping its
+  // model name (native_callback.py _handle_error): a 401, a drained key, a Stop.
+  const failed = [
+    { ...FOUNDRY_SPANS[1], name: "ChatOpenAI gpt-4o-mini", modelName: "gpt-4o-mini", status: "error", error: "Error code: 401" },
+    { ...FOUNDRY_SPANS[1], name: "ChatAnthropic claude-haiku-4-5", modelName: "claude-haiku-4-5", status: "error", error: null },
+    { ...FOUNDRY_SPANS[1], name: "ChatOpenAI gpt-4o", modelName: "gpt-4o", status: "ok", error: "CancelledError" },
+  ];
+  assert.deepEqual(spanUnmeasured(failed), []);
+  assert.ok(!("unmeasured" in buildProbe({ id: "t", totalTokens: 0 }, failed)));
+  // The Foundry span that ANSWERED is still unmeasured beside them.
+  assert.deepEqual(spanUnmeasured([...failed, { ...FOUNDRY_SPANS[1], status: "ok", error: null }]).map((u) => u.model), ["gpt-5.6-sol"]);
+});
