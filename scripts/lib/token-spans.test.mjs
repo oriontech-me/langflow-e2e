@@ -148,13 +148,17 @@ test("each span class measured on a real trace maps to its billing provider; any
   assert.ok(!("provider" in unknown[0]));
 });
 
-test("a failed call reads {0, 0, 0} too, and is not unmeasured: it billed nothing", () => {
-  // Langflow ends an errored LLM span with the error and no counts, keeping its
-  // model name (native_callback.py _handle_error): a 401, a drained key, a Stop.
+test("a call that did not answer reads {0, 0, 0} too, and is not unmeasured", () => {
+  // Langflow ends a failed LLM span with error=str(exception) and no counts, keeping
+  // its model name (native_callback.py _handle_error; native.py sets ERROR only for a
+  // truthy error). The shapes it actually produces:
   const failed = [
+    // a 401, a drained key, a 429
     { ...FOUNDRY_SPANS[1], name: "ChatOpenAI gpt-4o-mini", modelName: "gpt-4o-mini", status: "error", error: "Error code: 401" },
+    // a Stop-button cancellation: str(CancelledError()) is "", so status stays ok
+    { ...FOUNDRY_SPANS[1], name: "ChatOpenAI gpt-4o", modelName: "gpt-4o", status: "ok", error: "" },
+    // defensive: an error status with no message recorded
     { ...FOUNDRY_SPANS[1], name: "ChatAnthropic claude-haiku-4-5", modelName: "claude-haiku-4-5", status: "error", error: null },
-    { ...FOUNDRY_SPANS[1], name: "ChatOpenAI gpt-4o", modelName: "gpt-4o", status: "ok", error: "CancelledError" },
   ];
   assert.deepEqual(spanUnmeasured(failed), []);
   assert.ok(!("unmeasured" in buildProbe({ id: "t", totalTokens: 0 }, failed)));

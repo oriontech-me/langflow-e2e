@@ -99,18 +99,23 @@ export function spanModelUsage(spans) {
 // present and all zero (#2288). Two shapes look the same and are NOT counted:
 //  - a span with NO usage object, the shape of a span Langflow never filled, which
 //    counting would turn into phantom calls;
-//  - a FAILED call. Langflow's tracer ends an errored LLM span with the error and no
-//    counts (native_callback.py `_handle_error`), and the span keeps its model name,
-//    so a 401, a 429, a drained key or a Stop-button cancellation reads {0, 0, 0}
-//    too. Those calls billed nothing, so they are not lost spend, and counting them
-//    would mark an ordinary red day as a floor and take it out of the baseline.
+//  - a call that did not ANSWER. Langflow's tracer ends a failed LLM span with
+//    `error=str(exception)` and no counts (native_callback.py `_handle_error`), and
+//    the span keeps its model name, so it reads {0, 0, 0} too. A 401, a 429 or a
+//    drained key gets `status: "error"` and the message. A Stop-button cancellation
+//    gets `status: "ok"` and `error: ""`, because str(CancelledError()) is empty
+//    (native.py sets ERROR only for a truthy error), so the test is on the TYPE of
+//    `error`: a call that answered ends with `error: null`. A cancelled call may have
+//    billed its prompt, and that partial spend stays unrecorded, as it was before
+//    #2288; counting it would make the daily that runs the @stable Stop test a floor
+//    every day and take every line out of the anomaly baseline.
 export function spanUnmeasured(spans) {
   const byModel = new Map();
   for (const span of flattenSpans(spans)) {
     const model = typeof span?.modelName === "string" ? span.modelName : "";
     const usage = span?.tokenUsage;
     if (!model || !usage) continue;
-    if (span?.error || span?.status === "error") continue;
+    if (typeof span?.error === "string" || span?.status === "error") continue;
     const prompt = Number(usage.promptTokens) || 0;
     const completion = Number(usage.completionTokens) || 0;
     const total = Number(usage.totalTokens) || 0;
