@@ -10,7 +10,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFileSync } from "node:fs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-import { probeDeclared, probeRequest, cleanReason, keysFromDotenv, withDotenv, CANDIDATES } from "./probe-declared-model.mjs";
+import { probeDeclared, probeRequest, cleanReason, keysFromDotenv, withDotenv, CANDIDATES, AZURE_ENV, azureFoundryChatUrl } from "./probe-declared-model.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "probe-declared-model.mjs");
 const ENV = { OPENAI_API_KEY: "sk-openai-0123456789", ANTHROPIC_API_KEY: "sk-ant-0123456789", GOOGLE_API_KEY: "AIza-0123456789" };
@@ -215,4 +215,107 @@ test("the CLI prints one JSON line and exits 0, 2 or 3 by verdict; a bad argumen
   assert.equal(run(["--provider", "mistral"], {}).status, 3);
   assert.equal(run(["--provider", "Bad Name"], {}).status, 3);
   assert.equal(run(["--nope"], {}).status, 3);
+});
+
+// ─── Azure AI Foundry (#2287) ────────────────────────────────────────────────
+// Three variables instead of one key, one deployment instead of a catalog, and an
+// endpoint that is a secret on every lane that declares it.
+
+const AZURE = {
+  AZURE_AI_FOUNDRY_API_KEY: "azure-key-0123456789",
+  AZURE_AI_FOUNDRY_ENDPOINT: "https://orion-secret-host.openai.azure.com/openai/v1",
+  AZURE_AI_FOUNDRY_TEST_DEPLOYMENT: "gpt-5.6-sol",
+};
+
+test("azure: the deployment answers, asked the way collect-models asks it", async () => {
+  for (const model of ["", "gpt-5.6-sol"]) {
+    const p = provider({ "*": json(200, {}) });
+    const d = await probeDeclared({ provider: "azure-ai-foundry", model, env: AZURE, fetchImpl: p.fetchImpl });
+    assert.equal(d.verdict, "usable", `model "${model}"`);
+    assert.equal(d.model, "gpt-5.6-sol", "the deployment is the model, declared or not");
+    assert.equal(p.calls.length, 1, "one deployment, one request");
+    const [call] = p.calls;
+    assert.equal(call.url, "https://orion-secret-host.openai.azure.com/openai/v1/chat/completions");
+    assert.equal(call.init.headers["api-key"], AZURE.AZURE_AI_FOUNDRY_API_KEY);
+    assert.equal(call.body.model, "gpt-5.6-sol");
+    // gpt-5* refuse max_tokens and the deployment refuses a non-default temperature.
+    assert.equal(call.body.max_completion_tokens, 16);
+    assert.ok(!("max_tokens" in call.body) && !("temperature" in call.body));
+  }
+});
+
+test("azure: a project endpoint maps to /openai/v1, as Langflow maps it", () => {
+  assert.equal(
+    azureFoundryChatUrl("https://h.services.ai.azure.com/api/projects/proj/"),
+    "https://h.services.ai.azure.com/openai/v1/chat/completions",
+  );
+  assert.equal(azureFoundryChatUrl("https://h.openai.azure.com/openai/v1/"), "https://h.openai.azure.com/openai/v1/chat/completions");
+  assert.throws(() => azureFoundryChatUrl("not a url"));
+});
+
+test("azure: a missing variable is refused by name, without asking anyone", async () => {
+  const p = provider({ "*": json(200, {}) });
+  const d = await probeDeclared({
+    provider: "azure-ai-foundry",
+    env: { AZURE_AI_FOUNDRY_API_KEY: AZURE.AZURE_AI_FOUNDRY_API_KEY },
+    fetchImpl: p.fetchImpl,
+  });
+  assert.equal(d.verdict, "refused");
+  assert.match(d.reason, /^AZURE_AI_FOUNDRY_ENDPOINT, AZURE_AI_FOUNDRY_TEST_DEPLOYMENT set neither/);
+  assert.equal(p.calls.length, 0);
+});
+
+test("azure: a declared model that is not the deployment is refused, as the run would", async () => {
+  const p = provider({ "*": json(200, {}) });
+  const d = await probeDeclared({ provider: "azure-ai-foundry", model: "gpt-4o", env: AZURE, fetchImpl: p.fetchImpl });
+  assert.equal(d.verdict, "refused");
+  assert.match(d.reason, /runs the deployment AZURE_AI_FOUNDRY_TEST_DEPLOYMENT names \(gpt-5\.6-sol\), not gpt-4o/);
+  assert.equal(p.calls.length, 0);
+});
+
+test("azure: its own 4xx refuses with the status; a rate limit, a 5xx or the network leave it to the run", async () => {
+  const cases = [
+    [json(401, { error: { code: "401", message: "Access denied due to invalid subscription key." } }), "refused", /HTTP 401: Access denied/],
+    [json(404, { error: { code: "DeploymentNotFound", message: "The API deployment for this resource does not exist." } }), "refused", /HTTP 404/],
+    // Azure's rate-limit wording names neither 429 nor quota; the status is what tells.
+    [json(429, { error: { code: "429", message: "Requests have exceeded the token rate limit. Retry after 6 seconds." } }), "undecided", /HTTP 429/],
+    [json(503, { error: { message: "Service unavailable" } }), "undecided", /HTTP 503/],
+    [new TypeError("fetch failed"), "undecided", /no answer from azure-ai-foundry: fetch failed/],
+  ];
+  for (const [answer, verdict, reason] of cases) {
+    const p = provider({ "*": answer });
+    const d = await probeDeclared({ provider: "azure-ai-foundry", env: AZURE, fetchImpl: p.fetchImpl });
+    assert.equal(d.verdict, verdict, String(reason));
+    assert.match(d.reason, reason);
+  }
+});
+
+test("azure: neither the key, the endpoint nor its host reaches the reason", async () => {
+  const leaky = [
+    new TypeError(`getaddrinfo ENOTFOUND orion-secret-host.openai.azure.com`),
+    new TypeError(`request to ${AZURE.AZURE_AI_FOUNDRY_ENDPOINT}/chat/completions failed`),
+    json(401, { error: { message: `Key ${AZURE.AZURE_AI_FOUNDRY_API_KEY} is not valid for ${AZURE.AZURE_AI_FOUNDRY_ENDPOINT}` } }),
+  ];
+  for (const answer of leaky) {
+    const p = provider({ "*": answer });
+    const d = await probeDeclared({ provider: "azure-ai-foundry", env: AZURE, fetchImpl: p.fetchImpl });
+    assert.doesNotMatch(d.reason, /orion-secret-host/, d.reason);
+    assert.doesNotMatch(d.reason, /azure-key-0123456789/, d.reason);
+  }
+  const bad = await probeDeclared({ provider: "azure-ai-foundry", env: { ...AZURE, AZURE_AI_FOUNDRY_ENDPOINT: "orion-secret-host no scheme" } });
+  assert.equal(bad.verdict, "refused");
+  assert.equal(bad.reason, "AZURE_AI_FOUNDRY_ENDPOINT is not a URL");
+});
+
+test("azure: the three variables come from the .env too, as dotenv reads them", () => {
+  const text = Object.entries(AZURE).map(([k, v]) => `${k}=${v}`).join("\n");
+  assert.deepEqual(keysFromDotenv(text), AZURE);
+  assert.deepEqual(Object.values(AZURE_ENV).sort(), Object.keys(AZURE).sort());
+});
+
+test("azure: the CLI refuses with exit 2 when the machine has no Foundry variables", () => {
+  const cwd = makeTempDir("probe-cli-azure-");
+  const r = spawnSync(process.execPath, [SCRIPT, "--provider", "azure-ai-foundry"], { encoding: "utf8", cwd, env: { PATH: process.env.PATH } });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(JSON.parse(r.stdout).verdict, "refused");
 });

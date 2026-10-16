@@ -39,11 +39,20 @@
  * never does (it only requires the provider active and the id in the catalog): a model
  * the provider has retired is refused here, where the run would have gone red on it.
  *
+ * Azure AI Foundry (#2287) has no catalog: the run's model is the deployment named by
+ * AZURE_AI_FOUNDRY_TEST_DEPLOYMENT, so that is the one candidate, and a declared model
+ * other than that deployment is refused, because the run would refuse it too
+ * (select-daily-model-target.mjs checks the declared model against models.json, whose
+ * only Foundry entry is that deployment). The request is the one collect-models sends
+ * (tests/helpers/provider-setup/azure-foundry.ts, validateAzureFoundry) to the same
+ * URL; azure-foundry.test.ts holds the two URL mappings to each other. The endpoint is
+ * treated as a secret, as it is there: it never appears in a reason.
+ *
  * Run:
  *   node scripts/probe-declared-model.mjs --provider anthropic [--model claude-haiku-4-5]
  *
- * Reads OPENAI_API_KEY, ANTHROPIC_API_KEY and GOOGLE_API_KEY from where the run reads
- * them: the environment, else the working copy's `.env`, which playwright.config.ts's
+ * Reads OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY and the three
+ * AZURE_AI_FOUNDRY_* variables from where the run reads them: the environment, else the working copy's `.env`, which playwright.config.ts's
  * `dotenv.config()` loads without overriding what is set (run-e2e.sh: the VM has no
  * secrets store for them). Run from the suite's worktree, whose `.env` is the clone's.
  * Prints the decision as one JSON line, {verdict, provider, model, reason}; never a key.
@@ -70,7 +79,7 @@ export function keysFromDotenv(text) {
   const keys = {};
   const lines = String(text).replace(/\r\n?/gm, "\n");
   for (const m of lines.matchAll(DOTENV_LINE)) {
-    if (!Object.values(KEYS).includes(m[1])) continue;
+    if (!DOTENV_NAMES.includes(m[1])) continue;
     let v = (m[2] || "").trim();
     const quote = v[0];
     v = v.replace(/^(['"`])([\s\S]*)\1$/gm, "$2");
@@ -97,11 +106,39 @@ export function withDotenv(env, path = ".env") {
 }
 
 const KEYS = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", google: "GOOGLE_API_KEY" };
+// Azure AI Foundry needs three variables, named as in provider-config.ts's
+// "azure-ai-foundry" entry; azure-foundry.test.ts holds the two to each other.
+export const AZURE_FOUNDRY = "azure-ai-foundry";
+export const AZURE_ENV = {
+  key: "AZURE_AI_FOUNDRY_API_KEY",
+  endpoint: "AZURE_AI_FOUNDRY_ENDPOINT",
+  deployment: "AZURE_AI_FOUNDRY_TEST_DEPLOYMENT",
+};
+const DOTENV_NAMES = [...Object.values(KEYS), ...Object.values(AZURE_ENV)];
 const TIMEOUT_MS = 20_000;
+
+/**
+ * The chat-completions URL for a Foundry endpoint, with the one rewrite Langflow
+ * applies: a PROJECT endpoint (`…/api/projects/<name>`) maps to `…/openai/v1`. A copy
+ * of azureFoundryChatUrl in azure-foundry.ts, which a plain .mjs cannot import.
+ * @throws {TypeError} when the endpoint is not a URL
+ */
+export function azureFoundryChatUrl(endpoint) {
+  const trimmed = String(endpoint).replace(/\/+$/, "");
+  const url = new URL(trimmed);
+  const path = url.pathname.toLowerCase();
+  if (path.startsWith("/api/projects/") || path === "/api/projects") {
+    return `${url.protocol}//${url.host}/openai/v1/chat/completions`;
+  }
+  return `${trimmed}/chat/completions`;
+}
 const REASON_MAX = 300;
 
-/** The one request each provider takes for a completion of at most one token. */
-export function probeRequest(provider, model, key) {
+/**
+ * The one request each provider takes for a completion of at most one token.
+ * `endpoint` is read only for Azure AI Foundry.
+ */
+export function probeRequest(provider, model, key, endpoint) {
   switch (provider) {
     case "openai":
       // No token limit, as collect-models sends none: the reasoning models refuse
@@ -134,6 +171,19 @@ export function probeRequest(provider, model, key) {
           body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }], generationConfig: { maxOutputTokens: 1 } }),
         },
       };
+    case AZURE_FOUNDRY:
+      // As validateAzureFoundry sends it: no temperature (the deployment refuses a
+      // non-default one) and max_completion_tokens, which gpt-5* models take where they
+      // refuse max_tokens. 16 rather than 1, so a reasoning-capable deployment cannot
+      // spend its cap before answering and read as turned down.
+      return {
+        url: azureFoundryChatUrl(endpoint),
+        init: {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "api-key": key },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], max_completion_tokens: 16 }),
+        },
+      };
     default:
       return null;
   }
@@ -143,8 +193,8 @@ export function probeRequest(provider, model, key) {
  * One probe's answer: `ok`, `no` (turned down for good, with the provider's message)
  * or `unknown` (nothing certain was learned).
  */
-export async function probeOnce(provider, model, key, fetchImpl = fetch) {
-  const req = probeRequest(provider, model, key);
+export async function probeOnce(provider, model, key, fetchImpl = fetch, endpoint = undefined) {
+  const req = probeRequest(provider, model, key, endpoint);
   let res;
   try {
     res = await fetchImpl(req.url, { ...req.init, signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -184,7 +234,8 @@ export function cleanReason(text, secrets = []) {
  */
 export async function probeDeclared({ provider, model = "", env = process.env, fetchImpl = fetch }) {
   const keyName = KEYS[provider];
-  const decide = (verdict, reason, used = model || null) => ({ verdict, provider, model: used, reason: cleanReason(reason, Object.values(KEYS).map((k) => env[k])) });
+  const decide = (verdict, reason, used = model || null) => ({ verdict, provider, model: used, reason: cleanReason(reason, secretsOf(env)) });
+  if (provider === AZURE_FOUNDRY) return probeAzureFoundry({ model, env, fetchImpl, decide });
   if (!keyName) return decide("undecided", `no pre-build probe for provider '${provider}'; the run decides`);
   const key = env[keyName] ?? "";
   if (!key) return decide("refused", `${keyName} is set neither in the run's environment nor in its .env, so ${provider} cannot run`);
@@ -207,6 +258,44 @@ export async function probeDeclared({ provider, model = "", env = process.env, f
     return decide("refused", `${provider} turned down every candidate (${CANDIDATES[provider].join(", ")}) the same way: ${first}`, null);
   }
   return decide("undecided", `${provider} gave no certain answer for ${CANDIDATES[provider].join(", ")}: ${answers.map((a) => a.message).join("; ")}`, null);
+}
+
+/**
+ * Every value a reason must not carry: the keys, and the Foundry endpoint with its host,
+ * which a network error message can quote.
+ */
+function secretsOf(env) {
+  const secrets = [...Object.values(KEYS), AZURE_ENV.key, AZURE_ENV.endpoint].map((k) => env[k]);
+  try {
+    secrets.push(new URL(env[AZURE_ENV.endpoint]).host);
+  } catch {
+    // not a URL: the full value above is all there is to scrub
+  }
+  return secrets;
+}
+
+/** The Azure AI Foundry branch of probeDeclared: one deployment, no catalog. */
+async function probeAzureFoundry({ model, env, fetchImpl, decide }) {
+  const missing = Object.values(AZURE_ENV).filter((k) => !env[k]);
+  if (missing.length > 0) {
+    return decide("refused", `${missing.join(", ")} set neither in the run's environment nor in its .env, so ${AZURE_FOUNDRY} cannot run`);
+  }
+  const deployment = env[AZURE_ENV.deployment];
+  if (model && model !== deployment) {
+    return decide(
+      "refused",
+      `${AZURE_FOUNDRY} runs the deployment ${AZURE_ENV.deployment} names (${deployment}), not ${model}; the run would refuse the declared model`,
+    );
+  }
+  try {
+    azureFoundryChatUrl(env[AZURE_ENV.endpoint]);
+  } catch {
+    return decide("refused", `${AZURE_ENV.endpoint} is not a URL`, deployment);
+  }
+  const r = await probeOnce(AZURE_FOUNDRY, deployment, env[AZURE_ENV.key], fetchImpl, env[AZURE_ENV.endpoint]);
+  if (r.outcome === "ok") return decide("usable", `${AZURE_FOUNDRY} answered for ${deployment}`, deployment);
+  if (r.outcome === "no") return decide("refused", `${AZURE_FOUNDRY} turned down ${deployment}: ${r.message}`, deployment);
+  return decide("undecided", `${AZURE_FOUNDRY} gave no certain answer for ${deployment}: ${r.message}`, deployment);
 }
 
 const EXIT = { usable: 0, refused: 2, undecided: 3 };
@@ -240,6 +329,10 @@ function invokedDirectly() {
   }
 }
 
+// `.then`, not a top-level await: a module with one cannot be loaded by require(esm),
+// and azure-foundry.test.ts loads this one from the TypeScript unit lane.
 if (invokedDirectly()) {
-  process.exitCode = await main(process.argv.slice(2));
+  main(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }
