@@ -23,6 +23,7 @@ import {
   keyedProviderNames,
   keyedProviders,
   langflowProviderName,
+  onDemandProviderNames,
   providerConfigMap,
   type Provider,
 } from "./provider-config";
@@ -59,6 +60,9 @@ test("every entry declares at least one env var, and keyed ones a placeholder + 
         config.variableInputTestId.startsWith("provider-variable-input-"),
         `${provider} variable input testid`,
       );
+    } else if (config.credential === "on-demand-key") {
+      // One key, written under the env var's own name, and that key IS the env gate.
+      assert.deepEqual(config.envKeys, [config.variable], `${provider} env gate`);
     } else {
       // A deployment provider's env gate is every variable it writes PLUS the
       // deployment, so `hasProviderEnvKeys` cannot report it usable with a part of
@@ -82,6 +86,23 @@ test("azure-ai-foundry is a DEPLOYMENT provider: not keyed, key written before t
   // so the endpoint must be written LAST to be the write that gets validated.
   assert.deepEqual(azure.variables, ["AZURE_AI_FOUNDRY_API_KEY", "AZURE_AI_FOUNDRY_ENDPOINT"]);
   assert.equal(azure.deploymentEnvKey, "AZURE_AI_FOUNDRY_TEST_DEPLOYMENT");
+});
+
+test("openrouter is an ON-DEMAND key provider: not keyed, never swept (#2292)", () => {
+  // Not keyed: the sweep saves every keyed provider through the UI for the whole run,
+  // and three @stable specs need OpenRouter UNCONFIGURED (see `openrouter.ts`).
+  const openrouter = providerConfigMap.openrouter;
+  assert.equal(openrouter.credential, "on-demand-key");
+  assert.equal(openrouter.variable, "OPENROUTER_API_KEY");
+  assert.ok(!keyedProviderNames.includes("openrouter" as never));
+  assert.equal(langflowProviderName("openrouter"), "OpenRouter");
+});
+
+test("onDemandProviderNames is exactly the providers collect-models records without sweeping", () => {
+  assert.deepEqual(onDemandProviderNames, ["azure-ai-foundry", "openrouter"]);
+  for (const provider of onDemandProviderNames) {
+    assert.ok(!keyedProviderNames.includes(provider as never), `${provider} must not be keyed`);
+  }
 });
 
 test("ollama's env gate is the base URL — nothing about it is a secret", () => {

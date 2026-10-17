@@ -2,6 +2,8 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { openRouterUnconfiguredBlocker } from "../../../../helpers/provider-setup/openrouter";
+
 
 // Settings > Model Providers page actions (QA-CHECKLIST §7.5 "Available
 // provider count" + key validation). Hardened for @stable (issue #505): the
@@ -54,7 +56,11 @@ test.describe("Model Provider Modal Actions", () => {
   test(
     "an invalid API key is rejected and does not enable the provider",
     { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
-    async ({ page, request }) => {
+    async ({ page, request }) => {      // OpenRouter must be unconfigured here: on a run that targets it, or on an instance
+      // a previous targeted run left configured, this skips with the reason (#2292).
+      const blocker = await openRouterUnconfiguredBlocker(page.request);
+      test.skip(blocker !== null, blocker ?? "");
+
       await openModelProviders(page);
 
       await page.getByTestId("provider-item-OpenRouter").click();
@@ -90,7 +96,11 @@ test.describe("Model Provider Modal Actions", () => {
   test(
     "selecting another provider switches the visible detail panel",
     { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
-    async ({ page }) => {
+    async ({ page }) => {      // OpenRouter must be unconfigured here: on a run that targets it, or on an instance
+      // a previous targeted run left configured, this skips with the reason (#2292).
+      const blocker = await openRouterUnconfiguredBlocker(page.request);
+      test.skip(blocker !== null, blocker ?? "");
+
       await openModelProviders(page);
 
       await page.getByTestId("provider-item-OpenRouter").click();

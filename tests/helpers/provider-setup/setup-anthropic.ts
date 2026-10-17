@@ -131,7 +131,14 @@ export async function setupAnthropic(
     });
   } else {
     const options = await enumerateModelOptions(page);
-    const claude = options.find((option) => (option.model ?? "").includes("claude"));
+    // Scoped to this provider's own options (#2292): a configured OpenRouter lists
+    // `anthropic/claude-*` and `google/gemini-*`, which a bare substring would select
+    // under the wrong provider. An option whose provider could not be read is kept.
+    const claude = options.find(
+      (option) =>
+        (option.provider === null || option.provider === "Anthropic") &&
+        (option.model ?? "").includes("claude"),
+    );
     if (!claude) {
       await page.keyboard.press("Escape");
       throw new Error(

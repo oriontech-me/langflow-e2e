@@ -1,4 +1,10 @@
-export type Provider = "openai" | "anthropic" | "google" | "ollama" | "azure-ai-foundry";
+export type Provider =
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "ollama"
+  | "azure-ai-foundry"
+  | "openrouter";
 
 /**
  * How a provider is configured in Settings → Model Providers.
@@ -16,7 +22,7 @@ export type Provider = "openai" | "anthropic" | "google" | "ollama" | "azure-ai-
  * keyless provider. `keyedProviders` in `index.ts` is the ready-made narrowing for
  * "every provider that has a key".
  */
-export type ProviderCredentialKind = "api-key" | "base-url" | "deployment";
+export type ProviderCredentialKind = "api-key" | "base-url" | "deployment" | "on-demand-key";
 
 interface ProviderConfigBase {
   providerTestId: string;
@@ -72,7 +78,33 @@ export interface DeploymentProviderConfig extends ProviderConfigBase {
   deploymentEnvKey: string;
 }
 
-export type ProviderConfig = ApiKeyProviderConfig | BaseUrlProviderConfig | DeploymentProviderConfig;
+/**
+ * A provider configured by ONE API key, but only when a run TARGETS it (#2292).
+ * OpenRouter is the first: a keyed provider in every other respect, kept out of the
+ * `collect-models` UI sweep for the reason `DeploymentProviderConfig` gives for
+ * Foundry — specs use it as the provider that is NEVER configured.
+ * `modelProviderModal.spec.ts` and `model-provider-modal-actions.spec.ts` assert its
+ * unconfigured panel (the second also saves an invalid key into it), and the Foundry
+ * provider spec uses it as its differential control. A sweep that saved the real key
+ * would break all of them on every lane that holds it, the QA VM's daily included.
+ *
+ * So, like Foundry, it is validated against the provider directly, recorded in
+ * providers.json / models.json, and configured in Langflow over the API by
+ * `globalSetup` only on a run whose agent specs target it (`openrouter.ts`). It is not
+ * in `keyedProviders`: the invalid-key journey, the UI sweep, the build-axis table
+ * and the collection gate all mean "a key the sweep saves".
+ */
+export interface OnDemandKeyProviderConfig extends ProviderConfigBase {
+  credential: "on-demand-key";
+  /** The Langflow variable the key is written to, from the env var of the same name. */
+  variable: string;
+}
+
+export type ProviderConfig =
+  | ApiKeyProviderConfig
+  | BaseUrlProviderConfig
+  | DeploymentProviderConfig
+  | OnDemandKeyProviderConfig;
 
 // ─── Single source of per-provider configuration ──────────────────────────────
 // When adding a new provider, add an entry here.
@@ -134,6 +166,14 @@ export const providerConfigMap = {
       "AZURE_AI_FOUNDRY_TEST_DEPLOYMENT",
     ],
   },
+  // One key, configured on demand, never by the UI sweep — see
+  // `OnDemandKeyProviderConfig` (#2292).
+  openrouter: {
+    credential: "on-demand-key",
+    providerTestId: "provider-item-OpenRouter",
+    variable: "OPENROUTER_API_KEY",
+    envKeys: ["OPENROUTER_API_KEY"],
+  },
 } satisfies Record<Provider, ProviderConfig>;
 
 /**
@@ -173,6 +213,17 @@ export const keyedProviders: Array<[KeyedProvider, ApiKeyProviderConfig]> = (
 export const keyedProviderNames: KeyedProvider[] = keyedProviders.map(
   ([provider]) => provider,
 );
+
+/**
+ * The providers `collect-models` records WITHOUT configuring them in Langflow: each is
+ * validated against its own API and configured only by a run that targets it
+ * (Foundry #2281, OpenRouter #2292). Derived from `credential`, like `keyedProviders`.
+ */
+export const onDemandProviderNames: Provider[] = (
+  Object.entries(providerConfigMap) as Array<[Provider, ProviderConfig]>
+)
+  .filter(([, config]) => config.credential === "deployment" || config.credential === "on-demand-key")
+  .map(([provider]) => provider);
 
 /**
  * The provider name as Langflow itself spells it — what a persisted Agent node

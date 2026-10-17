@@ -63,6 +63,13 @@ nightly, per test file.
   `OPENAI_API_KEY`; the Google-dependent tests skip there until the
   `GOOGLE_API_KEY` secret is added (workflow env updated in this PR; secret is
   a maintainer action — flagged).
+- `OPENROUTER_API_KEY` is **not** needed, and on a run whose agent specs TARGET
+  OpenRouter (`MODEL_TEST_PROVIDER=openrouter`, or an unpinned run with the key set)
+  the three OpenRouter tests below skip with the reason: `globalSetup` configures
+  OpenRouter for the agent specs on such a run (#2292), and these tests need it
+  unconfigured — the invalid-key test would otherwise save its bogus key over the
+  real one under running agent specs. The predicate is `openRouterTargeted()` in
+  `tests/helpers/provider-setup/openrouter.ts`, the same one `globalSetup` reads.
 - The settings-page specs are parallel-safe; the LM execution spec keeps the
   template machinery serial (`--workers=1`).
 
@@ -112,6 +119,7 @@ configured providers show a **"N models"** suffix in their list item and a
    pinned — a new catalog entry is not a regression.
 2. *Provider detail opens* — click `provider-item-OpenRouter` (unconfigured):
    assert its `provider-variable-input-OPENROUTER_API_KEY` becomes visible.
+   Skipped on a run that targets OpenRouter (see Preconditions).
 3. *Configured provider shows model selection* — click `provider-item-OpenAI`
    (configured in both environments; skip without `OPENAI_API_KEY`): assert
    `model-provider-selection` and at least one `llm-toggle-*` visible.
@@ -137,10 +145,11 @@ configured providers show a **"N models"** suffix in their list item and a
    `provider-variable-input-OPENROUTER_API_KEY` with a fake key → Save →
    assert the item does **not** gain the "models" suffix AND the API confirms
    no `OPENROUTER_API_KEY` variable was created (backend validates the key —
-   scouted live: fake key leaves no variable and no badge).
+   scouted live: fake key leaves no variable and no badge). Skipped on a run
+   that targets OpenRouter (see Preconditions).
 3. *Detail panel toggles per provider* — clicking another provider switches
    the visible detail (the previously open input disappears, the new one
-   renders).
+   renders). Skipped on a run that targets OpenRouter (see Preconditions).
 
 **`model-provider-api-key.spec.ts`**
 
