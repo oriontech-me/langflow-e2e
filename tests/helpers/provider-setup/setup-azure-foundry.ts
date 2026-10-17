@@ -17,7 +17,7 @@ import { langflowProviderName } from "./provider-config";
  * is what keeps `temperature` out of a `gpt-5*` call (see `azure-foundry.ts`).
  */
 export async function setupAzureFoundry(page: Page, modelTestId?: string): Promise<void> {
-  if (!(await hasAgentModelControl(page))) {
+  if (!(await hasAgentModelControl(page, langflowProviderName("azure-ai-foundry")))) {
     console.log("No Agent node found on canvas — skipping Azure AI Foundry setup.");
     return;
   }

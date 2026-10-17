@@ -15,7 +15,7 @@ import { langflowProviderName } from "./provider-config";
  * asking for "OpenRouter", and the preference list is what collect-models validated.
  */
 export async function setupOpenRouter(page: Page, modelTestId?: string): Promise<void> {
-  if (!(await hasAgentModelControl(page))) {
+  if (!(await hasAgentModelControl(page, langflowProviderName("openrouter")))) {
     console.log("No Agent node found on canvas — skipping OpenRouter setup.");
     return;
   }

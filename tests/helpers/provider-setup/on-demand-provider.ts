@@ -10,6 +10,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { getAuthToken } from "../auth/get-auth-token";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
 import { openModelPickerAfterPanelClose, selectPinnedModelOption } from "./model-option";
+import { decideEntryPoint, setupProviderButton, type EntryPointProbe } from "./provider-panel-entry";
 import { resolveTestTargets, type ModelRecord } from "./test-targets";
 import type { Provider } from "./provider-config";
 
@@ -311,11 +312,40 @@ export async function selectOnDemandModel(page: Page, opts: OnDemandPickerOption
   );
 }
 
-/** Whether the open flow has an Agent node whose model picker this setup can drive. */
-export async function hasAgentModelControl(page: Page): Promise<boolean> {
+/**
+ * Whether the open flow has an Agent node whose model picker this setup can drive.
+ *
+ * Polled to a deadline, never sampled once, for the reason `openProviderPanel` gives
+ * (#1465): a template load navigates before ReactFlow mounts the nodes, so an immediate
+ * count sees no Agent and the setup returned having configured nothing. Measured on the
+ * first OpenRouter run (#2292, 1.13.0.dev45): 4 of ~30 agent tests logged "No Agent node
+ * found on canvas — skipping OpenRouter setup" and then failed the #751 guard with
+ * nothing persisted. Azure carried the same single sample. An Agent node that is present
+ * with neither control reachable is a suite defect and throws, as it does there.
+ */
+export async function hasAgentModelControl(
+  page: Page,
+  providerLabel: string,
+  timeout = 20000,
+): Promise<boolean> {
   const modelDropdown = page.getByTestId("model_model");
-  const setupProviderBtn = page.getByRole("button", { name: "Setup Provider" });
-  return (await modelDropdown.count()) > 0 || (await setupProviderBtn.count()) > 0;
+  const setupBtn = setupProviderButton(page);
+  const agentNodes = page.locator('[data-testid^="rf__node-Agent"]');
+  const deadline = Date.now() + timeout;
+  let probe: EntryPointProbe;
+  for (;;) {
+    probe = {
+      modelDropdown: await modelDropdown.count(),
+      setupButton: await setupBtn.count(),
+      agentNodes: await agentNodes.count(),
+    };
+    if (probe.modelDropdown > 0 || probe.setupButton > 0) break;
+    if (Date.now() >= deadline) break;
+    await page.waitForTimeout(500);
+  }
+  const decision = decideEntryPoint(probe, providerLabel);
+  if (decision.kind === "unreachable") throw new Error(decision.message);
+  return decision.kind !== "no-agent";
 }
 
 async function reloadToAgent(page: Page): Promise<void> {
