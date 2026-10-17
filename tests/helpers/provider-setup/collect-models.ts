@@ -7,10 +7,18 @@ import {
   keyedProviders,
   keyedProviderNames,
   langflowProviderName,
+  onDemandProviderNames,
   type Provider,
 } from "./provider-config";
 import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
 import { AZURE_FOUNDRY, validateAzureFoundry } from "./azure-foundry";
+import {
+  OPENROUTER,
+  fetchOpenRouterToolModels,
+  openRouterCandidates,
+  openRouterKey,
+  validateOpenRouterModel,
+} from "./openrouter";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -436,6 +444,89 @@ export async function collectAzureFoundry(
     record,
     models: verdict.model ? [{ provider: AZURE_FOUNDRY, model: verdict.model }] : [],
   };
+}
+
+/** OpenRouter's key-axis record and catalog contribution (#2292). */
+export const OPENROUTER_ENABLEMENT_DETAIL =
+  "not enabled by the sweep: OpenRouter is configured in Langflow only by a run that " +
+  "targets it (globalSetup / setupOpenRouter), never by collect-models (#2292)";
+
+export interface OpenRouterCollectDeps {
+  env?: NodeJS.ProcessEnv;
+  fetchToolModels?: (apiKey: string) => ReturnType<typeof fetchOpenRouterToolModels>;
+  validateModel?: (model: string) => ReturnType<typeof validateOpenRouterModel>;
+}
+
+/**
+ * OpenRouter, validated against OpenRouter directly and NEVER configured in Langflow
+ * here (#2292) — see `openrouter.ts` for why, and for why only the preferred models are
+ * recorded rather than the whole live catalog.
+ *
+ * A provider with a key but a dead account keeps its models in models.json, so its
+ * specs SKIP with the reason instead of vanishing from the run (#1012), exactly as a
+ * declared-but-dead Foundry deployment does. Without a key it contributes nothing: an
+ * undeclared provider is not a target.
+ */
+export async function collectOpenRouter(
+  deps: OpenRouterCollectDeps = {},
+): Promise<{ record: ProviderRecord; models: ModelRecord[] }> {
+  const env = deps.env ?? process.env;
+  const fetchToolModels = deps.fetchToolModels ?? ((key: string) => fetchOpenRouterToolModels(key));
+  const validateModel = deps.validateModel ?? ((model: string) => validateOpenRouterModel(model, env));
+  const at = () => new Date().toISOString();
+  const finish = (record: ProviderRecord, models: string[]) => {
+    const icon = record.status === "active" ? "✅" : "❌";
+    console.log(
+      `${icon} ${OPENROUTER} (${record.model ?? "no model"})` + (record.error ? ` — ${record.error}` : ""),
+    );
+    return { record, models: models.map((model) => ({ provider: OPENROUTER, model })) };
+  };
+
+  const apiKey = openRouterKey(env);
+  if (!apiKey) {
+    return finish(
+      { provider: OPENROUTER, model: null, status: "inactive", error: "OPENROUTER_API_KEY not set", checkedAt: at(), targetEnablement: null, targetEnablementDetail: null },
+      [],
+    );
+  }
+
+  const catalog = await fetchToolModels(apiKey);
+  if ("error" in catalog) {
+    return finish(
+      { provider: OPENROUTER, model: null, status: "inactive", error: `could not read the OpenRouter catalog — ${catalog.error}`, checkedAt: at(), targetEnablement: null, targetEnablementDetail: null },
+      [],
+    );
+  }
+  const candidates = openRouterCandidates(catalog.models);
+  if (candidates.length === 0) {
+    return finish(
+      {
+        provider: OPENROUTER,
+        model: null,
+        status: "inactive",
+        error:
+          `none of the preferred OpenRouter models is in its catalog with tool calling ` +
+          `(${catalog.models.length} tool-capable models listed) — update OPENROUTER_PREFERRED_MODELS`,
+        checkedAt: at(),
+        targetEnablement: null,
+        targetEnablementDetail: null,
+      },
+      [],
+    );
+  }
+
+  const verdict = await validateProviderWithFallback(OPENROUTER, candidates, async (model) => {
+    const result = await validateModel(model);
+    return { provider: OPENROUTER, model, status: result.status, error: result.error, checkedAt: at() };
+  });
+  return finish(
+    {
+      ...verdict,
+      targetEnablement: null,
+      targetEnablementDetail: verdict.status === "active" ? OPENROUTER_ENABLEMENT_DETAIL : null,
+    },
+    candidates,
+  );
 }
 
 // ─── Model collection (UI navigation) ─────────────────────────────────────────
@@ -1884,6 +1975,12 @@ export async function collectAll(page: Page): Promise<void> {
   providers.push(azure.record);
   models.push(...azure.models);
 
+  // Step 3a': OpenRouter, the same split for the same reason (#2292) — validated
+  // against OpenRouter, configured in Langflow only by a run that targets it.
+  const openrouter = await collectOpenRouter();
+  providers.push(openrouter.record);
+  models.push(...openrouter.models);
+
   // BOTH data files are written BEFORE the target-model step, and providers.json is
   // then patched with its verdict. Order matters more than it looks: step 3b spends
   // up to one write per keyed provider plus a read against a single-worker backend,
@@ -1929,10 +2026,11 @@ export async function collectAll(page: Page): Promise<void> {
     }),
   );
   for (const record of providers) {
-    // Foundry carries its own verdict from step 3a (#2281) and is never in
-    // `displayNames`, so it got no enable above; skipping it here keeps its record's
-    // `targetEnablementDetail` from being overwritten with "not in providerConfigMap".
-    if (record.provider === AZURE_FOUNDRY) continue;
+    // Foundry and OpenRouter carry their own verdict from step 3a (#2281, #2292) and
+    // are never in `displayNames`, so they got no enable above; skipping them here keeps
+    // their records' `targetEnablementDetail` from being overwritten with "not in
+    // providerConfigMap".
+    if (onDemandProviderNames.includes(record.provider as Provider)) continue;
     const providerDisplayName = displayNames.get(record.provider);
     const verdict = providerDisplayName ? enablement.get(providerDisplayName) : undefined;
     if (record.status !== "active" || !record.model) {

@@ -57,7 +57,9 @@ import {
   CREDENTIAL_REJECTED_PREFIX,
   isCredentialRejectedReason,
   AZURE_FOUNDRY_ENABLEMENT_DETAIL,
+  OPENROUTER_ENABLEMENT_DETAIL,
   collectAzureFoundry,
+  collectOpenRouter,
 } from "./collect-models";
 import { keyedProviders } from "./provider-config";
 
@@ -1674,4 +1676,78 @@ test("#2281: an undeclared Foundry contributes no catalog entry — it is not a 
   }));
   assert.equal(record.status, "inactive");
   assert.deepEqual(models, []);
+});
+
+// ─── OpenRouter: validated off-Langflow, never enabled by the sweep (#2292) ──────
+
+const OR_ENV = { OPENROUTER_API_KEY: "sk-or-v1-secret" };
+
+test("#2292: an active OpenRouter records the settled model and only the preferred catalog entries", async () => {
+  const probed: string[] = [];
+  const { record, models } = await collectOpenRouter({
+    env: OR_ENV,
+    fetchToolModels: async () => ({
+      models: ["meta-llama/llama-3.3-70b-instruct", "openai/gpt-4o", "openai/gpt-4o-mini"],
+    }),
+    validateModel: async (model) => {
+      probed.push(model);
+      return { status: "active", error: null };
+    },
+  });
+  assert.equal(record.provider, "openrouter");
+  assert.equal(record.status, "active");
+  assert.equal(record.model, "openai/gpt-4o-mini");
+  assert.deepEqual(probed, ["openai/gpt-4o-mini"], "one probe, on the first preferred model");
+  assert.equal(record.targetEnablement, null);
+  assert.equal(record.targetEnablementDetail, OPENROUTER_ENABLEMENT_DETAIL);
+  assert.deepEqual(models, [
+    { provider: "openrouter", model: "openai/gpt-4o-mini" },
+    { provider: "openrouter", model: "openai/gpt-4o" },
+  ]);
+});
+
+test("#2292: a drained account stays in the catalog so its specs SKIP with the reason", async () => {
+  const { record, models } = await collectOpenRouter({
+    env: OR_ENV,
+    fetchToolModels: async () => ({ models: ["openai/gpt-4o-mini", "openai/gpt-4o"] }),
+    validateModel: async () => ({
+      status: "inactive",
+      error: "HTTP 402: OpenRouter credit exhausted (or the key's limit reached): Insufficient credits",
+    }),
+  });
+  assert.equal(record.status, "inactive");
+  assert.match(record.error ?? "", /\b402\b/);
+  assert.equal(models.length, 2);
+});
+
+test("#2292: no key contributes nothing and asks OpenRouter nothing", async () => {
+  let asked = false;
+  const { record, models } = await collectOpenRouter({
+    env: {},
+    fetchToolModels: async () => {
+      asked = true;
+      return { models: [] };
+    },
+  });
+  assert.equal(record.status, "inactive");
+  assert.equal(record.error, "OPENROUTER_API_KEY not set");
+  assert.deepEqual(models, []);
+  assert.equal(asked, false);
+});
+
+test("#2292: an unreadable catalog, or one without the preferred models, is inactive with the reason", async () => {
+  const unreadable = await collectOpenRouter({
+    env: OR_ENV,
+    fetchToolModels: async () => ({ error: "HTTP 401: OpenRouter refused the key: User not found." }),
+  });
+  assert.equal(unreadable.record.status, "inactive");
+  assert.match(unreadable.record.error ?? "", /could not read the OpenRouter catalog — HTTP 401/);
+  assert.deepEqual(unreadable.models, []);
+
+  const unpreferred = await collectOpenRouter({
+    env: OR_ENV,
+    fetchToolModels: async () => ({ models: ["meta-llama/llama-3.3-70b-instruct"] }),
+  });
+  assert.equal(unpreferred.record.status, "inactive");
+  assert.match(unpreferred.record.error ?? "", /none of the preferred OpenRouter models/);
 });
