@@ -279,6 +279,13 @@ jobs:
       AZURE_AI_FOUNDRY_API_KEY: ${{ secrets.AZURE_AI_FOUNDRY_API_KEY }}
       AZURE_AI_FOUNDRY_ENDPOINT: ${{ secrets.AZURE_AI_FOUNDRY_ENDPOINT }}
       AZURE_AI_FOUNDRY_TEST_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_TEST_DEPLOYMENT }}
+      # OpenRouter (#2292) takes Foundry's split for the same reason: `collect-models`
+      # validates it against OpenRouter directly and never configures it, and only a run
+      # whose agent specs TARGET it configures it in Langflow (`globalSetup`). An
+      # unpinned dispatch therefore runs the agent specs on OpenRouter too, and the
+      # three tests that need it unconfigured skip with the reason. Docker job only, by
+      # the #1055 rule above.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # The token sidecar's bounds, at JOB level because TWO steps read them: the
       # poller below and the test step of the `run-e2e` composite, where the attribution sidecar runs inside
       # `deleteFlow`'s teardown hook. They used to live in the poller step's own
