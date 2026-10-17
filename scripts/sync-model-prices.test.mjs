@@ -186,8 +186,13 @@ test("the real model-prices.json is syncable", () => {
     // names who BILLED the tokens, which is what e2e_model_prices is grouped by,
     // so a Foundry deployment must not be folded into the real openai lanes'
     // provider row -- they are different accounts.
+    //
+    // `openrouter` joined on 2026-10-17 (#2292) by the same rule: its
+    // `openai/gpt-4o-mini` is billed to the OpenRouter account, not to OpenAI's.
+    // The platform stores the field as free text (e2e_model_prices.provider), so
+    // this allowlist is the only place the vocabulary is checked.
     assert.ok(
-      ["openai", "anthropic", "google", "azure"].includes(r.provider),
+      ["openai", "anthropic", "google", "azure", "openrouter"].includes(r.provider),
       `${r.price_key}: provider ${r.provider}`,
     );
   }
