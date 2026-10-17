@@ -166,7 +166,14 @@ export async function setupGoogle(
     });
   } else {
     const options = await enumerateModelOptions(page);
-    const gemini = options.find((option) => (option.model ?? "").includes("gemini"));
+    // Scoped to this provider's own options (#2292): a configured OpenRouter lists
+    // `anthropic/claude-*` and `google/gemini-*`, which a bare substring would select
+    // under the wrong provider. An option whose provider could not be read is kept.
+    const gemini = options.find(
+      (option) =>
+        (option.provider === null || option.provider === "Google Generative AI") &&
+        (option.model ?? "").includes("gemini"),
+    );
     if (!gemini) {
       await page.keyboard.press("Escape");
       throw new Error(
