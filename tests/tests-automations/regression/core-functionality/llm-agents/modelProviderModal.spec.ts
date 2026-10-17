@@ -2,6 +2,15 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { openRouterTargeted } from "../../../../helpers/provider-setup/openrouter";
+
+// OpenRouter is the provider these tests rely on being UNCONFIGURED. On a run whose agent
+// specs target it, globalSetup configures it for them (#2292), so the panel shows the
+// configured state — and the invalid-key test would save its bogus key over the real one
+// under running agent specs. The same predicate decides both sides.
+const OPENROUTER_OWNED_REASON =
+  "this run's agent specs target OpenRouter, so its credential is theirs (configured by " +
+  "globalSetup) — this test needs OpenRouter unconfigured (#2292)";
 
 // Settings > Model Providers page (QA-CHECKLIST §7.5 "Manage Model Providers"
 // modal). Hardened for @stable (issue #505): the previous version wrapped every
@@ -48,7 +57,8 @@ test.describe("ModelProviderModal", () => {
   test(
     "selecting a provider opens its API key configuration detail",
     { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
-    async ({ page }) => {
+    async ({ page }) => {      test.skip(openRouterTargeted(), OPENROUTER_OWNED_REASON);
+
       await openModelProviders(page);
 
       // OpenRouter is never configured in the test environments, so its detail
