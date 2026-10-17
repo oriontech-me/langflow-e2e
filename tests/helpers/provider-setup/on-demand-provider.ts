@@ -162,24 +162,64 @@ export async function ensureConfiguredOverApi(
   const echo = (await enabled.json().catch(() => null)) as { enabled_models?: unknown } | null;
   const echoed = Array.isArray(echo?.enabled_models) ? echo.enabled_models : [];
   const expectedKey = `${displayName}::llm::${model}`;
-  if (!echoed.includes(expectedKey)) {
-    // An unknown provider name is accepted with HTTP 200 and enables nothing, so the
-    // echo is the only proof the enable landed.
+  if (echoed.includes(expectedKey)) {
+    memo.add(memoKey);
     return {
-      configured: false,
+      configured: true,
       wrote,
-      detail:
-        `the server did not report "${expectedKey}" as enabled after the request ` +
-        `(echo: ${JSON.stringify(echoed).slice(0, 200)})`,
+      detail: `${displayName} configured with ${modelNoun} "${model}" enabled`,
     };
   }
 
-  memo.add(memoKey);
+  // The echo lists only EXPLICITLY enabled models. Enabling a catalog DEFAULT just takes
+  // it off the disabled list (`_update_model_sets` in `api/v1/models.py`), so a default
+  // model never appears in it however well the enable landed — OpenRouter's
+  // `openai/gpt-4o-mini` is one (`openrouter_constants.py`), measured on 1.13.0.dev45:
+  // HTTP 200, echo without it, every OpenRouter test failing here (#2292). Foundry never
+  // reached this branch because it is explicit-enable-only. So the effective state is
+  // read back, which is also what keeps the reason the echo check exists: an unknown
+  // provider name is accepted with HTTP 200 and enables nothing, and reads back as such.
+  const effective = await readEffectiveEnablement(ctx, headers, displayName, model);
+  if (effective === true) {
+    memo.add(memoKey);
+    return {
+      configured: true,
+      wrote,
+      detail: `${displayName} configured with ${modelNoun} "${model}" enabled (a catalog default, confirmed by a read)`,
+    };
+  }
   return {
-    configured: true,
+    configured: false,
     wrote,
-    detail: `${displayName} configured with ${modelNoun} "${model}" enabled`,
+    detail:
+      `the server did not report "${expectedKey}" as enabled after the request ` +
+      `(echo: ${JSON.stringify(echoed).slice(0, 200)}; effective state read back: ` +
+      `${effective === null ? "unreadable" : String(effective)})`,
   };
+}
+
+/**
+ * Whether the server says `model` is enabled for `displayName` right now, or `null` when
+ * the read does not answer. The per-type map is preferred over the flat one for the
+ * reason `ensureTargetModelsEnabled` gives (the flat map ORs rows across model types).
+ */
+async function readEffectiveEnablement(
+  ctx: APIRequestContext,
+  headers: Record<string, string>,
+  displayName: string,
+  model: string,
+): Promise<boolean | null> {
+  const read = await ctx
+    .get("/api/v1/models/enabled_models?purpose=configure", { headers })
+    .catch(() => null);
+  if (!read || !read.ok()) return null;
+  const body = (await read.json().catch(() => null)) as {
+    enabled_models?: Record<string, Record<string, boolean>>;
+    enabled_models_by_type?: Record<string, Record<string, Record<string, boolean>>>;
+  } | null;
+  if (!body) return null;
+  const state = body.enabled_models_by_type?.[displayName]?.llm?.[model] ?? body.enabled_models?.[displayName]?.[model];
+  return state === true;
 }
 
 export interface OnDemandPickerOptions {

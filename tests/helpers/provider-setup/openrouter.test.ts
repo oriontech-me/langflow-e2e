@@ -249,3 +249,49 @@ test("no key makes no request at all", async () => {
   assert.match(result.detail, /OPENROUTER_API_KEY not set/);
   assert.equal(recorded.length, 0);
 });
+
+test("a catalog DEFAULT model is confirmed by reading the effective state, not by the echo", async () => {
+  // Measured on 1.13.0.dev45 (#2292): `openai/gpt-4o-mini` is one of OpenRouter's
+  // defaults, so the enable answers 200 with an echo that never lists it. Requiring the
+  // echo failed every OpenRouter test with OPENROUTER_NOT_CONFIGURED.
+  const replies = {
+    "GET /api/v1/auto_login": { body: { access_token: "t" } },
+    "GET /api/v1/variables/": { body: [{ name: "OPENROUTER_API_KEY" }] },
+    "POST /api/v1/models/enabled_models": { body: { enabled_models: ["OpenAI::llm::gpt-4o-mini"] } },
+  };
+  const enabled = await ensureOpenRouterConfigured(
+    fakeRequest(
+      {
+        ...replies,
+        "GET /api/v1/models/enabled_models?purpose=configure": {
+          body: { enabled_models_by_type: { OpenRouter: { llm: { "openai/gpt-4o-mini": true } } } },
+        },
+      },
+      [],
+    ),
+    "openai/gpt-4o-mini",
+    ENV,
+    new Set(),
+  );
+  assert.equal(enabled.configured, true, enabled.detail);
+  assert.match(enabled.detail, /catalog default, confirmed by a read/);
+
+  // The read is what keeps the echo check's purpose: a model the server does not
+  // report enabled is still a failure, with both observations in the detail.
+  const off = await ensureOpenRouterConfigured(
+    fakeRequest(
+      {
+        ...replies,
+        "GET /api/v1/models/enabled_models?purpose=configure": {
+          body: { enabled_models: { OpenRouter: { "openai/gpt-4o-mini": false } } },
+        },
+      },
+      [],
+    ),
+    "openai/gpt-4o-mini",
+    ENV,
+    new Set(),
+  );
+  assert.equal(off.configured, false);
+  assert.match(off.detail, /did not report "OpenRouter::llm::openai\/gpt-4o-mini".*effective state read back: false/);
+});
