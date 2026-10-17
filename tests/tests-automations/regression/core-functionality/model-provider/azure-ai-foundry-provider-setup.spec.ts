@@ -15,7 +15,7 @@ import {
   PROVIDER_SAVE_BUTTON,
 } from "../../../../helpers/provider-setup/provider-panel-save";
 import { azureFoundryTargeted } from "../../../../helpers/provider-setup/azure-foundry";
-import { openRouterTargeted } from "../../../../helpers/provider-setup/openrouter";
+import { openRouterUnconfiguredBlocker } from "../../../../helpers/provider-setup/openrouter";
 import {
   classifyVariableWriteRefusal,
   describeVariableWrite,
@@ -396,11 +396,12 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
         // page. Without this, a regression that showed the hint for EVERY
         // provider would still pass the asserts above.
         await page.getByTestId("provider-item-OpenRouter").click();
-        // On a run whose agent specs target OpenRouter, globalSetup has configured it
-        // (#2292), so its panel shows the configured state instead of the key input.
-        // The control is the two asserts below, which hold either way; the key input
-        // only proves the panel switched, and the model selection proves that too.
-        if (openRouterTargeted()) {
+        // On a run whose agent specs target OpenRouter, or an instance a previous such
+        // run left configured, its panel shows the configured state instead of the key
+        // input (#2292). The control is the two asserts below, which hold either way;
+        // the key input only proves the panel switched, and the model selection proves
+        // that too.
+        if ((await openRouterUnconfiguredBlocker(page.request)) !== null) {
           await expect(page.getByTestId("model-provider-selection")).toBeVisible({ timeout: 15000 });
         } else {
           await expect(page.getByTestId("provider-variable-input-OPENROUTER_API_KEY")).toBeVisible({

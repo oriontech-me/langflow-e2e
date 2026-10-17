@@ -29,6 +29,7 @@
 // has none of (`meta-llama/llama-3.3-70b-instruct`) can be added to the list once this
 // one holds.
 import type { APIRequestContext } from "@playwright/test";
+import { getAuthToken } from "../auth/get-auth-token";
 import { langflowProviderName, providerConfigMap } from "./provider-config";
 import { resolveTestTargets, type ModelRecord } from "./test-targets";
 import {
@@ -229,4 +230,34 @@ export async function ensureOpenRouterConfigured(
     memo: enabledMemo,
     memoKey: model,
   });
+}
+
+/**
+ * Why a test that needs OpenRouter UNCONFIGURED must not run now, or `null` when it can.
+ *
+ * Two owners, either one enough. A run that TARGETS OpenRouter has it configured by
+ * `globalSetup` for its agent specs. And an instance REUSED across runs — a developer's
+ * local Langflow — keeps the credential a previous targeted run stored, since nothing
+ * removes it: there the key is on the instance although this run does not target it.
+ * The second is read from the instance itself, so a stored key is never overwritten
+ * (the invalid-key test saves its bogus key over whatever is there).
+ */
+export async function openRouterUnconfiguredBlocker(ctx: APIRequestContext): Promise<string | null> {
+  if (openRouterTargeted()) {
+    return (
+      "this run's agent specs target OpenRouter, so its credential is theirs (configured by " +
+      "globalSetup) — this test needs OpenRouter unconfigured (#2292)"
+    );
+  }
+  const authHeader = await getAuthToken(ctx);
+  const listed = authHeader
+    ? await ctx.get("/api/v1/variables/", { headers: { Authorization: authHeader } }).catch(() => null)
+    : null;
+  const rows = listed?.ok() ? await listed.json().catch(() => null) : null;
+  if (!Array.isArray(rows)) return null;
+  return (rows as Array<{ name?: string }>).some((row) => row.name === CONFIG.variable)
+    ? `${CONFIG.variable} is already stored on this instance (left by an earlier run that ` +
+        "targeted OpenRouter, or set by hand) — this test needs OpenRouter unconfigured and " +
+        "would overwrite or misread it (#2292). Delete the variable to run it."
+    : null;
 }
