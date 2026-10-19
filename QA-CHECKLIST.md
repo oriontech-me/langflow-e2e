@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-16
+> **Last updated:** 2026-10-19
 
 ---
 
@@ -1636,7 +1636,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 735 `test()` calls carrying the `@stable` tag, distributed across 285 spec
+> 736 `test()` calls carrying the `@stable` tag, distributed across 285 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1983,6 +1983,7 @@
 
 #### core-functionality/integrations/
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
+- [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 
