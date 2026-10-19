@@ -1625,8 +1625,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **745** | **656 (88%)** | **38 (5%)** | **13 (2%)** | **38 (5%)** |
+| `integrations/` — Dedicated Integrations | 36 | 29 | 0 | 0 | 7 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **748** | **659 (88%)** | **38 (5%)** | **13 (2%)** | **38 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1642,7 +1642,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 736 `test()` calls carrying the `@stable` tag, distributed across 285 spec
+> 747 `test()` calls carrying the `@stable` tag, distributed across 286 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1662,6 +1662,17 @@
 - [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] the Playground build resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
+- [x] POST /api/v1/run resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
+- [x] POST /api/v1/responses resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
+- [x] POST /api/v2/workflows resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
+- [x] an MCP tool call behind an API key resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
+- [x] the legacy global MCP server, behind an API key, resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
+- [x] the shareable playground resolves no connection for an anonymous visitor → `api-connections-resolution-entry-points.spec.ts`
+- [x] POST /api/v2/workflows/public resolves no connection for an anonymous visitor → `api-connections-resolution-entry-points.spec.ts`
+- [x] a public MCP project resolves no connection for an anonymous caller → `api-connections-resolution-entry-points.spec.ts`
+- [x] a public A2A agent resolves no connection for an anonymous caller → `api-connections-resolution-entry-points.spec.ts`
+- [x] an A2A agent behind an API key resolves no connection either — both sub-paths run as the anonymous family → `api-connections-resolution-entry-points.spec.ts`
 - [x] a planted token reaches no client response across the connection's lifecycle, and scope coverage describes the request rather than the credential → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a hyphenated name does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
