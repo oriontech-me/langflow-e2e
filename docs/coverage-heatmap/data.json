@@ -86,7 +86,7 @@
  "areas": [
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 8.8,
+   "residualRisk": 8.2,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -101,11 +101,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 8,
+    "chronicFlaky": 6,
     "stableSpecs": 37,
-    "penalty": 0.079
+    "penalty": 0.059
    },
-   "mitigation": 0.65,
+   "mitigation": 0.67,
    "checklistBullets": 47,
    "bulletStates": {
     "x": 42,
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-16",
+ "refreshed": "2026-10-19",
  "refreshWindow": {
-  "testHealthSince": "2026-09-01",
+  "testHealthSince": "2026-09-04",
   "days": 45
  }
 }
