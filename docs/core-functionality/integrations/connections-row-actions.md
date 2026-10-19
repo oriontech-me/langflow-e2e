@@ -2,10 +2,12 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connections-row-actions.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev19`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1970 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order in the #1971 comment). Seeds through `tests/helpers/integrations/` from #1966.
+Revised for #2291, when the Revoke toast became one of three provider outcomes — see
+*The Revoke toast reports the provider outcome* below.
 
 ---
 
@@ -35,7 +37,7 @@ written, on a connection seeded with a planted credential (`status: "ready"`):
 | `PATCH` through the API, then reload | — | — | the switch reads the API's value |
 | `Rename` | a native `window.prompt` (message `Rename`, prefilled with the current display name) → `PATCH {display_name}` | *Connection renamed.* | the row shows the new name; the API agrees |
 | `Check credential` | `POST /api/v1/connections/{id}/test` → `200` | *Credential checked.* | the *Last check* cell leaves `Never`; `health_checked_at` is stamped |
-| `Revoke` | `POST /api/v1/connections/{id}/revoke` → `200` | *Connection revoked.* | badge `Revoked`; `status: "revoked"`, `has_credentials: false`; now `Check credential` and `Revoke` are disabled and **`Delete` is enabled** |
+| `Revoke` | `POST /api/v1/connections/{id}/revoke` → `200`, `provider_revocation: "not_applicable"` | *Credential removed from Langflow. The token may still be valid at the provider. Revoke it in the provider's settings.* | badge `Revoked`; `status: "revoked"`, `has_credentials: false`; now `Check credential` and `Revoke` are disabled and **`Delete` is enabled** |
 | `Delete` | `DELETE /api/v1/connections/{id}` → `204` (no confirmation step) | *Connection deleted.* | the row is gone; the list no longer carries the id |
 
 ### Where the measurement disagrees with the issue
@@ -56,6 +58,37 @@ written, on a connection seeded with a planted credential (`status: "ready"`):
 - **There is no `GET /api/v1/connections/{id}`** (#1966's finding): a `GET` on the item
   path answers `404` for a *live* connection, so it cannot prove a removal. Removal is
   re-read from the list.
+
+### The Revoke toast reports the provider outcome (#2291)
+
+Until `1.13.0.dev43` the Revoke toast read *"Connection revoked."*. Upstream #15766
+(*"fix(connections): revoke pasted Slack tokens and report provider outcomes"*, merged into
+`release-1.13.0` on 2026-10-15, first image `1.13.0.dev44`) made it one of three toasts.
+The revoke response gained `provider_revocation`
+(`revoked` · `unsupported` · `failed` · `not_applicable`, on `ConnectionRevokeRead`), and the
+page picks the toast from it:
+
+| `provider_revocation` | Toast | Kind |
+|---|---|---|
+| `revoked` | *"Connection revoked and token revoked at the provider."* | success |
+| `failed` | *"Credential removed from Langflow, but provider revocation failed. Revoke the token in the provider's settings."* | notice |
+| anything else | *"Credential removed from Langflow. The token may still be valid at the provider. Revoke it in the provider's settings."* | notice |
+
+The intentional change turned the test red on the daily of 2026-10-16, which stripped its
+`@stable` (`4c0a0474e`). This revision restores it.
+
+The seeded connection is a **pasted** `google` token, with no OAuth binding. For such a
+row `broker.revoke` returns `not_applicable` without calling anything (only a pasted Slack
+token is revoked at the provider). The outcome is therefore deterministic and network-free.
+The step asserts it twice:
+
+- the field itself, on the `POST …/revoke` response the click sends (matched by pathname);
+- the toast that field selects.
+
+Asserting the field is what keeps the toast assertion honest: *"revoked at the provider"*
+would be a false claim for this row. The notice renders inside the same `role=status`
+region as the success toasts. The other five toast copies were re-measured against the
+`en` bundle and are unchanged.
 
 ### Recorded, not asserted
 
@@ -118,8 +151,10 @@ what the test left, id-scoped, through `deleteConnection`.
 4. `Check credential` → toast *"Credential checked."* → *Last check* no longer reads
    `Never` → the API's `health_checked_at` is a timestamp and `health` has left
    `unknown` (no claim that it is `healthy`).
-5. `Revoke` → toast *"Connection revoked."* → the row's badge reads `Revoked` → the API
-   reads `status: "revoked"`, `has_credentials: false`.
+5. `Revoke` → the `POST …/revoke` response is `200` with `provider_revocation:
+   "not_applicable"` → toast *"Credential removed from Langflow. The token may still be
+   valid at the provider. Revoke it in the provider's settings."* → the row's badge reads
+   `Revoked` → the API reads `status: "revoked"`, `has_credentials: false`.
 6. Open the menu → `Revoke` is disabled and `Delete` is enabled → `Delete` → toast
    *"Connection deleted."* → the row is gone → the list no longer carries the id.
 
@@ -128,7 +163,7 @@ what the test left, id-scoped, through `deleteConnection`.
 ## Validation criterion *(required)*
 
 Both tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev19`, with the opt-in's state asserted on the **switch's `aria-checked`**, on
+`1.13.0.dev47`, with the opt-in's state asserted on the **switch's `aria-checked`**, on
 the **direction-specific toast** and on the **API** at every change — including a
 change made through the API alone — and every other row action asserted on its exact
 toast, its row observable and the API. After the run, `GET /api/v1/connections` carries
@@ -148,7 +183,12 @@ no row with this spec's names.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/ConnectionStatusBadge.tsx`
   — the `Ready` / `Revoked` badges.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/index.tsx` — the action
-  handlers, the `window.prompt` rename and the toast per action.
+  handlers, the `window.prompt` rename and the toast per action, including the three
+  Revoke outcomes chosen from `provider_revocation`.
+- `src/backend/base/langflow/services/connection/oauth/broker.py` — `revoke`, which
+  returns `not_applicable` for a pasted, non-Slack token.
+- `src/backend/base/langflow/services/database/models/connection/schemas.py` —
+  `ConnectionRevokeRead.provider_revocation` and its four values.
 - `src/frontend/src/controllers/API/queries/connections/api.ts` — which route each
   action calls.
 - `src/backend/base/langflow/api/v1/connections.py` — the routes and their rate-limit

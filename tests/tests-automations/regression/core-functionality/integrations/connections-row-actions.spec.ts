@@ -22,13 +22,16 @@ import {
 test.describe("Connections page — row actions and the non-interactive opt-in", () => {
   const PAGE = "/settings/connections";
   const OPT_IN = "Allow scheduled and deployed runs";
-  // Exact copy, measured on 1.13.0.dev19 (connections.toast.* in the en bundle).
+  // Exact copy, measured on 1.13.0.dev47 (connections.toast.* in the en bundle).
+  // Revoke has three outcome toasts since 1.13.0.dev44 (langflow#15766, #2291);
+  // the seeded connection produces `revokedLocally` — see the Revoke step.
   const TOAST = {
     unattendedOn: "Scheduled and deployed runs may use this connection.",
     unattendedOff: "Scheduled and deployed runs may no longer use this connection.",
     renamed: "Connection renamed.",
     tested: "Credential checked.",
-    revoked: "Connection revoked.",
+    revokedLocally:
+      "Credential removed from Langflow. The token may still be valid at the provider. Revoke it in the provider's settings.",
     deleted: "Connection deleted.",
   };
 
@@ -77,7 +80,7 @@ test.describe("Connections page — row actions and the non-interactive opt-in",
     return menu;
   }
 
-  /** A success toast by its exact copy, inside the page's alert region. */
+  /** A toast by its exact copy, inside the page's alert region (success and notice alike). */
   function toast(page: Page, text: string): Locator {
     return page.getByRole("status").getByText(text, { exact: true });
   }
@@ -150,7 +153,7 @@ test.describe("Connections page — row actions and the non-interactive opt-in",
 
   test(
     "Rename, Check credential, Revoke and Delete each act on the row, and the API agrees",
-    { tag: ["@integrations", "@settings"] },
+    { tag: ["@stable", "@integrations", "@settings"] },
     async ({ page, request }) => {
       const headers = { Authorization: await getAuthToken(request) };
       const connection = await createConnectionViaApi(request, headers, { label: "rowactions" });
@@ -219,10 +222,21 @@ test.describe("Connections page — row actions and the non-interactive opt-in",
         expect(read?.health, "health after the check").not.toBe("unknown");
       });
 
-      await test.step("Revoke moves the badge to Revoked and the API drops the credential", async () => {
+      await test.step("Revoke moves the badge to Revoked, says the provider was not told, and the API drops the credential", async () => {
         await openRowMenu(page, connection.name);
+        const revokeCall = page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            new URL(response.url()).pathname === `/api/v1/connections/${connection.id}/revoke`,
+        );
         await page.getByRole("menu").getByRole("menuitem", { name: "Revoke" }).click();
-        await expect(toast(page, TOAST.revoked)).toBeVisible();
+        const response = await revokeCall;
+        expect(response.status(), "the revoke call").toBe(200);
+        // The toast is chosen from this field. A pasted token has no OAuth binding,
+        // so there is nothing to revoke at the provider (`broker.revoke`), and the
+        // page must not claim it was: "revoked at the provider" is for OAuth rows.
+        expect((await response.json()).provider_revocation, "the provider-side outcome").toBe("not_applicable");
+        await expect(toast(page, TOAST.revokedLocally)).toBeVisible();
         await expect(row.getByText("Revoked", { exact: true })).toBeVisible();
         const read = await readConnection(request, headers, connection.name);
         expect(read).toMatchObject({ status: "revoked", has_credentials: false });
