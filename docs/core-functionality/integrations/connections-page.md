@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connections-page.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev21`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1969 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order in the #1971 comment). Seeds through `tests/helpers/integrations/` from #1966. The
@@ -40,7 +40,7 @@ written:
 | Surface | Measured |
 |---|---|
 | Settings nav | the account menu (`user-profile-settings` → `menu_settings_button`) lands on `/settings/general`; `sidebar-nav-Connections` is an `<a href="/settings/connections">` reading *Connections* (icon `Plug`), among ten `sidebar-nav-*` entries, and carries `data-active="true"` once its page is open. The page renders no `settings_menu_header` |
-| The page | document title `Connections \| Langflow`; heading *Connections*; subtitle *"Accounts your flows act through. Tokens stay on the server; only metadata is shown here."*; `add-connection` reads *Add connection* |
+| The page | document title `Connections \| Langflow`; heading *Connections*; subtitle *"Third-party accounts (like Google, Microsoft 365 and Slack) that your flows use to act on your behalf. Tokens stay on the server and are never shown here."* (langflow#15825, 2026-10-16, all 8 locales; until then *"Accounts your flows act through. Tokens stay on the server; only metadata is shown here."*); `add-connection` reads *Add connection* |
 | Tabs | a `role=tablist` named *Connection views* holding three `role=tab` (no testid): `Mine` (selected by default), `Instance`, `Other users` — the last rendered for a superuser only (source; the UI here is always the superuser) |
 | Search | `connections-search`, placeholder *Search name, handle, or account*; filters **client-side** (no request), matching the display name, the handle `<provider_key>/<name>`, the account display and the account id; the value is kept across a tab switch |
 | Columns | `Connection` · `Owner` · `Account` · `Status` · `Scopes` · `Last check` · `Actions` (the last `sr-only`) |
@@ -48,21 +48,31 @@ written:
 | Status cell | `ready` → `Ready`, no action; `pending` → `Pending` + `authorize-<name>` reading *Authorize*; `expired` → `Expired` + *Reconnect*; `revoked` → `Revoked` + *Reconnect*; `error` → `Error` + a reason line (source only — not reachable, see below) |
 | Owner cell | `You` for one's own row, `Instance` for an instance row, `Other user` for another user's (whose `owner_id` is in a tooltip, `Owner ID: <id>`) — `Shared` until langflow#15263 |
 | Account cell | two lines. First, the account display (or its id); with no account, *Account unavailable* when the connection holds a credential and *Not signed in yet* when it does not. Second, since langflow#15263 (`1.13.0.dev21`), the connection's `executing_identity.identity` as a muted subtitle — *The signed-in user* (`user_delegated`), *A bot* (`bot`), *A service account* (`service`) — on **every** row, pending included, since the identity is always set |
-| Empty view | `connections-empty` reading *"No connections yet."*; the table is not rendered; `add-connection` stays in the page header |
+| Empty view | `connections-empty`, the table not rendered, `add-connection` still in the page header. **Five copies since langflow#15263** (`1.13.0.dev21`), chosen by `getEmptyMessage` in this order: no connection visible at all → *"No connections yet."*; the tab has rows but the search hides them all → *"No connections match your search."*; the tab itself is empty → *"No instance connections yet."* / *"No connections from other users yet."* / *"No connections in this tab yet."* |
 
 ### Where the measurement disagrees with the issue
 
-- **"With no connections" is not a state a shared superuser can reach — but the page has
-  only one empty state, and it is reachable.** The page renders `connections-empty`
-  whenever the current view is empty (`visible.length === 0`, where `visible` is the list
-  filtered by tab **and** search), with a single copy key, `connections.empty`. Every
-  worker drives the same superuser, and a parallel spec seeds connections at any moment,
-  so an empty list is never guaranteed; and the UI cannot be moved to a fresh user,
-  because under `auto_login` the app overwrites any injected token on mount (#690 —
+- **"With no connections" is not a state a shared superuser can reach, so the spec
+  empties the view with a search — and seeds a row of its own so the copy is decided.**
+  Every worker drives the same superuser, and a parallel spec seeds connections at any
+  moment, so an empty list is never guaranteed; and the UI cannot be moved to a fresh
+  user, because under `auto_login` the app overwrites any injected token on mount (#690 —
   re-measured on `1.13.0.dev19`: with a throwaway user's `access_token_lf` injected, the
-  page fires `GET /api/v1/auto_login` and `whoami` answers `langflow`). So
-  the spec reaches the empty view through a search no row can match — the same element,
-  the same copy, the real list behind it — rather than by mocking the list endpoint.
+  page fires `GET /api/v1/auto_login` and `whoami` answers `langflow`). So the spec
+  reaches the empty view through a search no row can match — the same element, the real
+  list behind it — rather than by mocking the list endpoint.
+
+  On `1.13.0.dev19` the page had a single empty copy, and this file was written
+  against that. **langflow#15263 split it into five two builds later** (see the table), so
+  from `1.13.0.dev21` the copy under a no-match search depended on whether the instance
+  held any connection at that moment: *"No connections yet."* on an empty instance,
+  *"No connections match your search."* otherwise. Test 1 seeded nothing, so it passed
+  only while no other worker had a live connection — green in every recorded daily, red
+  the first time it ran beside the other connection specs on one instance (#2295). It now
+  seeds one row and asserts the row is listed **before** searching, which pins the
+  branch to *"No connections match your search."*. The *"No connections yet."* branch
+  needs an instance with no connection at all, so it stays unreachable here; the
+  per-tab copies need a tab no worker writes to, so they stay unasserted too.
 - **The abbreviated scope list is screen-reader text.** The row shows `2 scopes` and
   carries `gmail.send, drive.file` in an `sr-only` span; the full scope URLs appear only
   in a hover tooltip. The spec asserts the count and the `sr-only` list exactly.
@@ -117,8 +127,9 @@ written:
 
 Connection writes share one **per-user** bucket of 30/minute, and the suite shares one
 superuser (`docs/api/connections/api-connections-lifecycle.md`). A UI action cannot be
-retried, so the spec keeps three back-to-back runs under the bucket even inside one
-window: **9 superuser writes per run** — test 1 none; test 2 three seeds and three
+retried, so the spec keeps two back-to-back runs under the bucket even inside one
+window: **11 superuser writes per run** — test 1 one seed and one delete (#2295; it
+spent none until its empty copy had to be pinned); test 2 three seeds and three
 deletes; test 3 one seed, one revoke and one delete. The second user's create and delete
 fall in **that user's own** bucket, fresh every run. `/health` sits on its own
 login-sized bucket (5/minute) and is called once per run. The seeding, the revoke, the
@@ -164,7 +175,12 @@ deleted in teardown. `@stable` enters in this PR.
 Every connection is seeded through `createConnectionViaApi` (provider `google`), and
 `afterEach` removes what the test left: one list read, then an id-scoped
 `deleteConnection` per survivor; the second user deletes its own connection and is then
-deleted by the superuser.
+deleted by the superuser through the shared `deleteThrowawayUser`. Since `1.13.0.dev36`
+that delete is asynchronous (`202`, langflow#15470), so the helper waits until the user
+answers `404` and fails the teardown otherwise (#2228). Until #2295 this file kept a
+private copy that accepted only `200`: from dev36 on it logged a false *"Orphan user left
+behind"* on every run and never confirmed the erase this doc's validation criterion
+promises.
 
 **Test 1 — `Settings navigation reaches the Connections page, and an empty view says so while still offering Add`**
 1. Open `/` and reach the page the way a user does — account menu, *Settings*, then
@@ -174,23 +190,27 @@ deleted by the superuser.
 2. The entry reads *Connections*, links to `/settings/connections` and is marked active
    (`data-active="true"`); the URL is `/settings/connections` and the document title is
    `Connections | Langflow`.
-3. The heading *Connections* and the subtitle *"Accounts your flows act through. Tokens
-   stay on the server; only metadata is shown here."* render verbatim; `add-connection`
-   reads *Add connection*.
+3. The heading *Connections* and the subtitle *"Third-party accounts (like Google,
+   Microsoft 365 and Slack) that your flows use to act on your behalf. Tokens stay on the
+   server and are never shown here."* render verbatim; `add-connection` reads *Add
+   connection*. The copy is the page's promise about the secret, so a rewording is a
+   change to assert, not to tolerate: langflow#15825 reworded it on 2026-10-16 and the
+   test went red on `1.13.0.dev47` until this was updated (#2295).
 4. The tablist *Connection views* holds `Mine`, `Instance` and `Other users`, with `Mine`
    selected.
-5. Type into `connections-search` a sentinel no connection can match →
-   `connections-empty` reads *"No connections yet."*, no table is rendered, and
-   `add-connection` is still visible.
+5. Seed **S** (user-owned, planted credential) before opening the page; its row is listed
+   under `Mine`. Type into `connections-search` a sentinel no connection can match →
+   `connections-empty` reads *"No connections match your search."*, no table is rendered,
+   and `add-connection` is still visible. S is what makes the copy deterministic: with a
+   row in the tab, the page cannot fall back to *"No connections yet."*.
 
 **Test 2 — `a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle`**
 1. Seed, all with unique names: **A** — user-owned, planted credential, two scopes
    (`https://www.googleapis.com/auth/gmail.send`,
    `https://www.googleapis.com/auth/drive.file`), account `{id, display}` with a unique
    display; **P** — user-owned, no credential (`pending`), `identity: "bot"`; **C** — `ownership_mode:
-   "instance"`, planted credential. Then create a throwaway user through
-   `POST /api/v1/users/`, activate it with `PATCH`, log it in with `postLogin`, and seed
-   **F** as that user.
+   "instance"`, planted credential. Then create a throwaway user with the shared
+   `createThrowawayUser` (create, activate, one login), and seed **F** as that user.
 2. Open `/settings/connections` → A's row renders; the table's columns include
    `Connection`, `Owner`, `Account`, `Status`, `Scopes`, `Last check` and `Actions`.
 3. Row A, cell by column: the display name over the handle `google/<A>`; `You`; the
@@ -224,8 +244,9 @@ deleted by the superuser.
 ## Validation criterion *(required)*
 
 All three tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev21`, with: the nav entry, the title, the heading, the subtitle and the empty
-copy asserted **verbatim**; seeded row A asserted **cell by column**, its scopes as the
+`1.13.0.dev47` — and once more **beside the other four connection specs on the same
+instance**, since test 1's empty copy is decided by what else is listed — with: the nav
+entry, the title, the heading, the subtitle and the no-match copy asserted **verbatim**; seeded row A asserted **cell by column**, its scopes as the
 count **and** the exact `sr-only` list, and its Account cell as exactly two lines (the
 account display, then *The signed-in user*) — while row P's reads *Not signed in yet*
 then *A bot*; each of the three tabs asserted to **hold** its
@@ -268,8 +289,9 @@ user is gone from `GET /api/v1/users/`.
   throwaway user.
 - `tests/helpers/integrations/create-connection.ts`,
   `tests/helpers/integrations/delete-connection.ts`,
-  `tests/helpers/auth/login-request.ts` and `tests/helpers/ui/go-to-settings.ts` —
-  seeding, teardown, the one login and the Settings navigation.
+  `tests/helpers/auth/throwaway-user.ts` and `tests/helpers/ui/go-to-settings.ts` —
+  seeding, teardown, the second user (its one login and its asynchronous delete) and the
+  Settings navigation.
 - The upstream paths resolve on `release-1.13.0` and not on `main`, so the
   doc-dependency guard reports a `::notice::`. No provider key, no model, no network
   egress.
