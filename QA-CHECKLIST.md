@@ -1574,13 +1574,19 @@
 - [x] `PATCH allow_non_interactive` through the API is reflected on the switch after a reload — upstream's *"show state set through the API too"*, verbatim → core-functionality/integrations/connections-row-actions.spec.ts
 - [x] `Rename` (a native `window.prompt` prefilled with the current name) updates the row and the API together; `Delete` stays locked until `Revoke` removes the credential; `Revoke` moves the badge to `Revoked` and the status agrees; `Delete` removes the row and the id is gone from a re-read of the list — not from a follow-up `GET` on the item path, which answers `404` for a live connection too → core-functionality/integrations/connections-row-actions.spec.ts
 - [x] `Check credential` (`POST /test`) stamps `health_checked_at` and moves *Last check* off `Never` — **not** asserted: that `healthy` proves a working credential, since the endpoint answered `healthy` for a planted fake token with no provider configured → core-functionality/integrations/connections-row-actions.spec.ts
-- [ ] Whether a non-interactive caller actually resolves the connection (webhook, deployment, public flow, MCP-exposed project, A2A, v2 workflow host) — deferred: the executing-identity matrix needs a PERMIT/DENY cell written per entry point before any code
+- [ ] Whether a non-interactive caller resolves the connection only with the owner's opt-in (webhook, v2 HITL resume, KB connector ingest, a Slack app token outside its listener) — #2306. The public, MCP, A2A and v2-host cells this bullet used to hold are § 24.7
 
 #### 24.6 Saved-flow contract and node surfaces
 
 - [ ] Placing a connector component from the new `google` / `microsoft` / `slack` palette categories and binding a connection through the node-level picker (upstream surface B5), including the "runs as" identity label that tells `slack.user.send` from `slack.bot.post`
 - [ ] Export and import preserving `ext:<provider>:<Class>@official` across a substrate change — the contract that lets MCP ⇄ SDK ⇄ REST swap without the user reopening the flow
 - [ ] Cross-user isolation: one user's connection is invisible and unusable to another. Needs a second user under `auto_login`
+
+#### 24.7 Which entry points may resolve a connection (#2296)
+
+- [x] Every authenticated interactive entry point resolves both the owner's and the instance's connection — the Playground build, `POST /api/v1/run`, `POST /api/v1/responses`, `POST /api/v2/workflows`, an MCP project behind an API key and the legacy global MCP server — each asserted on the exact connection id and `owner_kind` a network-free probe component reports, never on "it did not fail" → api/connections/api-connections-resolution-entry-points.spec.ts
+- [x] An anonymous caller resolves none — the shareable playground and the public v2 route (`connection-not-authorized` + the `anonymous-principal` hint), a public MCP project and a public A2A agent (the not-authorized message; the typed reason is not observable there) — judged by a real read-only connector because public execution swaps custom code, and contrasted with the same flow run authenticated stopping at `scope-missing` → api/connections/api-connections-resolution-entry-points.spec.ts
+- [x] An A2A agent behind an API key is held to the anonymous floor too: the probe reports `anonymous-principal`. Code over design — `connection-contract.md` says the authenticated sub-path resolves for its owner, `api/v1/a2a.py` stamps both sub-paths anonymous; recorded in the spec doc, not a `test.fail()` → api/connections/api-connections-resolution-entry-points.spec.ts
 
 ---
 
