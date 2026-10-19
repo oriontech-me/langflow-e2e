@@ -2,12 +2,13 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-integrations-manifest.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev26`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1968 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order and dependencies in the #1971 comment). Seeds through
 `tests/helpers/integrations/`, the helpers #1966 built. Revised for #2074, when the body
-grew a second top-level key — see *The top-level `deployment_context`* below.
+grew a second top-level key — see *The top-level `deployment_context`* below — and for
+#2310, when every capability grew two scope fields — see *The scope fields* below.
 
 ---
 
@@ -41,9 +42,10 @@ between the two moved:
 - The provider row carries **8** keys: `provider_id`, `display_name`, `icon`, `docs_url`,
   `approved`, `enabled`, `connection_count`, `capabilities`. Rows come back sorted by
   `provider_id`.
-- The capability carries **13**: `id`, `display_name`, `policy_keys`, `risk`, `maturity`,
-  `substrate`, `identity`, `auth_profile_id`, `deployment_contexts`, `component_ref`,
-  `mcp_tool`, `allowed`, `blocked_policy_key`.
+- The capability carries **15** on `dev47` (13 until then): `id`, `display_name`,
+  `policy_keys`, `risk`, `maturity`, `substrate`, `identity`, `auth_profile_id`,
+  `deployment_contexts`, `component_ref`, `mcp_tool`, `allowed`, `blocked_policy_key`, and
+  since #2310 `required_scopes` and `conditional_scopes`.
 - `policy/effective` answers **6**: `approved_provider_ids`, `blocked_action_keys`,
   `loaded_provider_ids`, `unrestricted`, `managed_externally`, `policy_revision` —
   measured `["google","microsoft","slack"]`, `[]`, the same three, `true`, `false`, `1`.
@@ -88,6 +90,47 @@ documented contract addition.
   context. With the per-capability `deployment_contexts` (test 5), it is the value those
   lists are compared against — and on the `self_managed` instance the lanes run, **all 24**
   capabilities declare `self_managed`, so nothing is excluded here.
+
+### The scope fields (#2310)
+
+`1.13.0.dev47` turned test 1 red: every capability carried two keys the exact set did not
+list. Upstream #15810 (`2cf2b5d14b`, *"fix(connections): explain OAuth scopes and action
+risks"*, merged into `release-1.13.0` on 2026-10-16) added to `IntegrationCapabilityRead`:
+
+- `required_scopes: list[str]`, the scopes every run of the action needs;
+- `conditional_scopes: list[ConditionalScopeRequirement]`, each one a scope that an input
+  switches on.
+
+The change is intended. The exact key set is what caught it, as it caught
+`deployment_context` in #2074, so it stays exact at 15.
+
+The shapes come from `lfx/integrations/capabilities.py`, which declares more than the
+manifest uses:
+
+| Field | Declared | Measured on `dev47` |
+|---|---|---|
+| `required_scopes` | unique, non-blank strings; **may be empty** (default `()`) | all 30 capabilities non-empty |
+| `conditional_scopes` | may be empty; each entry exactly `{scope, role, condition}`, `extra="forbid"` | 4 capabilities, 2 entries each |
+| `role` | `optional` · `alternative` | `optional` |
+| `condition` | exactly `{kind, input}`, `extra="forbid"` | — |
+| `condition.kind` | `input_present` · `input_truthy` | `input_truthy` |
+| `condition.input` | `^[a-z][a-z0-9_]*$` | `drive_id`, `site_id`, `channel_is_private`, `resolve_names` |
+
+The spec asserts the **declared** shape (the #1968 lesson), so neither list is required to
+be non-empty per capability. Two floors keep the loops from passing having checked nothing:
+at least one capability declares a required scope, and at least one conditional entry was
+checked.
+
+The four capabilities with conditional scopes are `microsoft.files.list`,
+`microsoft.files.fetch`, `microsoft.trigger.file` and `slack.bot.list_channel_members`. The
+issue asked to confirm one detail. `microsoft.trigger.file` keys **both** of its scopes
+(`Files.Read.All` and `Sites.Read.All`) on `site_id`, while `files.list` and `files.fetch`
+key `Files.Read.All` on `drive_id`. This is deliberate upstream: the trigger component has
+no `drive_id` input, and its `site_id` help text reads *"A SharePoint site also requires
+Files.Read.All and Sites.Read.All."* It is recorded here and not asserted.
+
+What a scope **does** is out of scope for this file: a missing one being refused before any
+provider call is #2296's and #2306's.
 
 ### The enum domains are the DECLARED ones, not the measured ones
 
@@ -233,7 +276,7 @@ a row that is already gone.
    `connection_count` is an integer `>= 0`; `approved` is `true` (a blocked provider is
    omitted from the default listing, so a `false` here would mean the omission broke);
    `enabled === (approved && connection_count > 0)`; `capabilities` is non-empty.
-4. Each capability's key set equals the 13 above, asserted per capability so the message
+4. Each capability's key set equals the 15 above, asserted per capability so the message
    names the one that drifted.
 5. Per capability: `id` matches `^[a-z0-9][a-z0-9._-]*$` **and** starts with
    `<provider_id>.`; ids are unique within the provider; `display_name` is non-empty;
@@ -242,7 +285,16 @@ a row that is already gone.
 6. Per capability: `component_ref` or `mcp_tool` is a non-empty string — the execution
    target upstream's model refuses to build without — and `substrate: "mcp"` implies
    `mcp_tool`.
-7. Capabilities sharing an `auth_profile_id` declare the **same** `identity` — the
+7. Per capability, the scope fields:
+   - `required_scopes` is a list of non-blank strings with no duplicate;
+   - each `conditional_scopes` entry has exactly the keys `{scope, role, condition}`, a
+     non-blank `scope` and a declared `role`;
+   - its `condition` has exactly the keys `{kind, input}`, a declared `kind`, and an `input`
+     matching `^[a-z][a-z0-9_]*$`.
+
+   Floors: at least one capability declares a required scope, and at least one conditional
+   entry was checked.
+8. Capabilities sharing an `auth_profile_id` declare the **same** `identity` — the
    observable shadow of upstream's profile↔identity check, and what makes the
    `slack.bot.*` / `slack.user.*` split (`bot` against `user_delegated`) asserted rather
    than ignored, without hardcoding that slack has both.
@@ -308,11 +360,11 @@ a row that is already gone.
 ## Validation criterion *(required)*
 
 All five tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev26`, with: every manifest read asserting the body's exact key set
+`1.13.0.dev47`, with: every manifest read asserting the body's exact key set
 `["deployment_context", "providers"]` and `deployment_context` inside
 `{self_managed, hosted, desktop}`, and test 5 asserting it reads `self_managed`; every
-provider row asserted as the exact 8-key set and every capability as the exact 13-key set; every enum-valued field asserted against its
-**declared** domain rather than the measured one; all 24 capabilities cross-checking to a
+provider row asserted as the exact 8-key set and every capability as the exact 15-key set; every enum-valued field asserted against its
+**declared** domain rather than the measured one, the scope fields included; all 24 capabilities cross-checking to a
 `GET /api/v1/all` entry whose `namespaced_id` is the same `ext:…@official` string, with
 `component_display_names` excluded from the index and a non-vacuity floor proving the loop
 ran; `microsoft`'s `connection_count` moving `c0 → c0+1 → c0` around one seeded connection
@@ -347,8 +399,9 @@ the fixture recorded.
   and the per-user write bucket its budget is sized against.
 - `src/lfx/src/lfx/integrations/capabilities.py` — the declared enum domains
   (`IntegrationIdentity`, `ExecutionSubstrate`, `CapabilityMaturity`, `DeploymentContext`,
-  `risk`), the `component_ref or mcp_tool` requirement, and the provider-namespace checks
-  on capability ids, policy keys and auth profiles.
+  `risk`), the `component_ref or mcp_tool` requirement, the provider-namespace checks
+  on capability ids, policy keys and auth profiles, and since #2310
+  `ConditionalScopeRequirement` and `ScopeCondition`.
 - `src/lfx/src/lfx/services/integration_policy/base.py` —
   `normalize_integration_policy_key`, the `integrations.<provider_id>.<action>` grammar
   test 5 asserts.

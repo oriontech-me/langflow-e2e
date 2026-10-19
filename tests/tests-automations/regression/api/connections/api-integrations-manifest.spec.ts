@@ -61,12 +61,17 @@ test.describe("Integrations API — capability manifest and effective policy", (
     "provider_id",
   ];
 
-  /** The 13 fields of `IntegrationCapabilityRead`, same reasoning. */
+  /**
+   * The 15 fields of `IntegrationCapabilityRead`, same reasoning. `required_scopes`
+   * and `conditional_scopes` arrived on `1.13.0.dev47` with upstream #15810 (#2310)
+   * — intended, and surfaced by this exact set, as `deployment_context` was.
+   */
   const CAPABILITY_KEYS = [
     "allowed",
     "auth_profile_id",
     "blocked_policy_key",
     "component_ref",
+    "conditional_scopes",
     "deployment_contexts",
     "display_name",
     "id",
@@ -74,6 +79,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
     "maturity",
     "mcp_tool",
     "policy_keys",
+    "required_scopes",
     "risk",
     "substrate",
   ];
@@ -98,6 +104,16 @@ test.describe("Integrations API — capability manifest and effective policy", (
   const SUBSTRATES = ["sdk", "rest", "mcp"];
   const MATURITIES = ["ga", "preview", "developer_preview", "beta", "deprecated"];
   const DEPLOYMENT_CONTEXTS = ["hosted", "self_managed", "desktop", "headless"];
+
+  // `ConditionalScopeRequirement` and its `ScopeCondition`, both `extra="forbid"`
+  // upstream, so their key sets are asserted exactly too. Declared domains again:
+  // only `optional` and `input_truthy` are in use on 1.13.0.dev47.
+  const CONDITIONAL_SCOPE_KEYS = ["condition", "role", "scope"];
+  const SCOPE_CONDITION_KEYS = ["input", "kind"];
+  const SCOPE_ROLES = ["optional", "alternative"];
+  const SCOPE_CONDITION_KINDS = ["input_present", "input_truthy"];
+  /** `ScopeCondition.input`: the component input whose value switches the scope on. */
+  const SCOPE_CONDITION_INPUT = /^[a-z][a-z0-9_]*$/;
 
   /** `PROVIDER_ID_PATTERN` and the capability/profile id patterns upstream declares. */
   const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*$/;
@@ -138,6 +154,14 @@ test.describe("Integrations API — capability manifest and effective policy", (
     mcp_tool: string | null;
     allowed: boolean;
     blocked_policy_key: string | null;
+    required_scopes: string[];
+    conditional_scopes: ConditionalScope[];
+  }
+
+  interface ConditionalScope {
+    scope: string;
+    role: string;
+    condition: { kind: string; input: string };
   }
 
   interface Provider {
@@ -265,7 +289,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
         expectDerivedEnabled(providers, "the manifest as listed");
       });
 
-      await test.step("every capability carries the 13 fields, with each enum inside its declared domain", async () => {
+      await test.step("every capability carries the 15 fields, with each enum inside its declared domain", async () => {
         for (const provider of providers) {
           const capabilityIds = provider.capabilities.map((capability) => capability.id);
           expect(new Set(capabilityIds).size, `${provider.provider_id} capability ids are unique`).toBe(
@@ -295,6 +319,48 @@ test.describe("Integrations API — capability manifest and effective policy", (
             );
           }
         }
+      });
+
+      await test.step("every capability declares its scopes in the declared shape", async () => {
+        // Upstream defaults both lists to empty, so neither is asserted non-empty per
+        // capability (measured: all 30 carry a required scope, 4 a conditional one).
+        // The floors below only keep the loops from passing having checked nothing.
+        let withRequiredScope = 0;
+        let conditionalChecked = 0;
+        for (const provider of providers) {
+          for (const capability of provider.capabilities) {
+            const at = `${provider.provider_id} / ${capability.id}`;
+            const required = capability.required_scopes;
+            expect(Array.isArray(required), `${at} required_scopes is a list`).toBe(true);
+            for (const scope of required) {
+              expect(typeof scope, `${at} required scope ${JSON.stringify(scope)} is a string`).toBe("string");
+              expect(scope.trim(), `${at} required scope is not blank`).not.toBe("");
+            }
+            expect(new Set(required).size, `${at} required_scopes has no duplicate`).toBe(required.length);
+            withRequiredScope += Number(required.length > 0);
+
+            expect(Array.isArray(capability.conditional_scopes), `${at} conditional_scopes is a list`).toBe(true);
+            for (const entry of capability.conditional_scopes) {
+              const where = `${at} conditional scope ${JSON.stringify(entry)}`;
+              expect(Object.keys(entry).sort(), `${where} carries exactly the ConditionalScopeRequirement keys`).toEqual(
+                CONDITIONAL_SCOPE_KEYS,
+              );
+              expect(typeof entry.scope, `${where}: scope is a string`).toBe("string");
+              expect(entry.scope.trim(), `${where}: scope is not blank`).not.toBe("");
+              expect(SCOPE_ROLES, `${where}: role is a declared role`).toContain(entry.role);
+              expect(Object.keys(entry.condition).sort(), `${where}: condition carries exactly the ScopeCondition keys`).toEqual(
+                SCOPE_CONDITION_KEYS,
+              );
+              expect(SCOPE_CONDITION_KINDS, `${where}: condition kind is a declared kind`).toContain(entry.condition.kind);
+              expect(entry.condition.input, `${where}: condition input names a component input`).toMatch(
+                SCOPE_CONDITION_INPUT,
+              );
+              conditionalChecked += 1;
+            }
+          }
+        }
+        expect(withRequiredScope, "at least one capability declares a required scope").toBeGreaterThan(0);
+        expect(conditionalChecked, "at least one conditional scope was checked").toBeGreaterThan(0);
       });
 
       await test.step("every capability names an execution target, and an MCP one names its tool", async () => {
