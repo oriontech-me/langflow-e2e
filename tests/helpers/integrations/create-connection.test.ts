@@ -220,3 +220,15 @@ test("the returned deleteConnection removes exactly the created id, with the sam
     headers: HEADERS,
   });
 });
+
+test("an explicit name is sent verbatim, and one the server would refuse is refused here", async () => {
+  const { request, calls } = fakeRequest();
+  const created = await createConnectionViaApi(request, HEADERS, { name: "shared_handle_1", label: "ignored" });
+  assert.equal(calls[0].data.name, "shared_handle_1");
+  assert.equal(created.name, "shared_handle_1");
+  for (const bad of ["Shared", "shared-handle", "a".repeat(CONNECTION_NAME_MAX_LENGTH + 1)]) {
+    const { request: r, calls: c } = fakeRequest();
+    await assert.rejects(createConnectionViaApi(r, HEADERS, { name: bad }), /does not match the server's name pattern/);
+    assert.equal(c.length, 0, `nothing is sent for ${bad}`);
+  }
+});

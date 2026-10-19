@@ -27,7 +27,7 @@ import { applyNodeSpec, CUSTOM_COMPONENT_TYPE } from "../flows/build-custom-comp
 export interface ProbeTarget {
   /** A Python identifier: the input's name, and the key the output is reported under. */
   field: string;
-  /** `<provider>/<name>`. */
+  /** `<provider>/<name>`. The provider is read from it: `google/work` builds a `provider="google"` input. */
   handle: string;
 }
 
@@ -36,7 +36,9 @@ export type ProbeOutcome =
   | { state: "denied"; code: string; reason: string };
 
 const FIELD = /^[a-z_][a-z0-9_]*$/;
-const HANDLE = /^google\/[a-z0-9]+(?:_[a-z0-9]+)*$/;
+// `<provider>/<name>`: a provider key, then the server's `CONNECTION_NAME_PATTERN`.
+// Both halves reach Python inside a string literal, so nothing else may pass.
+const HANDLE = /^([a-z][a-z0-9_]*)\/[a-z0-9]+(?:_[a-z0-9]+)*$/;
 
 /** The probe's Python source. Throws on a field or handle that would not round-trip. */
 export function probeComponentCode(targets: ProbeTarget[]): string {
@@ -46,15 +48,15 @@ export function probeComponentCode(targets: ProbeTarget[]): string {
     if (!FIELD.test(field)) throw new Error(`probe field is not a Python identifier: ${field}`);
     if (fields.has(field)) throw new Error(`duplicate probe field: ${field}`);
     fields.add(field);
-    // Only google today: the probe's inputs declare `provider="google"`, and a
-    // mismatched handle is refused by the input's own validator, not by the resolver.
-    if (!HANDLE.test(handle)) throw new Error(`probe handle is not a google handle: ${handle}`);
+    // The input's provider must be the handle's: a mismatched handle is refused by
+    // the input's own validator, before the resolver is ever asked.
+    if (!HANDLE.test(handle)) throw new Error(`probe handle is not <provider>/<name>: ${handle}`);
   }
   const inputs = targets
-    .map(
-      ({ field, handle }) =>
-        `        ConnectionRefInput(name="${field}", display_name="${field}", provider="google", value="${handle}"),\n`,
-    )
+    .map(({ field, handle }) => {
+      const provider = handle.slice(0, handle.indexOf("/"));
+      return `        ConnectionRefInput(name="${field}", display_name="${field}", provider="${provider}", value="${handle}"),\n`;
+    })
     .join("");
   const order = targets.map(({ field }) => `"${field}"`).join(", ");
   return (
