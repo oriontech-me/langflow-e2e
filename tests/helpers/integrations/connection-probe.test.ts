@@ -34,7 +34,16 @@ test("the probe declares one google ConnectionRefInput per target, valued with i
   assert.match(code, /Message\(text="\\n"\.join\(lines\)\)/);
 });
 
-test("a field that is not a Python identifier, a duplicate, or a non-google handle is refused", () => {
+test("the input's provider is the handle's own", () => {
+  const code = probeComponentCode([
+    { field: "drive", handle: "google/work" },
+    { field: "app", handle: "slack/app_token" },
+  ]);
+  assert.match(code, /ConnectionRefInput\(name="drive", display_name="drive", provider="google", value="google\/work"\)/);
+  assert.match(code, /ConnectionRefInput\(name="app", display_name="app", provider="slack", value="slack\/app_token"\)/);
+});
+
+test("a field that is not a Python identifier, a duplicate, or a malformed handle is refused", () => {
   assert.throws(() => probeComponentCode([]), /at least one target/);
   assert.throws(() => probeComponentCode([{ field: "user-connection", handle: "google/a" }]), /not a Python identifier/);
   assert.throws(
@@ -45,8 +54,10 @@ test("a field that is not a Python identifier, a duplicate, or a non-google hand
       ]),
     /duplicate probe field/,
   );
-  assert.throws(() => probeComponentCode([{ field: "a", handle: "slack/a" }]), /not a google handle/);
-  assert.throws(() => probeComponentCode([{ field: "a", handle: 'google/a"); import os #' }]), /not a google handle/);
+  assert.throws(() => probeComponentCode([{ field: "a", handle: "noprovider" }]), /not <provider>\/<name>/);
+  assert.throws(() => probeComponentCode([{ field: "a", handle: "Google/a" }]), /not <provider>\/<name>/);
+  assert.throws(() => probeComponentCode([{ field: "a", handle: 'google/a"); import os #' }]), /not <provider>\/<name>/);
+  assert.throws(() => probeComponentCode([{ field: "a", handle: 'slack", value="google/a' }]), /not <provider>\/<name>/);
 });
 
 test("both outcomes are read from raw text", () => {

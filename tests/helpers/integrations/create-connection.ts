@@ -82,6 +82,12 @@ export interface ConnectionRead {
 export interface CreateConnectionOptions {
   /** Readable prefix of the generated `name`; folded into the server's pattern. */
   label?: string;
+  /**
+   * The exact `name`, instead of a generated one — for a pair of rows that must
+   * share a handle (a user row and an instance row with the same name, #2306).
+   * Validated here, so a bad one fails naming itself rather than as a 422.
+   */
+  name?: string;
   /** Defaults to `google`, a provider the nightly's manifest lists. */
   providerKey?: string;
   /** Defaults to `E2E <name>`, so the row is recognisable in a shared instance. */
@@ -145,6 +151,7 @@ export async function createConnectionViaApi(
   headers: Record<string, string>,
   {
     label = "e2e_connection",
+    name: explicitName,
     providerKey = "google",
     displayName,
     identity = "user_delegated",
@@ -156,7 +163,13 @@ export async function createConnectionViaApi(
     sleep = realSleep,
   }: CreateConnectionOptions = {},
 ): Promise<CreatedConnection> {
-  const name = uniqueConnectionName(label);
+  if (
+    explicitName !== undefined &&
+    (!CONNECTION_NAME_PATTERN.test(explicitName) || explicitName.length > CONNECTION_NAME_MAX_LENGTH)
+  ) {
+    throw new Error(`connection name "${explicitName}" does not match the server's name pattern`);
+  }
+  const name = explicitName ?? uniqueConnectionName(label);
   const data: Record<string, unknown> = {
     provider_key: providerKey,
     name,
