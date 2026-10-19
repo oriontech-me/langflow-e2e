@@ -1,7 +1,7 @@
 import type { APIRequestContext, APIResponse } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { type ConnectionRead, uniqueConnectionName } from "../../../../helpers/integrations/create-connection";
+import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
 import { deleteConnection } from "../../../../helpers/integrations/delete-connection";
 
 // The secret boundary: a planted token must reach no client response.
@@ -57,16 +57,35 @@ test.describe("Connections API — the secret boundary", () => {
   /** `ConnectionHealth`. */
   const HEALTHS = ["unknown", "healthy", "unhealthy"];
 
+  // Every call carries a throwaway owner's token on the test's own `request`
+  // (#2295): the writes, /test and /health land in that owner's per-user buckets,
+  // fresh every run and shared with no other file, instead of the one superuser's
+  // — which the five connection specs together overdraw. The test's `request`, not
+  // a context of the owner's, so apiCoverage still records every call.
+  let owner: ConnectionsOwner;
+
+  test.beforeAll(async ({ playwright }, testInfo) => {
+    owner = await createConnectionsOwner(
+      () => playwright.request.newContext({ baseURL: testInfo.project.use.baseURL }),
+      "connsecret",
+    );
+  });
+
+  test.afterAll(async () => {
+    // Deleting the owner takes any row it still owns with it.
+    await owner?.dispose();
+  });
+
   // Every name / display-name marker a test sends, registered BEFORE it is sent.
-  // A connection is owner-scoped and every worker is the same superuser, so the
-  // teardown must find this test's rows among other workers' — and must find one
-  // that a refused body created anyway.
+  // A connection is owner-scoped and the owner is shared by every test this worker
+  // runs from the file, so the teardown must find this test's rows among its
+  // siblings' — and must find one that a refused body created anyway.
   const sent: string[] = [];
 
   test.afterEach(async ({ request }) => {
     const markers = sent.splice(0);
     if (markers.length === 0) return;
-    const headers = { Authorization: await getAuthToken(request) };
+    const headers = owner.headers;
     const res = await request.get(COLLECTION, { headers });
     if (!res.ok()) {
       console.warn(`⚠️ Connection sweep could not list (${res.status()}) — markers left: ${markers.join(", ")}`);
@@ -135,7 +154,7 @@ test.describe("Connections API — the secret boundary", () => {
         `GET ${INTEGRATIONS}`,
         `GET ${VARIABLES}`,
       ]);
-      const headers = { Authorization: await getAuthToken(request) };
+      const headers = owner.headers;
       const sentinels = newSentinels("LIFECYCLE");
       const name = uniqueConnectionName("secret_boundary");
       sent.push(name);
@@ -270,7 +289,7 @@ test.describe("Connections API — the secret boundary", () => {
     cause: string,
     mutate: (body: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<{ type: string; loc: string[] }> {
-    const headers = { Authorization: await getAuthToken(request) };
+    const headers = owner.headers;
     const sentinels = newSentinels("REFUSED");
     const marker = uniqueConnectionName("secret_boundary_refused");
     // Registered although the body is expected to be refused: a body accepted
@@ -339,7 +358,7 @@ test.describe("Connections API — the secret boundary", () => {
         `POST ${COLLECTION}/{connection_id}/health`,
         `POST ${COLLECTION}/{connection_id}/revoke`,
       ]);
-      const headers = { Authorization: await getAuthToken(request) };
+      const headers = owner.headers;
       const sentinels = newSentinels("STATUS");
       const name = uniqueConnectionName("secret_boundary_status");
       sent.push(name);

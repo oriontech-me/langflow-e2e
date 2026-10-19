@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-connections-secret-boundary.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev21`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1967 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order and dependencies in the #1971 comment). Seeds through
@@ -70,9 +70,11 @@ why `api-connections-lifecycle.spec.ts` drives six deliberate `422`s with no hat
 
 What is left is worth asserting and is upstream's own stated intent, in the comment beside
 that `except`: *"Scope coverage and principal denials describe this request, not the stored
-credential, so the connection's status stands."* The spec asserts exactly that, and that a
-second `/test` with the held scope returns `healthy` — so the `unhealthy` was about the
-request and not about the credential.
+credential, so the connection's status stands."* The spec asserts exactly that — and
+proves the credential untouched by **re-reading the persisted row**, not by a second
+`/test`. (While this was measured, a second `/test` with the held scope answered
+`healthy`; the spec does not repeat that probe, which would spend a second call of the
+five-per-minute bucket. Until #2295 this paragraph said it did.)
 
 **3. `status_reason` is not "only on `status: error`", and the enum has five values.**
 `ConnectionStatusReason` is `credential-missing` | `credential-undecryptable` |
@@ -157,11 +159,21 @@ on it.
   exactly one `/health` (in test 5)**, which is also why the sweep of those two routes is
   split across the two tests instead of both living in test 1: they share
   `check_health` → `to_read`, so each is swept once, on its own connection, with its own
-  sentinels. Three runs leave two calls of headroom in each bucket for a neighbour spec.
-- **Writes** share one per-user bucket of **30/minute** and the suite shares one superuser,
-  so #1966's lesson applies too: a burst plus a neighbour exhausted it once already. This
-  file spends **7 writes per run** — one journey per connection rather than one connection
-  per assertion. The `422` tests spend nothing at all.
+  sentinels.
+- **Writes** share one per-user bucket of **30/minute**. This file spends **7 writes per
+  run** — one journey per connection rather than one connection per assertion. The `422`
+  tests spend nothing at all.
+- **Since #2295 every one of those buckets is this file's own.** They used to be the one
+  superuser's, shared with every other spec: measured on `1.13.0.dev47`, the five batch-1
+  connection specs side by side on one instance spent 37 superuser writes a run, a sibling
+  file's UI `PATCH` was refused with `429`, and a second back-to-back run refused this
+  file's `/health` with `429`. Each worker now creates a throwaway **owner** in
+  `beforeAll` (`tests/helpers/integrations/connections-owner.ts`) and every call carries
+  its token on the test's own `request` — which keeps `apiCoverage` recording them — so
+  the writes, the `/test` and the `/health` all land in buckets no other file touches and
+  that start fresh on every run. The cost is one `POST /api/v1/login` per worker, waited
+  out by `createThrowawayUser` when the 5/minute-per-IP login window is spent. `afterAll`
+  deletes the owner, which takes any row it still owns with it.
 - **The scope denial is re-read from the list, not re-probed with a second `/test`.** The
   persisted row is the stronger evidence — it shows the denial wrote nothing — and it costs
   none of the five-per-minute budget.
@@ -261,7 +273,7 @@ unchanged, re-read from the list rather than re-probed; `status_reason` asserted
 `null` across `ready`, `expired` and `revoked`; and each `422` asserted on a one-entry
 `detail` by `type` and `loc`. `GET /api/v1/connections` reads back **zero** rows carrying
 this file's markers after the run, and the declared coverage — `POST` and
-`GET /api/v1/connections`, `PATCH` and `DELETE /api/v1/connections/{connection_id}`,
+`GET /api/v1/connections`, `PATCH /api/v1/connections/{connection_id}`,
 `POST /api/v1/connections/{connection_id}/health`, `.../test`, `.../revoke`,
 `GET /api/v1/integrations` and `GET /api/v1/variables/` — matches what the fixture
 recorded.
@@ -270,8 +282,8 @@ recorded.
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser,
-  with the default rate limits and **no OAuth registration configured** (the nightly's
+- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser
+  (the superuser creates and deletes the throwaway owner), with the default rate limits and **no OAuth registration configured** (the nightly's
   state — see the reachability table).
 - `src/backend/base/langflow/api/v1/connections.py` — every route swept here, and the
   per-route rate-limit buckets the budget is sized against.
@@ -286,7 +298,10 @@ recorded.
   `_record_failed_authorization`, the code path that writes a `status_reason` **without**
   setting `status: error`, which is why "a reason implies error" is not asserted.
 - `tests/helpers/integrations/create-connection.ts` and
-  `tests/helpers/integrations/delete-connection.ts` — the seeding and teardown helpers.
+  `tests/helpers/integrations/delete-connection.ts` — the seeding and teardown helpers;
+  `tests/helpers/integrations/connections-owner.ts` and
+  `tests/helpers/auth/throwaway-user.ts` — the per-worker owner whose buckets this file
+  spends.
 - These upstream paths resolve on `release-1.13.0` and **not** on `main`, which does not
   carry the feature yet, so the doc-dependency guard reports a `::notice::`, not a failure.
   No provider key, no model, no network egress.

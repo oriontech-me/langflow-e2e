@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-connections-lifecycle.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev19`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1966 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order and dependencies in the #1971 comment). The seeding helpers this issue builds,
@@ -108,10 +108,25 @@ precondition, and a batch neighbour exhausting the bucket is not a Langflow defe
 (`429` is not an infra signature, so an unabsorbed one would score as attributable and
 strip `@stable`). The calls **under test** here are raw and are never retried.
 
+**Since #2295 the file spends a bucket of its own.** Those 8 writes used to land on the
+one superuser every spec shares, and the five batch-1 connection specs together spend
+37 a run: measured on `1.13.0.dev47`, running them side by side on one instance with
+two workers refused a UI `PATCH` with `429` and failed a `@stable` test in a sibling
+file. Nothing here needs a superuser, so each worker now creates a throwaway **owner**
+in `beforeAll` (`tests/helpers/integrations/connections-owner.ts`) and every call —
+the raw ones under test, the seed and the sweep — carries the owner's token on the
+test's own `request`, which keeps `apiCoverage` recording them. The owner's buckets
+are fresh every run and shared with no other file; the cost is one
+`POST /api/v1/login` per worker, which `createThrowawayUser` waits out when the
+5/minute-per-IP login window is spent. `afterAll` deletes the owner, which takes any
+row it still owns with it.
+
 ### Parallel safety
 
-A connection is scoped to its owner, and every worker is the same superuser, so two
-workers see each other's rows. **No assertion reads the list length or a position.**
+A connection is scoped to its owner. Since #2295 each worker owns its rows through a
+throwaway user of its own, so no other worker's rows are listed — but that owner is
+shared by every test the worker runs from this file, so **no assertion reads the list
+length or a position** either.
 Every read filters on the unique `name` (or, for a body refused before it has a name,
 the unique marker in its `display_name`) the test itself sent.
 
@@ -190,8 +205,8 @@ the run.
 ## External dependencies *(required)*
 
 - A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or
-  superuser, with the default rate limits (`rate_limit_enabled` on — the lanes set
-  nothing).
+  superuser — the superuser creates and deletes the throwaway owner — with the default
+  rate limits (`rate_limit_enabled` on — the lanes set nothing).
 - `src/backend/base/langflow/api/v1/connections.py` — the router under test, and the
   per-route rate-limit buckets.
 - `src/backend/base/langflow/services/database/models/connection/schemas.py` —
@@ -204,7 +219,10 @@ the run.
   `connection_write_rate_limit_per_minute` / `connection_metadata_rate_limit_per_minute`
   defaults the write budget above is sized against.
 - `tests/helpers/integrations/create-connection.ts` and
-  `tests/helpers/integrations/delete-connection.ts` — the seeding and teardown helpers.
+  `tests/helpers/integrations/delete-connection.ts` — the seeding and teardown helpers;
+  `tests/helpers/integrations/connections-owner.ts` and
+  `tests/helpers/auth/throwaway-user.ts` — the per-worker owner whose buckets this file
+  spends.
 - These upstream paths resolve on `release-1.13.0` and **not** on `main`, which does
   not carry the feature yet, so the doc-dependency guard reports a `::notice::`, not a
   failure. No provider key, no model, no network egress.

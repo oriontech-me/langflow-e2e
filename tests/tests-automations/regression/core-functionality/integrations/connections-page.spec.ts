@@ -1,7 +1,11 @@
 import type { APIRequestContext, APIResponse, Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { postLogin } from "../../../../helpers/auth/login-request";
+import {
+  createThrowawayUser,
+  deleteThrowawayUser,
+  type ThrowawayUser,
+} from "../../../../helpers/auth/throwaway-user";
 import {
   type ConnectionRead,
   type CreatedConnection,
@@ -28,30 +32,28 @@ import {
 // the list's length, and "gone" is only ever asserted of this file's own rows.
 //
 // Write budget: connection writes share a per-user bucket of 30/minute and a
-// rendered page cannot be retried, so the file spends 9 superuser writes per run
-// (test 1 none; test 2 three seeds and three deletes; test 3 one seed, one
-// revoke and one delete). The second user's writes land in that user's bucket.
+// rendered page cannot be retried, so the file spends 11 superuser writes per run
+// (test 1 one seed and one delete; test 2 three seeds and three deletes; test 3
+// one seed, one revoke and one delete). The second user's writes land in that
+// user's bucket.
 test.describe("Connections page — navigation, empty view, rows, tabs, search and status", () => {
   const PAGE = "/settings/connections";
   // Exact copy, measured on 1.13.0.dev19 (connections.* in the en bundle).
   // The identity subtitles and "Other user" arrived with langflow#15263 (1.13.0.dev21).
+  // The subtitle was reworded by langflow#15825 (2026-10-16), measured on 1.13.0.dev47.
   const SUBTITLE =
-    "Accounts your flows act through. Tokens stay on the server; only metadata is shown here.";
-  const EMPTY = "No connections yet.";
+    "Third-party accounts (like Google, Microsoft 365 and Slack) that your flows use to act on your behalf. Tokens stay on the server and are never shown here.";
+  // One of five empty copies since langflow#15263 (1.13.0.dev21): the one a search
+  // reads when the tab has rows and the search hides them all.
+  const NO_MATCHES = "No connections match your search.";
   const COLUMNS = ["Connection", "Owner", "Account", "Status", "Scopes", "Last check", "Actions"];
   const GOOGLE_SCOPE = "https://www.googleapis.com/auth/";
 
-  /** A second user, driven through its own request context. */
-  interface ThrowawayUser {
-    id: string;
-    /** Isolated on purpose: the login's cookies must never reach the superuser's `request`. */
-    request: APIRequestContext;
-    headers: Record<string, string>;
-    connections: CreatedConnection[];
-  }
+  /** A second user, driven through its own request context, with the rows it owns. */
+  type PageUser = ThrowawayUser & { connections: CreatedConnection[] };
 
   const seeded: CreatedConnection[] = [];
-  const throwawayUsers: ThrowawayUser[] = [];
+  const throwawayUsers: PageUser[] = [];
 
   test.afterEach(async ({ request }) => {
     const mine = seeded.splice(0);
@@ -82,48 +84,31 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
           console.warn(`⚠️ Orphan connection left behind (${connection.name}): ${error}`);
         });
       }
-      const res = await request.delete(`/api/v1/users/${user.id}`, { headers });
-      if (res.status() !== 200) {
-        console.warn(`⚠️ Orphan user left behind (${user.id}): ${res.status()} ${await res.text()}`);
-      }
-      await user.request.dispose();
+      // Since 1.13.0.dev36 the delete is asynchronous (202, langflow#15470): the
+      // shared helper waits until the user answers 404 and throws otherwise, so
+      // "the throwaway user is gone" is asserted, not assumed (#2228, #2295).
+      await deleteThrowawayUser(request, headers, user);
     }
   });
 
   /**
-   * Creates, activates and logs in a throwaway user. It is registered for
+   * Creates, activates and logs in a throwaway user — the file's one login, since
+   * OSS limits /api/v1/login to 5/minute per client IP. It is registered for
    * teardown as soon as it exists, so a later failure still deletes it.
    */
-  async function createThrowawayUser(
+  async function createPageUser(
     request: APIRequestContext,
     superHeaders: Record<string, string>,
     newContext: () => Promise<APIRequestContext>,
-  ): Promise<ThrowawayUser> {
-    const username = `connpage${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const password = "Throwaway!12345";
-    const created = await request.post("/api/v1/users/", {
-      headers: superHeaders,
-      data: { username, password },
+  ): Promise<PageUser> {
+    const user = await createThrowawayUser(request, {
+      superHeaders,
+      newContext,
+      prefix: "connpage",
+      track: (created) => throwawayUsers.push(Object.assign(created, { connections: [] })),
     });
-    expect(created.status(), await created.text()).toBe(201);
-    const user: ThrowawayUser = {
-      id: (await created.json()).id,
-      request: await newContext(),
-      headers: {},
-      connections: [],
-    };
-    throwawayUsers.push(user);
-    // A user created through the API arrives inactive and cannot log in yet.
-    const activated = await request.patch(`/api/v1/users/${user.id}`, {
-      headers: superHeaders,
-      data: { is_active: true },
-    });
-    expect(activated.status(), await activated.text()).toBe(200);
-    // The one login of the file: OSS limits /api/v1/login to 5/minute per client IP.
-    const login = await postLogin(user.request, username, password);
-    expect(login.status(), await login.text()).toBe(200);
-    user.headers = { Authorization: `Bearer ${(await login.json()).access_token}` };
-    return user;
+    // `track` extended this same object in place, so the returned user carries `connections`.
+    return user as PageUser;
   }
 
   /**
@@ -174,7 +159,14 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
   test(
     "Settings navigation reaches the Connections page, and an empty view says so while still offering Add",
     { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
-    async ({ page }) => {
+    async ({ page, request }) => {
+      const own = await test.step("a row of this test's own is seeded, so the empty copy under a search is decided", async () => {
+        const headers = { Authorization: await getAuthToken(request) };
+        const connection = await createConnectionViaApi(request, headers, { label: "page_search" });
+        seeded.push(connection);
+        return connection;
+      });
+
       await test.step("the account menu, Settings and the Connections entry land on the page", async () => {
         await page.goto("/");
         // Verified hops (#1696); the last one is confirmed by the entry's own
@@ -203,12 +195,15 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
       });
 
       await test.step("a view with nothing to show reads its empty copy, drops the table and still offers Add", async () => {
-        // The page has ONE empty state, for any view with nothing to show — tab
-        // AND search. A shared superuser is never guaranteed an empty list, and
-        // under auto_login the UI cannot move to a fresh user, so the view is
-        // emptied by a search no connection can match.
+        // A shared superuser is never guaranteed an empty list, and under auto_login
+        // the UI cannot move to a fresh user, so the view is emptied by a search no
+        // connection can match. Which of the five empty copies that reads depends on
+        // what the tab holds (#2295): with this test's own row listed first, it can
+        // only be NO_MATCHES — never "No connections yet.", which an empty instance
+        // shows and which this file read by luck until it ran beside its siblings.
+        await expect(page.getByTestId(`connection-row-${own.name}`)).toBeVisible();
         await page.getByTestId("connections-search").fill(uniqueConnectionName("nomatch"));
-        await expect(page.getByTestId("connections-empty")).toHaveText(EMPTY);
+        await expect(page.getByTestId("connections-empty")).toHaveText(NO_MATCHES);
         await expect(page.getByRole("table")).toHaveCount(0);
         await expect(page.getByTestId("add-connection")).toBeVisible();
       });
@@ -217,7 +212,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
 
   test(
     "a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request, playwright }) => {
       const headers = { Authorization: await getAuthToken(request) };
       const accountDisplay = `Scout ${uniqueConnectionName("acct")}`;
@@ -246,7 +241,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
           ownershipMode: "instance",
         });
         seeded.push(instance);
-        const other = await createThrowawayUser(request, headers, () =>
+        const other = await createPageUser(request, headers, () =>
           playwright.request.newContext({ baseURL: test.info().project.use.baseURL }),
         );
         const theirs = await createConnectionViaApi(other.request, other.headers, {

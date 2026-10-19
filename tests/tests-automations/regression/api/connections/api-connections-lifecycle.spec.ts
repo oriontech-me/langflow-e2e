@@ -1,11 +1,11 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
   type ConnectionRead,
   createConnectionViaApi,
   uniqueConnectionName,
 } from "../../../../helpers/integrations/create-connection";
+import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
 import { deleteConnection } from "../../../../helpers/integrations/delete-connection";
 
 // The create / list / update / delete lifecycle of /api/v1/connections.
@@ -45,17 +45,36 @@ test.describe("Connections API — lifecycle contract", () => {
     "updated_at",
   ];
 
+  // Every call carries a throwaway owner's token on the test's own `request`
+  // (#2295): the writes, /test and /health land in that owner's per-user buckets,
+  // fresh every run and shared with no other file, instead of the one superuser's
+  // — which the five connection specs together overdraw. The test's `request`, not
+  // a context of the owner's, so apiCoverage still records every call.
+  let owner: ConnectionsOwner;
+
+  test.beforeAll(async ({ playwright }, testInfo) => {
+    owner = await createConnectionsOwner(
+      () => playwright.request.newContext({ baseURL: testInfo.project.use.baseURL }),
+      "connlife",
+    );
+  });
+
+  test.afterAll(async () => {
+    // Deleting the owner takes any row it still owns with it.
+    await owner?.dispose();
+  });
+
   // Every name / display-name marker a test sends, registered BEFORE it is sent.
-  // A connection is owner-scoped and every worker is the same superuser, so the
-  // teardown must find this test's rows among other workers' — and must find one
-  // a refused body created anyway, which is exactly the regression the 422 tests
-  // exist to catch.
+  // A connection is owner-scoped and the owner is shared by every test this worker
+  // runs from the file, so the teardown must find this test's rows among its
+  // siblings' — and must find one a refused body created anyway, which is exactly
+  // the regression the 422 tests exist to catch.
   const sent: string[] = [];
 
   test.afterEach(async ({ request }) => {
     const markers = sent.splice(0);
     if (markers.length === 0) return;
-    const headers = { Authorization: await getAuthToken(request) };
+    const headers = owner.headers;
     const res = await request.get(COLLECTION, { headers });
     if (!res.ok()) {
       console.warn(`⚠️ Connection sweep could not list (${res.status()}) — markers left: ${markers.join(", ")}`);
@@ -94,7 +113,7 @@ test.describe("Connections API — lifecycle contract", () => {
         "GET /api/v1/connections",
         "DELETE /api/v1/connections/{connection_id}",
       ]);
-      const headers = { Authorization: await getAuthToken(request) };
+      const headers = owner.headers;
       const name = uniqueConnectionName("lifecycle");
       sent.push(name);
       const body = {
@@ -144,8 +163,8 @@ test.describe("Connections API — lifecycle contract", () => {
 
       await test.step("the list carries exactly one row with that name, equal to the create response", async () => {
         const rows = await listConnections(request, headers);
-        // By the unique name, never by length or position: other workers share
-        // this superuser's list.
+        // By the unique name, never by length or position: the owner is shared by
+        // this worker's other tests.
         const mine = rows.filter((row) => row.name === name);
         expect(mine, `rows named ${name}`).toHaveLength(1);
         expect(Object.keys(mine[0]).sort()).toEqual(CONNECTION_READ_KEYS);
@@ -188,7 +207,7 @@ test.describe("Connections API — lifecycle contract", () => {
         "PATCH /api/v1/connections/{connection_id}",
         "GET /api/v1/connections",
       ]);
-      const headers = { Authorization: await getAuthToken(request) };
+      const headers = owner.headers;
       // Seeded without allow_non_interactive, so the `false` read below is the
       // server's default and not an echo of the seed.
       const seeded = await createConnectionViaApi(request, headers, { label: "patch" });
@@ -345,7 +364,7 @@ test.describe("Connections API — lifecycle contract", () => {
     request: APIRequestContext,
     body: (marker: string) => Record<string, unknown>,
   ): Promise<{ status: number; text: string; detail: Array<Record<string, unknown>> }> {
-    const headers = { Authorization: await getAuthToken(request) };
+    const headers = owner.headers;
     const marker = uniqueConnectionName("refused");
     sent.push(marker);
     const res = await request.post(COLLECTION, { headers, data: body(marker) });
