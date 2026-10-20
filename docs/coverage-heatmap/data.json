@@ -86,7 +86,7 @@
  "areas": [
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 8.2,
+   "residualRisk": 8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -101,11 +101,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 6,
+    "chronicFlaky": 5,
     "stableSpecs": 37,
-    "penalty": 0.059
+    "penalty": 0.049
    },
-   "mitigation": 0.67,
+   "mitigation": 0.68,
    "checklistBullets": 47,
    "bulletStates": {
     "x": 42,
@@ -629,8 +629,8 @@
    "testHealth": {
     "chronicHardFailures": 2,
     "chronicFlaky": 2,
-    "stableSpecs": 38,
-    "penalty": 0.04
+    "stableSpecs": 40,
+    "penalty": 0.038
    },
    "mitigation": 0.72,
    "checklistBullets": 102,
@@ -655,8 +655,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 38,
-    "stable": 38
+    "specs": 40,
+    "stable": 40
    }
   },
   {
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-19",
+ "refreshed": "2026-10-20",
  "refreshWindow": {
-  "testHealthSince": "2026-09-04",
+  "testHealthSince": "2026-09-05",
   "days": 45
  }
 }
