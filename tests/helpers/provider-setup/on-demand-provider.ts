@@ -195,7 +195,19 @@ export async function ensureConfiguredOverApi(
     detail:
       `the server did not report "${expectedKey}" as enabled after the request ` +
       `(echo: ${JSON.stringify(echoed).slice(0, 200)}; effective state read back: ` +
-      `${effective === null ? "unreadable" : String(effective)})`,
+      `${effective === null ? "unreadable" : String(effective)})` +
+      // `false` covers more than "the enable did not land": the read also answers false for
+      // a model that is present but off (disabled meanwhile, deprecated, its provider read
+      // as unconfigured) — and, for a provider whose catalog Langflow fetches LIVE on every
+      // read (OpenRouter: `LIVE_MODEL_PROVIDERS`, a 10 s fetch that leaves the provider
+      // with no rows when it fails), for a catalog that did not load. Foundry is only
+      // conditionally live and keeps its static catalog on a failed fetch, so for it the
+      // last cause does not apply, which is why the message scopes it to such providers (#2321).
+      (effective === false
+        ? ` — the model is not enabled in the catalog as Langflow read it: the enable did ` +
+          `not land, the model was disabled meanwhile, or, for a provider whose catalog ` +
+          `Langflow fetches live, that catalog did not load`
+        : ""),
   };
 }
 
@@ -301,11 +313,12 @@ export async function selectOnDemandModel(page: Page, opts: OnDemandPickerOption
   await reloadToAgent(page);
   if (await pick()) return;
 
-  // Never a skip: the server has just echoed the model as enabled, so its absence from
-  // the picker is not an absent model. A MODEL_NOT_AVAILABLE here would let the callers
-  // skip the test on exactly the lane this provider exists for.
+  // Never a skip: the server has just confirmed the model enabled — by its echo, or for a
+  // catalog default by the read-back (#2321) — so its absence from the picker is not an
+  // absent model. A MODEL_NOT_AVAILABLE here would let the callers skip the test on
+  // exactly the lane this provider exists for.
   throw new Error(
-    `${code}_ENABLE_LOST: ${modelNoun} "${requested}" was enabled (the server echoed ` +
+    `${code}_ENABLE_LOST: ${modelNoun} "${requested}" was enabled (the server confirmed ` +
       `it) but the Agent's model picker still does not offer it for ${providerLabel} after ` +
       `a reload — the enabled set was rewritten again by a concurrent request, or the ` +
       `picker does not read it. Reported as a FAILURE, not a skip (#1012).`,
