@@ -1598,6 +1598,13 @@
 - [x] An anonymous caller resolves none — the shareable playground and the public v2 route (`connection-not-authorized` + the `anonymous-principal` hint), a public MCP project and a public A2A agent (the not-authorized message; the typed reason is not observable there) — judged by a real read-only connector because public execution swaps custom code, and contrasted with the same flow run authenticated stopping at `scope-missing` → api/connections/api-connections-resolution-entry-points.spec.ts
 - [x] An A2A agent behind an API key is held to the anonymous floor too: the probe reports `anonymous-principal`. Code over design — `connection-contract.md` says the authenticated sub-path resolves for its owner, `api/v1/a2a.py` stamps both sub-paths anonymous; recorded in the spec doc, not a `test.fail()` → api/connections/api-connections-resolution-entry-points.spec.ts
 
+#### 24.8 A trigger run acts as the flow owner (#2309)
+
+- [x] A signed `inbound_webhook` delivery (`X-Langflow-Signature`, `202`) runs the flow as its owner, non-interactively: the owner's connection is refused inside the run with `non-interactive-opt-in-required` until the owner opts in, an instance connection resolves with its own flag off, and another user's row (opted in) reads `connection-unresolved` / `missing` — and a refusal inside the run leaves the trigger `active` → api/triggers/api-triggers-run-identity.spec.ts
+- [x] A trigger that names its own `connection_id` is refused by the dispatcher's preflight before any run exists (event `failed` / `connection_not_authorized`, no `job_id`), and marks the trigger `needs_reconnect`. The mark does not hold events: the next one runs as soon as the owner opts in, and only `enable` clears the mark → api/triggers/api-triggers-run-identity.spec.ts
+- [x] A `ScheduleTrigger` node imported through flow JSON creates an unarmed `schedule` row; once enabled it fires at the next whole minute (`tick:<that instant>`) and the run resolves as the owner, non-interactively → api/triggers/api-triggers-run-identity.spec.ts
+- [ ] A trigger created by a collaborator with flow write still runs as the owner — not reachable on the OSS nightly (flows are owner-scoped without an authorization plugin); needs the `@enterprise` `@authz` lane
+
 ---
 
 
