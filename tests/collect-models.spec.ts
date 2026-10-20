@@ -8,7 +8,12 @@ import {
   resolveRequiredProviders,
 } from "./helpers/provider-setup/collect-models";
 import type { ProviderRecord } from "./helpers/provider-setup/collect-models";
-import { keyedProviderNames, providerConfigMap, type Provider } from "./helpers/provider-setup";
+import {
+  keyedProviderNames,
+  onDemandProviderNames,
+  providerConfigMap,
+  type Provider,
+} from "./helpers/provider-setup";
 import { isBuildAxisReason } from "./helpers/provider-setup/probe-component-buildable";
 
 /**
@@ -61,7 +66,7 @@ test(
 
     await collectAll(page);
 
-    await test.step("providers.json has exactly one valid record per KEYED provider plus Azure AI Foundry", async () => {
+    await test.step("providers.json has exactly one valid record per KEYED provider plus each ON-DEMAND one", async () => {
       expect(fs.existsSync(PROVIDERS_PATH), `${PROVIDERS_PATH} was written`).toBe(true);
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
       // Keyed providers only (#1187). This sweep is the KEY axis: it saves an API key
@@ -71,10 +76,11 @@ test(
       // pre-flight on every lane the moment a keyless entry existed — and this spec
       // gates the daily, the PR run and every manual dispatch.
       //
-      // Azure AI Foundry is the one non-keyed provider recorded here (#2281): the sweep
-      // does not configure it, but it validates the declared deployment against Azure
-      // directly, so it has a key-axis verdict like the keyed three.
-      const known = [...keyedProviderNames, "azure-ai-foundry"].sort();
+      // The on-demand providers are the non-keyed ones recorded here (Azure AI Foundry
+      // #2281, OpenRouter #2292): the sweep does not configure them, but it validates
+      // each against its own API directly, so each has a key-axis verdict like the keyed
+      // three.
+      const known = [...keyedProviderNames, ...onDemandProviderNames].sort();
       expect(providers.map((p) => p.provider).sort()).toEqual(known);
       for (const p of providers) {
         expect(["active", "inactive"], `status of ${p.provider}`).toContain(p.status);
@@ -129,12 +135,13 @@ test(
       // measures the wrong thing, and which used to be one warning line in a job
       // log nobody reads (the `mode=count` lesson, #1252).
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
-      // Azure AI Foundry is excluded by design, not by omission (#2281): enabling its
-      // deployment would CONFIGURE it, which the sweep must not do — the Foundry
-      // provider spec needs it unconfigured. A run that targets it enables it in
-      // globalSetup instead; its record says so in `targetEnablementDetail`.
+      // The on-demand providers are excluded by design, not by omission (#2281, #2292):
+      // enabling their model would CONFIGURE them, which the sweep must not do — specs
+      // need them unconfigured. A run that targets one enables it in globalSetup
+      // instead; its record says so in `targetEnablementDetail`.
       const targets = providers.filter(
-        (p) => p.status === "active" && p.model && p.provider !== "azure-ai-foundry",
+        (p) =>
+          p.status === "active" && p.model && !onDemandProviderNames.includes(p.provider as Provider),
       );
 
       // Printed on EVERY run, green included: whoever triages the next daily has to

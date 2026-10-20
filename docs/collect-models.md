@@ -829,6 +829,18 @@ the default.
   tests into a permanent skip. A run that targets Foundry configures it in
   `globalSetup` instead. Its key-axis verdict DOES gate like the others: a declared
   Foundry that probes inactive for a non-billing reason fails the env-keyed step.
+- **Does not configure OpenRouter in Langflow** (#2292), for the same reason. It is
+  an `on-demand-key` provider: the sweep reads OpenRouter's catalog and probes its key
+  against OpenRouter directly (`collectOpenRouter`, with the helpers in
+  `tests/helpers/provider-setup/openrouter.ts`), and records only the PREFERRED
+  tool-capable models it offers (`openai/gpt-4o-mini` first) rather than the ~470-model
+  live catalog. Configured, it would break the tests that use it as the provider that
+  is never configured (`modelProviderModal.spec.ts`,
+  `model-provider-modal-actions.spec.ts`, and the Foundry provider spec's differential
+  control). A run that targets it configures it in `globalSetup`. A `402` (credit
+  exhausted) keeps its status in the error and is downgraded like any billing state;
+  a `401` says the key was refused, since OpenRouter's own message ("User not found.")
+  does not.
 - **Does not detect a package that is present but broken at call time.** An
   incompatible `langchain-*` version that imports cleanly and fails on `invoke`
   (the #643 class) builds fine and passes this axis.

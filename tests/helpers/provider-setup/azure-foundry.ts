@@ -36,9 +36,13 @@
 // deployment and lets the picker offer it, instead of writing a bare model name into
 // the flow.
 import type { APIRequestContext } from "@playwright/test";
-import { getAuthToken } from "../auth/get-auth-token";
 import { langflowProviderName, providerConfigMap } from "./provider-config";
-import { resolveTestTargets, type ModelRecord } from "./test-targets";
+import type { ModelRecord } from "./test-targets";
+import {
+  ensureConfiguredOverApi,
+  onDemandProviderTargeted,
+  type OnDemandConfigureResult,
+} from "./on-demand-provider";
 
 export const AZURE_FOUNDRY = "azure-ai-foundry" as const;
 const CONFIG = providerConfigMap[AZURE_FOUNDRY];
@@ -163,15 +167,8 @@ export async function validateAzureFoundry(
 
 /**
  * Whether THIS run's agent specs will run on Foundry — the one predicate that decides
- * who owns the instance's Foundry credential.
- *
- * Derived from `resolveTestTargets` rather than restated, so it cannot drift from the
- * resolver the specs actually parametrize with: a pin to another provider answers
- * `false`, a pin to Foundry or an unpinned run whose catalog lists it answers `true`,
- * and a Foundry target the health gate would SKIP answers `false` (nothing will run on
- * it, so nothing needs the credential). `tool-calling` because that is the tier every
- * hosted agent spec declares; the routed `any-completion` tier never reaches a hosted
- * provider.
+ * who owns the instance's Foundry credential. See `onDemandProviderTargeted`; an
+ * undeclared Foundry is never targeted.
  */
 export function azureFoundryTargeted(
   opts: {
@@ -182,52 +179,21 @@ export function azureFoundryTargeted(
 ): boolean {
   const env = opts.env ?? process.env;
   if (!azureFoundryDeclaration(env).declared) return false;
-  const targets = resolveTestTargets({
-    tier: "tool-calling",
-    env,
-    models: opts.models,
-    skipReasons: opts.skipReasons,
-  });
-  return targets.some((t) => t.options.provider === AZURE_FOUNDRY && !t.skipReason);
+  return onDemandProviderTargeted(AZURE_FOUNDRY, { ...opts, env });
 }
 
-export interface AzureFoundryConfigureResult {
-  /** `true` when both variables exist and the deployment is enabled. */
-  configured: boolean;
-  /** `true` when this call created at least one variable (the picker cache is stale). */
-  wrote: boolean;
-  /** Human-readable outcome, always safe to print (never carries the key). */
-  detail: string;
-}
+export type AzureFoundryConfigureResult = OnDemandConfigureResult;
 
 /**
- * Configure Foundry in Langflow over the API: the key and endpoint variables, then
- * the deployment enabled. Idempotent and race-tolerant.
- *
- * Over the API rather than the panel for the same reasons as
- * `preconfigure-routed-provider.ts`: it needs no page, and a concurrent first write
- * from another worker answers `400 "already exists"`, which here means "configured".
- * An existing variable is trusted as-is — a `Credential` value cannot be read back —
- * and a wrong one surfaces at the enable step, which validates against Azure.
- *
- * Returns a result instead of throwing: `globalSetup` must never die on it, and
- * `setupAzureFoundry` turns a failure into an attributed error.
- */
-/**
- * Deployments THIS process has already seen enabled, keyed by endpoint and deployment.
- *
- * The enable is not a cheap write: Langflow validates the credentials on every
- * `POST /api/v1/models/enabled_models` that enables a model, already enabled or not
- * (`api/v1/models.py`, `update_enabled_models`), and for Foundry that is a synchronous
- * HTTP call to Azure on the backend's event loop. Made once per test, it froze the
- * backend whenever Azure was slow — measured on the QA VM 2026-10-14 (run
- * 20261014T134518Z): 8 s outages on two shards' independent backends 2 s apart, and the
- * two tests inside them failed at this enable with `400 Could not validate Azure AI
- * Foundry credentials`. So a worker validates once, and later calls that find the
- * variables already present trust that answer.
+ * Deployments THIS process has already seen enabled, keyed by endpoint and deployment —
+ * see `ensureConfiguredOverApi` for why the enable is validated once per worker.
  */
 const ENABLED_IN_THIS_PROCESS = new Set<string>();
 
+/**
+ * Configure Foundry in Langflow over the API: the key and endpoint variables, then the
+ * deployment enabled. Idempotent and race-tolerant (`ensureConfiguredOverApi`).
+ */
 export async function ensureAzureFoundryConfigured(
   ctx: APIRequestContext,
   env: NodeJS.ProcessEnv = process.env,
@@ -243,107 +209,16 @@ export async function ensureAzureFoundryConfigured(
       detail: `${declaration.missing.join(", ")} not set in the environment`,
     };
   }
-  const displayName = langflowProviderName(AZURE_FOUNDRY);
-  const values: Record<string, string> = {
-    [CONFIG.variables[0]]: declaration.apiKey,
-    [CONFIG.variables[1]]: declaration.endpoint,
-  };
-
-  const authHeader = await getAuthToken(ctx);
-  if (!authHeader) {
-    return { configured: false, wrote: false, detail: "could not obtain an auth token" };
-  }
-  const headers = { Authorization: authHeader };
-
-  const listed = await ctx.get("/api/v1/variables/", { headers });
-  const rows = listed.ok() ? await listed.json().catch(() => null) : null;
-  if (!Array.isArray(rows)) {
-    return {
-      configured: false,
-      wrote: false,
-      detail: `GET /api/v1/variables/ answered HTTP ${listed.status()} without a list — cannot tell what is configured`,
-    };
-  }
-  const present = new Set(
-    (rows as Array<{ name?: string }>).map((row) => row.name).filter(Boolean),
-  );
-
-  let wrote = false;
-  for (const name of CONFIG.variables) {
-    if (present.has(name)) continue;
-    const created = await ctx.post("/api/v1/variables/", {
-      headers,
-      data: { name, value: values[name], type: "Credential", default_fields: [] },
-    });
-    if (created.ok()) {
-      wrote = true;
-      continue;
-    }
-    const body = await created.text().catch(() => "");
-    // Another worker won the first write: the variable exists, which is the goal.
-    if (created.status() === 400 && /already exists/i.test(body)) continue;
-    return {
-      configured: false,
-      wrote,
-      detail: `could not create ${name} (HTTP ${created.status()}: ${body.slice(0, 200)})`,
-    };
-  }
-
   const deployment = deploymentOverride ?? declaration.deployment;
-  // Nothing was written and this process already saw the deployment enabled: the
-  // enable would only re-validate against Azure (see `ENABLED_IN_THIS_PROCESS`). A
-  // write always re-enables, since a new variable is what the enable validates.
-  const memoKey = `${declaration.endpoint}::${deployment}`;
-  if (!wrote && enabledMemo.has(memoKey)) {
-    return {
-      configured: true,
-      wrote: false,
-      detail: `${displayName} already configured with deployment "${deployment}" enabled (checked earlier in this worker)`,
-    };
-  }
-
-  // Validates the deployment against Azure through Langflow's own path, so a wrong
-  // key or endpoint already stored on the instance is reported here, by name.
-  const enabled = await ctx.post("/api/v1/models/enabled_models", {
-    headers,
-    data: [
-      {
-        provider: displayName,
-        model_id: deployment,
-        enabled: true,
-        model_type: "llm",
-      },
+  return ensureConfiguredOverApi(ctx, {
+    displayName: langflowProviderName(AZURE_FOUNDRY),
+    variables: [
+      { name: CONFIG.variables[0], value: declaration.apiKey },
+      { name: CONFIG.variables[1], value: declaration.endpoint },
     ],
+    model: deployment,
+    modelNoun: "deployment",
+    memo: enabledMemo,
+    memoKey: `${declaration.endpoint}::${deployment}`,
   });
-  if (!enabled.ok()) {
-    const body = await enabled.text().catch(() => "");
-    return {
-      configured: false,
-      wrote,
-      detail:
-        `the variables are set, but enabling deployment "${deployment}" failed ` +
-        `(HTTP ${enabled.status()}: ${body.slice(0, 300)})`,
-    };
-  }
-  const echo = (await enabled.json().catch(() => null)) as { enabled_models?: unknown } | null;
-  const echoed = Array.isArray(echo?.enabled_models) ? echo.enabled_models : [];
-  const expectedKey = `${displayName}::llm::${deployment}`;
-  if (!echoed.includes(expectedKey)) {
-    // An unknown provider name is accepted with HTTP 200 and enables nothing, so the
-    // echo is the only proof the enable landed.
-    return {
-      configured: false,
-      wrote,
-      detail:
-        `the server did not report "${expectedKey}" as enabled after the request ` +
-        `(echo: ${JSON.stringify(echoed).slice(0, 200)})`,
-    };
-  }
-
-  enabledMemo.add(memoKey);
-  return {
-    configured: true,
-    wrote,
-    detail: `${displayName} configured with deployment "${deployment}" enabled`,
-  };
 }
