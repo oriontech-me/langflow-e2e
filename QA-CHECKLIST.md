@@ -1605,6 +1605,17 @@
 - [x] A `ScheduleTrigger` node imported through flow JSON creates an unarmed `schedule` row; once enabled it fires at the next whole minute (`tick:<that instant>`) and the run resolves as the owner, non-interactively → api/triggers/api-triggers-run-identity.spec.ts
 - [ ] A trigger created by a collaborator with flow write still runs as the owner — not reachable on the OSS nightly (flows are owner-scoped without an authorization plugin); needs the `@enterprise` `@authz` lane
 
+#### 24.9 Inbound webhook ingress (#2308)
+
+- [x] The signing secret is answered only by the route that mints it — `GET …/ingress` answers the address and `has_signing_secret`, never the secret — and a rotation keeps `public_id` while the old secret is refused on the very next delivery; a `schedule` trigger answers `409` on both routes → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] A signed delivery answers `202` with no body and appends one `ingress:webhook:` row; the identical request again is acknowledged and collapsed; the row runs to `completed` with a `job_id`, and the flow's trigger node receives the exact body through `event_payload` → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] Every refusal is the same `404` byte for byte (status, body, headers but `date`) and writes no row — unknown id, wrong signature, stale and future timestamp, missing headers, non-JSON body, 1 MiB + 1 byte, mismatched or unknown provider segment, paused trigger — each probe carrying one defect and paired with a `202` control (the provider-segment probes pin uniformity only: a regressed kind match would still be refused by the other provider's verifier) → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] `POST …/test` appends a `test:` row with `payload.test = true` that runs through the real dispatcher to the flow, and answers `409` on a dead trigger → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] `POST …/replay` appends a new row linked by `replay_of_event_id` that runs the original payload and leaves the original unchanged; an unknown event, or another trigger's, answers `404` → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] A flow that fails on every delivery records each event `failed` / `job_failed` with `attempt: 0`, and nothing is retried → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [ ] A trigger whose every run fails still reads `active` with `last_error: null` — known defect, upstream ticket and `test.fail()` owned by #2328
+- [ ] `/replay` answers `409` outside the 7-day window — not reachable on any lane (the window is at least one day and a delivery cannot be back-dated)
+
 ---
 
 
