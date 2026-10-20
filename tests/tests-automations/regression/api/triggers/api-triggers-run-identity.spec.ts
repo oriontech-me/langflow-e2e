@@ -189,7 +189,11 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
     flowId: string,
     event: TriggerEventRead,
   ): Promise<ReturnType<typeof parseProbeOutput>> {
-    expect(event.state, `the event is dispatched (error: ${event.error})`).toBe("dispatched");
+    // `dispatched` until the dispatcher's next pass closes it out as `completed`
+    // (~5 s): a slow poll may see either, and both carry the job and the session.
+    expect(["dispatched", "completed"], `the event ran (state: ${event.state}, error: ${event.error})`).toContain(
+      event.state,
+    );
     expect(event.job_id, "a dispatched event names the job it created").toBeTruthy();
     expect(event.session_id, "a dispatched event names its run's session").toBeTruthy();
     const deadline = Date.now() + 15_000;
@@ -335,7 +339,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
   );
 
   test(
-    "a trigger that names its connection fails closed before any run, and waits in needs_reconnect until the owner opts in",
+    "a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in",
     { tag: ["@stable", "@api", "@integrations"] },
     async ({ playwright, request, apiCoverage }, testInfo) => {
       apiCoverage.declare([
@@ -383,22 +387,28 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
         expect(event.session_id, "no run session was created").toBeNull();
       });
 
-      await test.step("the trigger is taken out of service until it is reconnected", async () => {
+      await test.step("the trigger is marked as needing a reconnect", async () => {
         const after = await readTrigger(request, trigger.id);
         expect(after.state).toBe("needs_reconnect");
         expect(after.last_error).toBe(PREFLIGHT_ERROR);
       });
 
-      await test.step("opting in and re-enabling puts the trigger back in service", async () => {
+      // `needs_reconnect` is a dispatchable state: it marks the trigger, it does not
+      // hold its events. Each event is preflighted again, so the opt-in alone is
+      // what lets the next one run (measured on 1.13.0.dev47).
+      await test.step("with the opt-in on, the next event runs as the owner, before any re-enable", async () => {
         await setOptIn(request, mine, true);
-        const enabled = await triggerAction(request, trigger.id, "enable");
-        expect(enabled.state).toBe("active");
-        expect(enabled.last_error, "re-enabling clears the recorded error").toBeNull();
-      });
-
-      await test.step("the next event runs, as the owner, and resolves the row", async () => {
         const verdicts = await runVerdicts(request, flowId, await testEvent("on"));
         expect(verdicts.mine).toEqual(resolvedAs(mine, "user"));
+        expect((await readTrigger(request, trigger.id)).state, "a successful run does not clear the mark").toBe(
+          "needs_reconnect",
+        );
+      });
+
+      await test.step("re-enabling clears the mark and the recorded error", async () => {
+        const enabled = await triggerAction(request, trigger.id, "enable");
+        expect(enabled.state).toBe("active");
+        expect(enabled.last_error).toBeNull();
       });
     },
   );
@@ -453,19 +463,24 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
       const nextFireAt = await test.step("enabling arms it for the next minute boundary", async () => {
         const enabled = await triggerAction(request, trigger.id, "enable");
         expect(enabled.state).toBe("active");
-        // Server time, not this machine's: the scheduler fires on the server clock.
-        const armedAt = Date.parse(`${enabled.updated_at}Z`);
+        // `enable` does not compute the fire time: the scheduler does, on its next
+        // pass (up to one poll later), from the time of THAT pass. So the bound is
+        // measured from the scheduler's write — the row's `updated_at`, server time
+        // to the second — never from the enable, which can be a minute boundary
+        // earlier.
         const deadline = Date.now() + 30_000;
-        let next: string | null = null;
-        while (Date.now() < deadline && next === null) {
+        let armed: TriggerRead | undefined;
+        while (Date.now() < deadline && !armed?.next_fire_at) {
           await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-          next = (await readTrigger(request, trigger.id)).next_fire_at;
+          armed = await readTrigger(request, trigger.id);
         }
-        expect(next, "the scheduler computes the next fire time").not.toBeNull();
-        const fireAt = Date.parse(`${next}Z`);
+        expect(armed?.next_fire_at, "the scheduler computes the next fire time").toBeTruthy();
+        const fireAt = Date.parse(`${armed?.next_fire_at}Z`);
+        const armedAt = Date.parse(`${armed?.updated_at}Z`);
         expect(new Date(fireAt).getUTCSeconds(), "a whole minute").toBe(0);
-        expect(fireAt - armedAt, "no more than a minute after it was armed").toBeLessThanOrEqual(60_000);
-        expect(fireAt, "after it was armed").toBeGreaterThan(armedAt - 1_000);
+        expect(fireAt, "after the scheduler armed it").toBeGreaterThan(armedAt);
+        // 60 s to the next boundary, plus the second `updated_at` is truncated to.
+        expect(fireAt - armedAt, "the first minute boundary after the scheduler armed it").toBeLessThanOrEqual(61_000);
         return fireAt;
       });
 
