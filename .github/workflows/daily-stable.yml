@@ -52,7 +52,7 @@ jobs:
     # Runs inside the Playwright image so `--list` has the pinned runner without a
     # browser download (the GCS leg the runners cannot complete — see #346). No
     # Langflow service is needed: `--list` collects tests, it does not execute them.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.58.2-noble
     outputs:
@@ -186,7 +186,7 @@ jobs:
   test:
     name: "Shard ${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }} (${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }})"
     needs: prep
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -441,7 +441,7 @@ jobs:
       # secure but NOT the service hostname http://langflow. Inside a job
       # container the Langflow service is only reachable as http://langflow:7860,
       # so forward localhost:7860 -> langflow:7860 and keep PLAYWRIGHT_BASE_URL
-      # on http://localhost:7860 — exactly as on ubuntu-latest. See issue #346.
+      # on http://localhost:7860 — exactly as on a host runner. See issue #346.
       - name: Forward localhost:7860 to the Langflow service
         # Force bash: inside the container the default shell is `sh` (dash),
         # which lacks the `disown` builtin used below.
@@ -904,7 +904,7 @@ jobs:
   # daily (#980), and that includes an API hiccup in the publish steps.
   stable-ownership:
     name: "@stable ownership report"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     continue-on-error: true
     permissions:
@@ -1056,7 +1056,7 @@ jobs:
     name: Merge shard reports & report
     needs: [prep, test]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       issues: write

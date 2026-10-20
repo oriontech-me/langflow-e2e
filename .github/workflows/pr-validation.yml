@@ -4,10 +4,15 @@ on:
   pull_request:
     branches: [main]
 
+# Every job pins `ubuntu-24.04`, never `ubuntu-latest` (#2318). The label moved to
+# 26.04 on 2026-10-19, where the pinned Playwright (1.58.2, #1734) refuses to install
+# chromium and `sleep` reports its errors in a form a script unit test does not
+# expect, so every PR went red on checks its diff could not reach. Moving these
+# lanes to 26.04 is a decision to take with #2167, not one the label makes.
 jobs:
   typecheck:
     name: TypeScript Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 10, not 5: this job carries three unit lanes (~3 min on a warm cache) after
     # an `npm ci` that takes 2 s on a cache hit and 3-5+ min on a registry stall.
     # On 2026-09-03 the 5-minute budget was consumed three times in a row on PR
@@ -75,7 +80,7 @@ jobs:
 
   lint:
     name: ESLint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 10, not 5 - same reason as the TypeScript Check job above: on 2026-09-03 the
     # `npm ci` step alone exceeded the five-minute budget twice in a row on PR #1705
     # (registry stall; the lint step never ran), while everything else was green.
@@ -101,7 +106,7 @@ jobs:
   # TypeScript and `.mjs`, so nothing here was verifiable before merge.
   python-units:
     name: Python unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
@@ -136,7 +141,7 @@ jobs:
 
   checklist-guard:
     name: QA-CHECKLIST guard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     # Explicit, because the `@stable` ownership step reads open issues through
     # `gh` and this workflow otherwise inherits the repository's default token
@@ -212,7 +217,7 @@ jobs:
 
   doc-deps-guard:
     name: Spec-doc dependency paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -365,7 +370,7 @@ jobs:
 
   detect-specs:
     name: Detect changed specs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -740,7 +745,7 @@ jobs:
     name: Run impacted E2E specs
     needs: detect-specs
     if: needs.detect-specs.outputs.has_specs == 'true' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     services:

@@ -82,7 +82,7 @@ on:
 
 jobs:
   detect-target:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       use_docker: ${{ steps.check.outputs.use_docker }}
       base_url: ${{ steps.check.outputs.base_url }}
@@ -134,7 +134,7 @@ jobs:
     name: E2E via Docker (${{ github.event.inputs.langflow_target }})
     needs: detect-target
     if: needs.detect-target.outputs.use_docker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 90 was inside the distribution this lane has to cover, not above it (#1174).
     # This lane runs UNSHARDED at 2 workers against one backend, which is the same
     # workers-per-backend ratio as a single daily shard, so a shard's measured test
@@ -589,7 +589,7 @@ jobs:
     name: E2E via URL (${{ github.event.inputs.langflow_target }})
     needs: detect-target
     if: needs.detect-target.outputs.use_docker == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Same bound as the docker job above (#1174). This job skips every parametrized
     # LLM spec for want of a key, so its tail is shorter — but it runs the same
     # unsharded lane against one instance, and an asymmetric cap here would only be

@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   migration-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     services:
@@ -477,7 +477,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────
   migration-test-compose:
     name: Migration via docker-compose (Postgres + named volumes)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       LF_URL: http://localhost:7860

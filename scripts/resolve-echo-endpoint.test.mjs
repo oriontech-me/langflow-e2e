@@ -455,7 +455,7 @@ test("the CLI refuses an unknown --topology instead of defaulting to container",
 // `mcr.microsoft.com/playwright:v1.58.2-noble` ships none — its Dockerfile installs
 // curl/wget/gpg/ca-certificates, nodejs and git/openssh-client, nothing more.
 //
-// The bug survived review because `pr-validation.yml` is `runs-on: ubuntu-latest`
+// The bug survived review because `pr-validation.yml` runs on a host runner
 // with no `container:`, where `jq` is preinstalled: the PR lane CANNOT reach the
 // topology it broke. `daily-stable.yml` is the only lane whose test-and-report jobs
 // are all containerized, and it is unattended. So the invariant has to be asserted
