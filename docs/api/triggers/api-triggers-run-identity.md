@@ -157,8 +157,11 @@ connections with it.
 3. `GET /api/v1/triggers?flow_id=…` → exactly one row: `kind: "schedule"`, `node_id` = the node's id,
    `config.cron: "* * * * *"`, `config.timezone: "UTC"`, `state: "pending"`, `user_id` = the owner's.
 4. `POST …/enable` → `active`. Poll the trigger until `next_fire_at` is set. It is a whole minute
-   (`:00` seconds), after the scheduler's write (the row's `updated_at`) and no more than 61 s after it
-   (60 s to the boundary, plus the second `updated_at` is truncated to). The bound is measured from the
+   (`:00` seconds), not before the scheduler's write (the row's `updated_at`) and no more than 61 s
+   after it (60 s to the boundary, plus the second `updated_at` is truncated to). "Not before" rather
+   than "after": a write that crosses the boundary reads the boundary itself. The truncation is
+   SQLite's (`onupdate=func.now()` is `CURRENT_TIMESTAMP`), which is what every lane of this suite
+   runs; on Postgres `func.now()` is the transaction start, and the bound would need revisiting. The bound is measured from the
    scheduler's write, not from the enable, for the reason above.
 5. Poll the events until the one with `dedupe_key: "tick:<next_fire_at>"` has run (it carries a
    `job_id`), with `payload.scheduled_at` equal to `next_fire_at`. The wait is capped at 120 s: at most

@@ -183,6 +183,17 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
     throw new Error(`${what} did not settle within ${timeoutMs / 1000} s (last seen: ${JSON.stringify(last)})`);
   }
 
+  /**
+   * A server timestamp as epoch ms. SQLite serializes them naive and in UTC; a
+   * value that already carries an offset is taken as it is, so `Z` is never
+   * appended twice.
+   */
+  function serverTime(value: string | null | undefined): number {
+    const parsed = Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/.test(value ?? "") ? (value as string) : `${value}Z`);
+    expect(Number.isNaN(parsed), `a server timestamp parses: ${value}`).toBe(false);
+    return parsed;
+  }
+
   /** The probe lines of the run a dispatched event created, found by its session id. */
   async function runVerdicts(
     request: APIRequestContext,
@@ -475,10 +486,13 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
           armed = await readTrigger(request, trigger.id);
         }
         expect(armed?.next_fire_at, "the scheduler computes the next fire time").toBeTruthy();
-        const fireAt = Date.parse(`${armed?.next_fire_at}Z`);
-        const armedAt = Date.parse(`${armed?.updated_at}Z`);
+        const fireAt = serverTime(armed?.next_fire_at);
+        const armedAt = serverTime(armed?.updated_at);
         expect(new Date(fireAt).getUTCSeconds(), "a whole minute").toBe(0);
-        expect(fireAt, "after the scheduler armed it").toBeGreaterThan(armedAt);
+        // Not strictly after: a write that started at :59.99 and landed at :00.01
+        // reads the boundary itself once truncated to the second. A boundary
+        // already past is still a whole second below.
+        expect(fireAt, "not before the scheduler armed it").toBeGreaterThanOrEqual(armedAt);
         // 60 s to the next boundary, plus the second `updated_at` is truncated to.
         expect(fireAt - armedAt, "the first minute boundary after the scheduler armed it").toBeLessThanOrEqual(61_000);
         return fireAt;
