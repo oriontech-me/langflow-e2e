@@ -239,8 +239,10 @@ cross-checked. It asserts no upper bound and no total.
   `ConnectionService.count_for_user`, which counts the rows `_list_visible_rows` returns for
   the **caller**. For a superuser that query has no owner clause, so the superuser's
   manifest counts **every user's** connections. For anyone else it counts the caller's own
-  rows plus every `ownership_mode: "instance"` row, whoever owns it. Measured on
-  `1.13.0.dev47`:
+  rows plus every `ownership_mode: "instance"` row, whoever owns it. That is the OSS rule,
+  where the authorization service is pass-through. With an authorization plugin that
+  supports cross-user fetch, rows shared with the caller count too, which no lane this spec
+  runs on has. Measured on `1.13.0.dev47`:
 
   | Row created | `slack` / `google` / `microsoft` read by the superuser | read by a throwaway user |
   |---|---|---|
@@ -255,13 +257,16 @@ cross-checked. It asserts no upper bound and no total.
   last read and fail the test, and the failure would say nothing about the derivation. Test
   3 therefore seeds **and reads** as a throwaway owner of its own
   (`createConnectionsOwner`, #2295), and only two kinds of row can move what that owner
-  reads: its own, and instance rows. The instance half of the reservation still holds, and
-  it is held by the product as much as by the suite: every instance seed in the suite is
-  `google` (the helper's default), and a `slack` instance row cannot be created with a
-  planted token. On `1.13.0.dev47` a `bot` token is validated live against Slack and refused
-  (`Slack rejected this token`), and an `xapp-` token is refused in instance mode
-  (`must be your own connection`). A future spec seeding an **instance** row for
-  `microsoft` or `slack` would break the reservation, and the failure would name the
+  reads: its own, and instance rows. The instance half of the reservation is held by the
+  **suite**, not by the product: every instance seed in the suite is `google` (the helper's
+  default). The product refuses only part of it. On `1.13.0.dev47`, a `slack` row that
+  carries a token is checked live against Slack's `auth.test` (an `xapp-` token excepted),
+  so a planted token is refused (`Slack rejected this token`), and an `xapp-` token is
+  refused in instance mode (`must be your own connection`). But a `slack` instance row with
+  **no** credentials is accepted as `pending` (measured: `201`, `owner_id: null`), and
+  `count_for_user` counts it whatever its status; `microsoft` takes a planted token in any
+  mode. A future spec seeding an **instance** row for `microsoft` or `slack`, with or
+  without credentials, would break the reservation, and the failure would name the
   contention. `google` is still never asserted here, because instance rows of it are seeded
   all the time.
 - **No assertion reads a list length, a position, or a total.** The invariant
