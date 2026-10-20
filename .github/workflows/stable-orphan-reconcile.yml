@@ -59,7 +59,7 @@ concurrency:
 jobs:
   reconcile:
     name: Reconcile @stable removals against open trackers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -76,7 +76,7 @@ jobs:
       # not both say why (the daily runs inside the Playwright image, which
       # ships it). This job runs `ts-node` against the repo's pinned
       # `typescript`, so it pins Node too rather than taking whatever
-      # `ubuntu-latest` rolls forward to.
+      # the runner image happens to ship.
       - uses: actions/setup-node@v7
         with:
           node-version: "20"

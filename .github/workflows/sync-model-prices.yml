@@ -50,7 +50,7 @@ concurrency:
 jobs:
   sync:
     name: Install the price table on the QA Platform
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Reading one file and POSTing it takes seconds. The script aborts its own
     # request at 30 s, so this is the backstop for everything around that — and
     # without it a wedged step would spend the runner's 6-hour default.
