@@ -490,8 +490,9 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
         const armedAt = serverTime(armed?.updated_at);
         expect(new Date(fireAt).getUTCSeconds(), "a whole minute").toBe(0);
         // Not strictly after: a write that started at :59.99 and landed at :00.01
-        // reads the boundary itself once truncated to the second. A boundary
-        // already past is still a whole second below.
+        // reads the boundary itself once truncated to the second. The price: a
+        // boundary already past is caught only when the write did not land in
+        // that boundary's own first second, since the two then read the same.
         expect(fireAt, "not before the scheduler armed it").toBeGreaterThanOrEqual(armedAt);
         // 60 s to the next boundary, plus the second `updated_at` is truncated to.
         expect(fireAt - armedAt, "the first minute boundary after the scheduler armed it").toBeLessThanOrEqual(61_000);
