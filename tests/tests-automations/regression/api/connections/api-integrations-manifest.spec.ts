@@ -1,12 +1,8 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import {
-  type ConnectionRead,
-  createConnectionViaApi,
-  uniqueConnectionName,
-} from "../../../../helpers/integrations/create-connection";
-import { deleteConnection } from "../../../../helpers/integrations/delete-connection";
+import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
+import { createConnectionViaApi, uniqueConnectionName } from "../../../../helpers/integrations/create-connection";
 
 // The capability manifest (GET /api/v1/integrations), the operator ceiling
 // (GET /api/v1/integrations/policy/effective), and the cross-check between the
@@ -125,10 +121,11 @@ test.describe("Integrations API — capability manifest and effective policy", (
   const POLICY_KEY_PREFIX = "integrations.";
   const POLICY_KEY_MIN_SEGMENTS = 3;
 
-  // This file's provider and its control. Every other spin in the batch seeds
-  // `google` (the helper's default), so google's connection_count is contended
-  // between workers and is never read here. `slack` is touched by nothing, which
-  // is what lets test 3 prove the derivation is per provider and not a global flag.
+  // This file's provider and its control. Test 3 reads them as a throwaway owner of
+  // its own (#2317): a superuser's connection_count holds EVERY user's rows, so
+  // #2306's slack row (another user's) moved the control. A non-superuser counts
+  // only its own rows plus instance rows, and no spec seeds an instance row for
+  // either provider — instance seeds are all `google`, which is never read here.
   const SUBJECT_PROVIDER = "microsoft";
   const CONTROL_PROVIDER = "slack";
 
@@ -184,28 +181,14 @@ test.describe("Integrations API — capability manifest and effective policy", (
     policy_revision: number | null;
   }
 
-  // Markers registered BEFORE the write that carries them, so teardown can find a
-  // row a lost response left behind. Only test 3 writes.
-  const sent: string[] = [];
+  // Test 3's owner. Only test 3 writes; deleting the owner takes any row it still
+  // owns with it, including one a lost response left behind.
+  let owner: ConnectionsOwner | undefined;
 
-  test.afterEach(async ({ request }) => {
-    const markers = sent.splice(0);
-    if (markers.length === 0) return;
-    const headers = { Authorization: await getAuthToken(request) };
-    const res = await request.get("/api/v1/connections", { headers });
-    if (!res.ok()) {
-      console.warn(`⚠️ Connection sweep could not list (${res.status()}) — markers left: ${markers.join(", ")}`);
-      return;
-    }
-    const rows = (await res.json()) as ConnectionRead[];
-    // One list read, then a DELETE only for rows still present: a DELETE that
-    // answers 404 is still charged to the per-user write bucket.
-    const mine = rows.filter((row) => markers.some((marker) => row.display_name.includes(marker)));
-    for (const row of mine) {
-      await deleteConnection(request, row.id, { headers }).catch((error) => {
-        console.warn(`⚠️ Orphan connection left behind (${row.name}): ${error}`);
-      });
-    }
+  test.afterEach(async () => {
+    const current = owner;
+    owner = undefined;
+    await current?.dispose();
   });
 
   async function readManifestBody(
@@ -479,13 +462,20 @@ test.describe("Integrations API — capability manifest and effective policy", (
   test(
     "a provider's enabled flag and connection count are derived from its connections, and only its own",
     { tag: ["@stable", "@api", "@integrations"] },
-    async ({ request, apiCoverage }) => {
+    async ({ playwright, request, apiCoverage }, testInfo) => {
       apiCoverage.declare([
         `GET ${MANIFEST}`,
         "POST /api/v1/connections",
         "DELETE /api/v1/connections/{connection_id}",
       ]);
-      const headers = { Authorization: await getAuthToken(request) };
+      // Seeded AND read as this owner, on the test's own `request` so apiCoverage
+      // records every call. What it reads holds its own rows and instance rows, never
+      // another user's — so no other spec's row can move the control.
+      owner = await createConnectionsOwner(
+        () => playwright.request.newContext({ baseURL: testInfo.project.use.baseURL }),
+        "manifest",
+      );
+      const headers = owner.headers;
       const marker = uniqueConnectionName("manifest_derived");
       let baselineCount = 0;
       let control: { approved: boolean; enabled: boolean; connection_count: number } | undefined;
@@ -502,10 +492,6 @@ test.describe("Integrations API — capability manifest and effective policy", (
         };
       });
 
-      // Registered BEFORE the write, so teardown finds the row even if the
-      // response is lost. The helper generates the name; the marker travels in
-      // the display name, which is what the sweep matches on.
-      sent.push(marker);
       const created = await createConnectionViaApi(request, headers, {
         label: "manifest_derived",
         providerKey: SUBJECT_PROVIDER,

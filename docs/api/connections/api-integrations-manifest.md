@@ -8,7 +8,9 @@ Owning issue: #1968 (Dedicated Integrations, batch 1 — the `follow-up` excepti
 order and dependencies in the #1971 comment). Seeds through
 `tests/helpers/integrations/`, the helpers #1966 built. Revised for #2074, when the body
 grew a second top-level key — see *The top-level `deployment_context`* below — and for
-#2310, when every capability grew two scope fields — see *The scope fields* below.
+#2310, when every capability grew two scope fields — see *The scope fields* below — and
+for #2317, when test 3 moved to a reader of its own — see *Whose rows the count holds*
+below.
 
 ---
 
@@ -230,12 +232,43 @@ cross-checked. It asserts no upper bound and no total.
 - **The instance runs in the default `self_managed` deployment context** —
   `LANGFLOW_CONNECTION_OAUTH_CONTEXT` unset, which is how every lane and start script of this
   repo runs it. Test 5 fails rather than skips otherwise, for the same reason.
-- **`microsoft` is this file's provider and `slack` is its untouched control.** Every
-  other spec in the batch seeds `google` (the helper's default), so `connection_count` for
-  `google` is contended between workers and is never asserted here. Test 3 asserts
-  `microsoft`'s count moves by exactly one and `slack`'s does not move at all — which is
-  what proves the derivation is per provider and not a global flag. A future spec seeding
-  `microsoft` or `slack` breaks that reservation, and the failure names the contention.
+- **`microsoft` is this file's provider and `slack` is its untouched control.** Test 3
+  asserts `microsoft`'s count moves by exactly one and `slack`'s does not move at all —
+  which is what proves the derivation is per provider and not a global flag.
+- **Whose rows the count holds (#2317).** `connection_count` is
+  `ConnectionService.count_for_user`, which counts the rows `_list_visible_rows` returns for
+  the **caller**. For a superuser that query has no owner clause, so the superuser's
+  manifest counts **every user's** connections. For anyone else it counts the caller's own
+  rows plus every `ownership_mode: "instance"` row, whoever owns it. That is the OSS rule,
+  where the authorization service is pass-through. With an authorization plugin that
+  supports cross-user fetch, rows shared with the caller count too, which no lane this spec
+  runs on has. Measured on `1.13.0.dev47`:
+
+  | Row created | `slack` / `google` / `microsoft` read by the superuser | read by a throwaway user |
+  |---|---|---|
+  | `slack`, user mode, owned by the superuser | `slack` 0 → 1 | `slack` stays 0 |
+  | `google`, instance mode | `google` 0 → 1 | `google` 0 → 1 |
+  | `microsoft`, owned by the throwaway user | `microsoft` 0 → 1 | `microsoft` 0 → 1 |
+
+  The control used to be read as the superuser, so any spec's `slack` row moved it, even one
+  owned by another user. #2306's `xapp-` row (`api-connections-resolution-non-interactive`,
+  test 5) is exactly that: a `slack` row of a throwaway owner, created and deleted in a few
+  seconds. On one backend with two workers it could land between test 3's baseline and its
+  last read and fail the test, and the failure would say nothing about the derivation. Test
+  3 therefore seeds **and reads** as a throwaway owner of its own
+  (`createConnectionsOwner`, #2295), and only two kinds of row can move what that owner
+  reads: its own, and instance rows. The instance half of the reservation is held by the
+  **suite**, not by the product: every instance seed in the suite is `google` (the helper's
+  default). The product refuses only part of it. On `1.13.0.dev47`, a `slack` row that
+  carries a token is checked live against Slack's `auth.test` (an `xapp-` token excepted),
+  so a planted token is refused (`Slack rejected this token`), and an `xapp-` token is
+  refused in instance mode (`must be your own connection`). But a `slack` instance row with
+  **no** credentials is accepted as `pending` (measured: `201`, `owner_id: null`), and
+  `count_for_user` counts it whatever its status; `microsoft` takes a planted token in any
+  mode. A future spec seeding an **instance** row for `microsoft` or `slack`, with or
+  without credentials, would break the reservation, and the failure would name the
+  contention. `google` is still never asserted here, because instance rows of it are seeded
+  all the time.
 - **No assertion reads a list length, a position, or a total.** The invariant
   `enabled === (approved && connection_count > 0)` is asserted on every row of every read
   and cannot race; the round trip is asserted as a delta against a baseline read taken
@@ -243,8 +276,11 @@ cross-checked. It asserts no upper bound and no total.
 - **Budget.** The two integration routes share the connections **metadata-read** bucket
   (60/min per user, `get_metadata_read_limit()`); this file issues 9 reads per run
   (unchanged by #2074 — the new checks read the bodies the tests already fetch). Writes
-  come from the shared **write** bucket (30/min per user) and this file spends **2** — one
-  create and one delete, both in test 3.
+  come from the **write** bucket (30/min per user) and this file spends **2**, one create
+  and one delete, both in test 3. Since #2317 they are charged to test 3's throwaway owner
+  rather than to the superuser. The owner costs one `POST /api/v1/login`, which OSS limits
+  to 5/min per client IP; `createThrowawayUser` waits a refused window out rather than
+  failing.
 
 ---
 
@@ -261,9 +297,10 @@ never leaves the instance, and the only write is one connection this file delete
 ## Step by step *(required)*
 
 Five tests over the `request` fixture, each declaring its operations through
-`apiCoverage`. Only test 3 writes; it registers its connection name before sending it and
-`afterEach` deletes the row by that marker, reading the list once so no write is spent on
-a row that is already gone.
+`apiCoverage`. Only test 3 writes, and it writes and reads as a throwaway owner it creates
+itself, with the owner's token sent on the test's own `request` so `apiCoverage` still
+records every call. `afterEach` deletes that owner, which takes any row it still owns with
+it (measured in #1969, and again on `1.13.0.dev47` for #2317).
 
 **Test 1 — `every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain`**
 1. `GET /api/v1/integrations` → `200`, a body whose key set is exactly
@@ -314,18 +351,21 @@ a row that is already gone.
    that carried a `component_ref` was.
 
 **Test 3 — `a provider's enabled flag and connection count are derived from its connections, and only its own`**
-1. `GET /api/v1/integrations` → baseline `connection_count` for `microsoft` (`c0`) and the
+1. Create a throwaway owner (`createConnectionsOwner`). Every call below carries its token,
+   so the counts are the ones that owner can see: its own rows and instance rows, never
+   another user's (*Whose rows the count holds*).
+2. `GET /api/v1/integrations` → baseline `connection_count` for `microsoft` (`c0`) and the
    whole `slack` row (the control); the derivation invariant holds on every row.
-2. Seed one `ready` connection for `microsoft` through `createConnectionViaApi`
-   (`providerKey: "microsoft"`), registering its name for teardown first.
-3. `GET /api/v1/integrations` → `microsoft` reads `connection_count === c0 + 1` and
+3. Seed one `ready` connection for `microsoft` through `createConnectionViaApi`
+   (`providerKey: "microsoft"`), owned by that owner.
+4. `GET /api/v1/integrations` → `microsoft` reads `connection_count === c0 + 1` and
    `enabled === true`; the `slack` row is unchanged; the invariant still holds on every
    row.
-4. Delete it through `deleteConnection`, which throws on anything that is not `2xx` or
+5. Delete it through `deleteConnection`, which throws on anything that is not `2xx` or
    `404` and waits out one `429`. The status is deliberately **not** the assertion: a
    write's `2xx` precedes the commit and a `DELETE`'s does not prove removal
-   (#1759/#1777/#1807), and the manifest re-read in step 5 is the proof.
-5. `GET /api/v1/integrations` → `microsoft` reads `connection_count === c0` and
+   (#1759/#1777/#1807), and the manifest re-read in step 6 is the proof.
+6. `GET /api/v1/integrations` → `microsoft` reads `connection_count === c0` and
    `enabled === (c0 > 0)`; the `slack` row is still unchanged — so the flip followed the
    connection in both directions and touched no other provider.
 
@@ -369,14 +409,17 @@ provider row asserted as the exact 8-key set and every capability as the exact 1
 `component_display_names` excluded from the index and a non-vacuity floor proving the loop
 ran; `microsoft`'s `connection_count` moving `c0 → c0+1 → c0` around one seeded connection
 while `slack`'s row does not move and `enabled === (approved && connection_count > 0)`
-holds on every row of every read; `policy/effective` reporting `unrestricted: true` with
+holds on every row of every read, all three reads made as test 3's throwaway owner;
+`policy/effective` reporting `unrestricted: true` with
 an empty `blocked_action_keys` and `approved_provider_ids` deep-equal to both
 `loaded_provider_ids` and the manifest's provider ids; and no count, total or list length
 asserted anywhere. `GET /api/v1/connections` reads back **zero** rows carrying this file's
 marker after the run, and the declared coverage — `GET /api/v1/integrations`,
 `GET /api/v1/integrations/policy/effective`, `GET /api/v1/all`,
 `POST /api/v1/connections`, `DELETE /api/v1/connections/{connection_id}` — matches what
-the fixture recorded.
+the fixture recorded. And, since #2317, the control cannot be moved by another spec's
+rows: a `--workers=2` run of `api/connections/` together with
+`core-functionality/integrations/` on one backend passes three consecutive times.
 
 ---
 
@@ -405,8 +448,13 @@ the fixture recorded.
 - `src/lfx/src/lfx/services/integration_policy/base.py` —
   `normalize_integration_policy_key`, the `integrations.<provider_id>.<action>` grammar
   test 5 asserts.
-- `tests/helpers/integrations/create-connection.ts` and
-  `tests/helpers/integrations/delete-connection.ts` — the seeding and teardown helpers.
+- `src/backend/base/langflow/services/connection/service.py` — `count_for_user` and
+  `_list_visible_rows`, which decide whose rows `connection_count` holds: every user's for
+  a superuser, the caller's own plus instance rows for anyone else.
+- `tests/helpers/integrations/create-connection.ts`,
+  `tests/helpers/integrations/delete-connection.ts` and
+  `tests/helpers/integrations/connections-owner.ts` — the seeding, deletion and owner
+  helpers.
 - These upstream paths resolve on `release-1.13.0` and **not** on `main`, which does not
   carry the feature yet, so the doc-dependency guard reports a `::notice::`, not a
   failure. No provider key, no model, no network egress.
