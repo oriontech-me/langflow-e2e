@@ -134,6 +134,10 @@ test("the provider comes from the span's class, so one id billed by two accounts
 test("each span class measured on a real trace maps to its billing provider; any other to none", () => {
   for (const [name, provider] of [
     ["ChatOpenAI gpt-4o-mini", "openai"],
+    // An OpenAI-compatible endpoint behind the same class (#2292): the class does not
+    // say who billed, so the price table must decide.
+    ["ChatOpenAI openai/gpt-4o-mini", null],
+    ["ChatOpenAI meta-llama/llama-3.3-70b-instruct", null],
     ["ChatAnthropic claude-haiku-4-5", "anthropic"],
     ["ChatGoogleGenerativeAI gemini-2.5-flash", "google"],
     ["AzureAIOpenAIApiChatModel gpt-5.6-sol", "azure"],

@@ -50,11 +50,23 @@ const SPAN_CLASS_PROVIDERS = {
   AzureAIOpenAIApiChatModel: "azure",
 };
 
-/** The billing provider an llm span's class names, or null when it names none here. */
+/**
+ * The billing provider an llm span's class names, or null when it names none here.
+ *
+ * `ChatOpenAI` is also the class Langflow builds for every OpenAI-COMPATIBLE endpoint
+ * (OpenRouter, OpenAI Compatible, vLLM — `unified_models/instantiation.py`), so the
+ * class alone says "openai" for calls another account paid for. Measured on
+ * 1.13.0.dev45 (#2292): an OpenRouter run's spans read `ChatOpenAI openai/gpt-4o-mini`
+ * and were booked to openai. OpenAI's own ids never carry a vendor prefix, so a
+ * `ChatOpenAI` span whose model has a `/` names no provider here and the price table
+ * decides (`openrouter` for the ids it prices, nothing for an unpriced vLLM model).
+ */
 export function spanProvider(span) {
   const name = typeof span?.name === "string" ? span.name : "";
-  const cls = name.split(" ", 1)[0];
-  return Object.hasOwn(SPAN_CLASS_PROVIDERS, cls) ? SPAN_CLASS_PROVIDERS[cls] : null;
+  const [cls, ...rest] = name.split(" ");
+  if (!Object.hasOwn(SPAN_CLASS_PROVIDERS, cls)) return null;
+  if (cls === "ChatOpenAI" && rest.join(" ").includes("/")) return null;
+  return SPAN_CLASS_PROVIDERS[cls];
 }
 
 // One accumulator per (model, provider): the same id billed by two accounts in one

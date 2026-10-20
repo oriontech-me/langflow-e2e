@@ -4,6 +4,7 @@ import { setupAnthropic } from "./setup-anthropic";
 import { setupGoogle } from "./setup-google";
 import { setupOllama } from "./setup-ollama";
 import { setupAzureFoundry } from "./setup-azure-foundry";
+import { setupOpenRouter } from "./setup-openrouter";
 import { providerConfigMap, type Provider } from "./provider-config";
 
 export type {
@@ -11,6 +12,7 @@ export type {
   BaseUrlProviderConfig,
   DeploymentProviderConfig,
   KeyedProvider,
+  OnDemandKeyProviderConfig,
   Provider,
   ProviderConfig,
 } from "./provider-config";
@@ -19,6 +21,7 @@ export {
   keyedProviders,
   keyedProviderNames,
   langflowProviderName,
+  onDemandProviderNames,
 } from "./provider-config";
 
 // Derived from provider-config.ts — edit it there to change the env keys
@@ -38,6 +41,7 @@ export const providerSetupMap: Record<
   google: setupGoogle,
   ollama: setupOllama,
   "azure-ai-foundry": setupAzureFoundry,
+  openrouter: setupOpenRouter,
 };
 
 /** Retorna true se todas as env vars do provider estiverem definidas */

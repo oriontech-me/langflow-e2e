@@ -67,7 +67,7 @@ jobs:
        contains(github.event.issue.labels.*.name, 'daily-failure')) ||
       (github.event_name == 'workflow_dispatch' &&
        contains(fromJSON('["rafaelgiln","Victor-w-Madeira","daniellicnerski1"]'), github.actor))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
       # An edit burst must not race itself into duplicate comments.
