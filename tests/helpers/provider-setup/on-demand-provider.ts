@@ -195,7 +195,16 @@ export async function ensureConfiguredOverApi(
     detail:
       `the server did not report "${expectedKey}" as enabled after the request ` +
       `(echo: ${JSON.stringify(echoed).slice(0, 200)}; effective state read back: ` +
-      `${effective === null ? "unreadable" : String(effective)})`,
+      `${effective === null ? "unreadable" : String(effective)})` +
+      // A live provider's catalog is rebuilt on that read: Langflow fetches it from the
+      // provider (10 s timeout, `fetch_live_openrouter_models`) and a failed fetch leaves
+      // the provider with no rows, so `false` can mean "the provider's catalog did not
+      // answer" as much as "the enable did not land" (#2321).
+      (effective === false
+        ? ` — the model is absent from the provider's catalog as Langflow read it, ` +
+          `either because the enable did not land or because the provider's live ` +
+          `catalog did not load`
+        : ""),
   };
 }
 
@@ -301,11 +310,12 @@ export async function selectOnDemandModel(page: Page, opts: OnDemandPickerOption
   await reloadToAgent(page);
   if (await pick()) return;
 
-  // Never a skip: the server has just echoed the model as enabled, so its absence from
-  // the picker is not an absent model. A MODEL_NOT_AVAILABLE here would let the callers
-  // skip the test on exactly the lane this provider exists for.
+  // Never a skip: the server has just confirmed the model enabled — by its echo, or for a
+  // catalog default by the read-back (#2321) — so its absence from the picker is not an
+  // absent model. A MODEL_NOT_AVAILABLE here would let the callers skip the test on
+  // exactly the lane this provider exists for.
   throw new Error(
-    `${code}_ENABLE_LOST: ${modelNoun} "${requested}" was enabled (the server echoed ` +
+    `${code}_ENABLE_LOST: ${modelNoun} "${requested}" was enabled (the server confirmed ` +
       `it) but the Agent's model picker still does not offer it for ${providerLabel} after ` +
       `a reload — the enabled set was rewritten again by a concurrent request, or the ` +
       `picker does not read it. Reported as a FAILURE, not a skip (#1012).`,
