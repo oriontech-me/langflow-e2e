@@ -720,7 +720,7 @@ test.describe("Triggers — inbound webhook ingress", () => {
               rows = await events(request, trigger.id);
               return rows.filter((e) => !UNSETTLED.includes(e.state)).length;
             },
-            { message: "both deliveries settle", timeout: 60_000, intervals: [POLL_MS] },
+            { message: "both deliveries settle", timeout: 60_000, intervals: [1000] },
           )
           .toBe(2);
         expectFailedOnce(rows);
