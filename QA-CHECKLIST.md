@@ -1653,8 +1653,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 50 | 46 | 0 | 0 | 4 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **762** | **676 (89%)** | **38 (5%)** | **13 (2%)** | **35 (5%)** |
+| `integrations/` — Dedicated Integrations | 58 | 52 | 0 | 0 | 6 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **770** | **682 (89%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1670,7 +1670,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 770 `test()` calls carrying the `@stable` tag, distributed across 290 spec
+> 777 `test()` calls carrying the `@stable` tag, distributed across 291 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1857,6 +1857,13 @@
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
 - [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
+- [x] the signing secret is answered once, never read back, and a rotation retires the old one at once while the address stays → `api-triggers-webhook-ingress.spec.ts`
+- [x] a signed delivery is accepted once, runs, and reaches the flow through event_payload → `api-triggers-webhook-ingress.spec.ts`
+- [x] every refusal answers the same 404, byte for byte, and writes no ledger row → `api-triggers-webhook-ingress.spec.ts`
+- [x] the test action appends a synthetic event that runs through the real dispatcher → `api-triggers-webhook-ingress.spec.ts`
+- [x] the test action is refused on a dead trigger → `api-triggers-webhook-ingress.spec.ts`
+- [x] replay appends a new linked row that runs the original payload, and leaves the original as it was → `api-triggers-webhook-ingress.spec.ts`
+- [x] a flow that fails on every delivery records each event as failed, with no retry → `api-triggers-webhook-ingress.spec.ts`
 
 #### core-components/
 - [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
