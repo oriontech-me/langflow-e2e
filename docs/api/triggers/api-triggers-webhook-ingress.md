@@ -68,8 +68,8 @@ body alone, so every way the route can refuse is a possible oracle. The contract
   `date`, and no others: an unknown `public_id`, a wrong signature, a timestamp 400 s old, one 400 s
   in the future, no signature headers, a body that is not JSON, a paused trigger, a body of
   1 MiB + 1 byte, a provider segment of `microsoft` or `google` (real providers, wrong kind), and of
-  `slack` and `nosuch` (not ingress providers). No probe appended a row. A body just under 1 MiB
-  answered `202`.
+  `slack` and `nosuch` (not ingress providers). No probe appended a row. A body of exactly 1 MiB
+  (1 048 576 bytes) answered `202`: the route refuses only a length *over* the limit.
 - **One shape check is not a 404, and is not an oracle.** A `public_id` shorter than 8 characters
   (or outside `[A-Za-z0-9_-]`) answers FastAPI's `422` path validation. It depends only on the shape
   of the string, never on whether a trigger exists, so it reveals nothing. It is recorded here and
@@ -100,7 +100,8 @@ body alone, so every way the route can refuse is a possible oracle. The contract
   with the owner's agreement. A wrong secret would make every probe refuse for the secret's sake, so
   a stale timestamp, a paused trigger or an oversized body would be measured as nothing. Each probe
   carries exactly **one** defect and is otherwise signed with the right secret, and each has a
-  positive control: the same request without the defect answers `202`.
+  positive control: the same request without the defect answers `202`. The provider-segment probes
+  are the exception, and say less than they look like they do: see test 3.
 
 ### Known defect — a trigger whose every run fails reads healthy
 
@@ -145,8 +146,9 @@ each test's own `request`; `afterAll` deletes the owner, which takes its flows a
 One owner per worker rather than per test because each owner costs a login, and the login route
 allows 5 per minute per IP: an owner per test sat out a whole window mid-run (measured, +60 s).
 Every call is scoped by flow or trigger id, so the tests never read each other's rows. Every
-delivery body carries a per-run marker, and every event is matched by id or `dedupe_key`, never by
-position. A delivery is signed exactly as `verify_webhook` checks it.
+delivery body is unique within its trigger, and every event is matched by id or `dedupe_key`, never
+by position. Events still running when `afterAll` deletes the owner (test 3's controls are never
+waited for) are removed by that delete's cascade. A delivery is signed exactly as `verify_webhook` checks it.
 
 The **webhook flow** used below is `InboundWebhookTrigger → Chat Output` (the trigger's `Event`
 output into `input_value`), created through `POST /api/v1/flows/`. Its trigger is the one flow save
@@ -172,7 +174,7 @@ node's id, which is then enabled (`active`).
    starts with `ingress:webhook:`, `payload` is `{provider: "webhook", delivery: <body>}`.
 3. Send the **identical** request again (same body, same timestamp, same signature) → `202`, and the
    list still holds exactly that one row (same id).
-4. Wait for the row to settle (cap 30 s) → `completed`, `job_id` and `session_id` set, `error: null`.
+4. Wait for the row to settle (cap 45 s) → `completed`, `job_id` and `session_id` set, `error: null`.
 5. Read the run's message by that `session_id` and parse its JSON: `event_id` and `dedupe_key` are
    the row's, `kind: "inbound_webhook"`, and `payload.delivery` equals the body.
 
@@ -187,17 +189,23 @@ node's id, which is then enabled (`active`).
    - no `X-Langflow-Signature` and no `X-Langflow-Timestamp`;
    - a body that is not JSON;
    - a body of 1 048 577 bytes;
-   - the provider segment `microsoft`, `google` and `nosuch` in place of `webhook`;
+   - the provider segment `microsoft`, `google` and `nosuch` in place of `webhook`. These pin that
+     the refusal is uniform, **not** the kind check (`resolve_target` refusing a provider that does
+     not match the trigger's kind): were that check to regress, a webhook trigger resolved under
+     `microsoft` would still be refused by `verify_microsoft` (no `value` list) and under `google`
+     by `verify_google` (no channel token), so the 404 is guaranteed either way. A black-box
+     regression of the kind match is not observable with a webhook trigger; `nosuch` is refused
+     earlier still, at the closed provider set;
    - the trigger paused (`POST …/disable` → `paused`).
 3. The events list still holds zero rows.
-4. Positive controls, each the same request without its defect → `202`: the body of exactly
-   1 048 576 bytes, the `webhook` segment, the right timestamp, and the paused probe's exact request
-   after `POST …/enable`. These controls are what make each 404 attributable to its defect.
+4. Positive controls → `202`: the body of exactly 1 048 576 bytes, the paused probe's exact request
+   after `POST …/enable`, and one fresh, correctly signed JSON body on the `webhook` segment (the
+   other probes' defects removed). These controls are what make each 404 attributable to its defect.
 
 **Test 4 — `the test action appends a synthetic event that runs through the real dispatcher`**
 1. Webhook flow, its trigger (enabled; no secret is needed).
-2. `POST …/test` with `payload: {e2e: <marker>}` → `202`, a `pending` row, `dedupe_key` starting
-   with `test:`, `payload` equal to `{e2e: <marker>, test: true}`.
+2. `POST …/test` with `payload: {e2e: <run>, marker: "test"}` → `202`, a `pending` row, `dedupe_key`
+   starting with `test:`, `payload` equal to `{e2e: <run>, marker: "test", test: true}`.
 3. Wait for it to settle → `completed`, with `job_id` and `session_id`. Its run's message parses to
    an envelope whose `event_id` is the row's and whose `payload` is the row's payload.
 
@@ -266,8 +274,8 @@ After the run, the instance has no flow, trigger or user left from this file.
   `404` every refusal gets.
 - `src/backend/base/langflow/services/triggers/ingress/verifiers.py` — `verify_webhook`, the
   signature scheme, the timestamp window and the dedupe digest.
-- `src/backend/base/langflow/services/triggers/ingress/intake.py` — `resolve_target` (the provider
-  must match the trigger's kind), the accepting states and the `{provider, delivery}` envelope.
+- `src/backend/base/langflow/services/triggers/ingress/intake.py` — `resolve_target`, the accepting
+  states and the `{provider, delivery}` envelope.
 - `src/backend/base/langflow/api/v1/triggers.py` — `ingress`, `signing-secret`, `events`, `test`
   and `replay`.
 - `src/backend/base/langflow/services/triggers/ledger.py` — dedupe on `(trigger_id, dedupe_key)` and

@@ -460,6 +460,9 @@ test.describe("Triggers — inbound webhook ingress", () => {
         const oversized = bodyOfSize(MAX_BODY_BYTES + 1);
         await expectUniform("a body over 1 MiB", ingress.path, signedHeaders(secret, now(), oversized), oversized);
 
+        // These pin that the refusal is uniform, not the kind check: were `resolve_target` to accept a
+        // webhook trigger under `microsoft` or `google`, that provider's own verifier would still
+        // refuse this body, so the 404 holds either way.
         for (const provider of ["microsoft", "google", "nosuch"]) {
           const body = probeBody(`provider-${provider}`);
           await expectUniform(`provider segment ${provider}`, at(provider), signedHeaders(secret, now(), body), body);
@@ -630,6 +633,7 @@ test.describe("Triggers — inbound webhook ingress", () => {
         const settled = await settledEvent(request, trigger.id, (e) => e.id === replay.id, "the replay");
         expectRan(settled, "the replay");
         expect(settled.job_id, "the replay is its own run").not.toBe(original.job_id);
+        expect(settled.session_id, "the replay runs in its own session").not.toBe(original.session_id);
         const envelope = await deliveredEnvelope(request, flowId, settled);
         expect(envelope.event_id).toBe(replay.id);
         expect(envelope.payload).toEqual({ provider: "webhook", delivery });
