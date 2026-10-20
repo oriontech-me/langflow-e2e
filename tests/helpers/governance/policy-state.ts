@@ -246,3 +246,101 @@ export function singleNodeFlow(name: string, componentType: string) {
     },
   };
 }
+
+/**
+ * The six policy sets `PUT /api/v1/policy-bundle` writes, in one place.
+ *
+ * That endpoint is a FULL replacement (#2299): a set the body leaves out is
+ * stored as `[]`, so a write that carried only the integration fields would
+ * silently clear a component block someone else set. Every bundle write here
+ * therefore sends all six.
+ */
+export const POLICY_BUNDLE_SETS = [
+  "approved_provider_ids",
+  "blocked_component_keys",
+  "blocked_template_keys",
+  "blocked_model_keys",
+  "approved_integration_provider_ids",
+  "blocked_integration_action_keys",
+] as const;
+
+export type PolicyBundleSetName = (typeof POLICY_BUNDLE_SETS)[number];
+export type PolicyBundleSets = Record<PolicyBundleSetName, string[]>;
+
+/** The six sets of a bundle read, an absent one read as `[]`. */
+export function bundleSets(bundle: PolicyBundleResponse): PolicyBundleSets {
+  const sets = {} as PolicyBundleSets;
+  for (const name of POLICY_BUNDLE_SETS) sets[name] = [...(bundle[name] ?? [])];
+  return sets;
+}
+
+/**
+ * True when all six sets are empty. Unlike {@link isPolicyPristine}, this one
+ * also reads the model and integration sets: a leftover integration block makes
+ * every "blocked ⇒ absent" assertion of the integration spec unfalsifiable.
+ */
+export function isBundlePristine(bundle: PolicyBundleResponse): boolean {
+  return POLICY_BUNDLE_SETS.every((name) => (bundle[name]?.length ?? 0) === 0);
+}
+
+/** Names every non-empty set, for a skip message that says what to clear (#1012). */
+export function describeBundleSets(bundle: PolicyBundleResponse): string {
+  const parts = POLICY_BUNDLE_SETS.filter((name) => (bundle[name]?.length ?? 0) > 0).map(
+    (name) => `${name}: ${(bundle[name] ?? []).join(", ")}`,
+  );
+  return parts.length > 0 ? parts.join("; ") : "pristine";
+}
+
+/** Same members, order ignored — the server sorts what it stores. */
+export function sameBundleSets(a: PolicyBundleSets, b: PolicyBundleSets): boolean {
+  return POLICY_BUNDLE_SETS.every((name) => {
+    const left = [...a[name]].sort();
+    const right = [...b[name]].sort();
+    return left.length === right.length && left.every((value, i) => value === right[i]);
+  });
+}
+
+/**
+ * The body of a `PUT /api/v1/policy-bundle`: the current bundle's six sets with
+ * `overrides` applied, and the current revision as `expected_revision`, which
+ * the endpoint requires (a write without it is refused `422`; a stale one `409`).
+ */
+export function buildBundleWrite(
+  current: PolicyBundleResponse,
+  overrides: Partial<PolicyBundleSets>,
+  reason: string,
+): PolicyBundleSets & { expected_revision: number; reason: string } {
+  return {
+    ...bundleSets(current),
+    ...overrides,
+    expected_revision: current.revision ?? 0,
+    reason,
+  };
+}
+
+/**
+ * Put the six sets back as `snapshot` had them, through the bundle itself.
+ *
+ * {@link restorePolicy} cannot do this: the catalog and model-provider writers
+ * carry the integration sets forward unchanged, so it would leave an integration
+ * block in place. Reads the active bundle first and writes only when it differs,
+ * so a clean teardown costs no revision. Throws when the write fails or when the
+ * active bundle still differs afterwards — the caller runs this from `afterAll`,
+ * where a bundle left blocked must fail the suite.
+ */
+export async function restorePolicyBundle(
+  request: APIRequestContext,
+  auth: string,
+  snapshot: PolicyBundleSets,
+  reason = "Restored by the e2e suite",
+): Promise<void> {
+  const current = await readPolicyBundle(request, auth);
+  if (sameBundleSets(bundleSets(current), snapshot)) return;
+  await okJson(request, "put", "/api/v1/policy-bundle", auth, buildBundleWrite(current, snapshot, reason));
+  const after = bundleSets(await readPolicyBundle(request, auth));
+  if (!sameBundleSets(after, snapshot)) {
+    throw new Error(
+      `policy bundle not restored: expected ${describeBundleSets(snapshot)}, found ${describeBundleSets(after)}`,
+    );
+  }
+}
