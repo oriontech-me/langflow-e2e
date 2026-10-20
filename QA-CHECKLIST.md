@@ -1631,8 +1631,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 37 | 31 | 0 | 0 | 6 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **749** | **661 (88%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
+| `integrations/` — Dedicated Integrations | 42 | 37 | 0 | 0 | 5 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **754** | **667 (88%)** | **38 (5%)** | **13 (2%)** | **36 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1648,7 +1648,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 753 `test()` calls carrying the `@stable` tag, distributed across 287 spec
+> 762 `test()` calls carrying the `@stable` tag, distributed across 288 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2015,6 +2015,15 @@
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
+- [x] the Bundles palette holds every manifest action in its provider's group and no trigger → `connector-node-picker.spec.ts`
+- [x] every <provider.label> action in the manifest lands on the canvas with an unbound connection field → `connector-node-picker.spec.ts`
+- [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
+- [x] a trigger refuses a connection its flow's owner does not own → `connector-node-picker.spec.ts`
+- [x] the requirement line follows the node's inputs → `connector-node-picker.spec.ts`
+- [x] an empty list says how to get a connection, and Refresh fetches a new one → `connector-node-picker.spec.ts`
+- [x] a list that fails to load says so → `connector-node-picker.spec.ts`
+- [x] picking a connection binds its handle, a reload keeps it, and Clear unbinds it → `connector-node-picker.spec.ts`
+- [x] a handle that outlived its connection is shown as not found → `connector-node-picker.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
