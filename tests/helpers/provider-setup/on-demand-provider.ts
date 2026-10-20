@@ -196,14 +196,17 @@ export async function ensureConfiguredOverApi(
       `the server did not report "${expectedKey}" as enabled after the request ` +
       `(echo: ${JSON.stringify(echoed).slice(0, 200)}; effective state read back: ` +
       `${effective === null ? "unreadable" : String(effective)})` +
-      // A live provider's catalog is rebuilt on that read: Langflow fetches it from the
-      // provider (10 s timeout, `fetch_live_openrouter_models`) and a failed fetch leaves
-      // the provider with no rows, so `false` can mean "the provider's catalog did not
-      // answer" as much as "the enable did not land" (#2321).
+      // `false` covers more than "the enable did not land": the read also answers false for
+      // a model that is present but off (disabled meanwhile, deprecated, its provider read
+      // as unconfigured) — and, for a provider whose catalog Langflow fetches LIVE on every
+      // read (OpenRouter: `LIVE_MODEL_PROVIDERS`, a 10 s fetch that leaves the provider
+      // with no rows when it fails), for a catalog that did not load. Foundry is only
+      // conditionally live and keeps its static catalog on a failed fetch, so for it the
+      // last cause does not apply, which is why the message scopes it to such providers (#2321).
       (effective === false
-        ? ` — the model is absent from the provider's catalog as Langflow read it, ` +
-          `either because the enable did not land or because the provider's live ` +
-          `catalog did not load`
+        ? ` — the model is not enabled in the catalog as Langflow read it: the enable did ` +
+          `not land, the model was disabled meanwhile, or, for a provider whose catalog ` +
+          `Langflow fetches live, that catalog did not load`
         : ""),
   };
 }

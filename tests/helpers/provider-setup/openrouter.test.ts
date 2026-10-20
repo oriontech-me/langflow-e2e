@@ -326,7 +326,8 @@ test("a model ABSENT from the read is not enabled — the false positive the rea
   });
   assert.equal(absent.configured, false);
   assert.match(absent.detail, /effective state read back: false/);
-  assert.match(absent.detail, /live catalog did not load/);
+  assert.match(absent.detail, /not enabled in the catalog as Langflow read it/);
+  assert.match(absent.detail, /catalog Langflow fetches live, that catalog did not load/);
 });
 
 test("the per-type map decides over the flat one, which ORs rows across model types", async () => {
@@ -343,5 +344,5 @@ test("a read that does not answer is reported as unreadable, never as a verdict"
   const failed = await configureWithRead({ status: 500, body: { detail: "boom" } });
   assert.equal(failed.configured, false);
   assert.match(failed.detail, /effective state read back: unreadable/);
-  assert.doesNotMatch(failed.detail, /live catalog/);
+  assert.doesNotMatch(failed.detail, /fetches live/);
 });
