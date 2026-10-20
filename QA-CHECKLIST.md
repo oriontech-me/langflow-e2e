@@ -1635,8 +1635,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 45 | 41 | 0 | 0 | 4 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **757** | **671 (89%)** | **38 (5%)** | **13 (2%)** | **35 (5%)** |
+| `integrations/` — Dedicated Integrations | 46 | 43 | 0 | 0 | 3 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **758** | **673 (89%)** | **38 (5%)** | **13 (2%)** | **34 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1652,7 +1652,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 762 `test()` calls carrying the `@stable` tag, distributed across 288 spec
+> 767 `test()` calls carrying the `@stable` tag, distributed across 289 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1672,6 +1672,11 @@
 - [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] another user's connection answers 404 on every route, exactly like one that does not exist → `api-connections-ownership.spec.ts`
+- [x] an instance connection is visible to every user, but only a superuser may create, change or remove it → `api-connections-ownership.spec.ts`
+- [x] only the owner may allow non-interactive use, and anyone with write access may clear it → `api-connections-ownership.spec.ts`
+- [x] a superuser can check, rename, revoke and delete another user's connection → `api-connections-ownership.spec.ts`
+- [x] the write limit is per user, and deleting a user removes its connections → `api-connections-ownership.spec.ts`
 - [x] the Playground build resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
 - [x] POST /api/v1/run resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
 - [x] POST /api/v1/responses resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
