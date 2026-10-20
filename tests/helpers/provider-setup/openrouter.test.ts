@@ -295,3 +295,53 @@ test("a catalog DEFAULT model is confirmed by reading the effective state, not b
   assert.equal(off.configured, false);
   assert.match(off.detail, /did not report "OpenRouter::llm::openai\/gpt-4o-mini".*effective state read back: false/);
 });
+
+// ─── The read-back's rules (#2321) ───────────────────────────────────────────
+//
+// Each case below kills one mutation that left the suite green after #2293: reading an
+// ABSENT model as enabled (`state !== false`), preferring the flat map over the per-type
+// one, and reporting a failed read as anything but unreadable.
+
+const READ_URL = "GET /api/v1/models/enabled_models?purpose=configure";
+const NOT_ECHOED = {
+  "GET /api/v1/auto_login": { body: { access_token: "t" } },
+  "GET /api/v1/variables/": { body: [{ name: "OPENROUTER_API_KEY" }] },
+  "POST /api/v1/models/enabled_models": { body: { enabled_models: [] } },
+};
+
+async function configureWithRead(read: { status?: number; body?: unknown }) {
+  return ensureOpenRouterConfigured(
+    fakeRequest({ ...NOT_ECHOED, [READ_URL]: read }, []),
+    "openai/gpt-4o-mini",
+    ENV,
+    new Set(),
+  );
+}
+
+test("a model ABSENT from the read is not enabled — the false positive the read exists to prevent", async () => {
+  // An unknown provider name, or a model the live catalog did not list, reads back as
+  // no entry at all. That must never confirm the configuration.
+  const absent = await configureWithRead({
+    body: { enabled_models: { OpenRouter: { "openai/gpt-4o": true } }, enabled_models_by_type: {} },
+  });
+  assert.equal(absent.configured, false);
+  assert.match(absent.detail, /effective state read back: false/);
+  assert.match(absent.detail, /live catalog did not load/);
+});
+
+test("the per-type map decides over the flat one, which ORs rows across model types", async () => {
+  const typedOff = await configureWithRead({
+    body: {
+      enabled_models: { OpenRouter: { "openai/gpt-4o-mini": true } },
+      enabled_models_by_type: { OpenRouter: { llm: { "openai/gpt-4o-mini": false } } },
+    },
+  });
+  assert.equal(typedOff.configured, false, typedOff.detail);
+});
+
+test("a read that does not answer is reported as unreadable, never as a verdict", async () => {
+  const failed = await configureWithRead({ status: 500, body: { detail: "boom" } });
+  assert.equal(failed.configured, false);
+  assert.match(failed.detail, /effective state read back: unreadable/);
+  assert.doesNotMatch(failed.detail, /live catalog/);
+});
