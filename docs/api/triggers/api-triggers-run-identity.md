@@ -30,7 +30,7 @@ Measured on `1.13.0.dev47`:
 | How the connection is named | Where the opt-in is checked | What a refusal looks like |
 |---|---|---|
 | By **handle**, inside the flow (a `ConnectionRefInput` on a node) | Inside the run, by the resolver | The event is `dispatched` with a `job_id`, the run completes, the node reports `connection-not-authorized` / `non-interactive-opt-in-required`, and the trigger **stays `active`** |
-| By the trigger's own **`connection_id`** | Before the job exists, by the dispatcher's `connection_preflight` | The event is `failed` with `error: "connection_not_authorized"` and no `job_id`, and the trigger moves to **`needs_reconnect`** with `last_error: "connection_not_authorized"` |
+| By the trigger's own **`connection_id`** | Before the job exists, by the dispatcher's `connection_preflight`, on every event | The event is `failed` with `error: "connection_not_authorized"` and no `job_id`, and the trigger is marked **`needs_reconnect`** with `last_error: "connection_not_authorized"` |
 
 The issue's first scope item put both halves on the handle path (*"a probe node references the
 owner's connection … and the trigger moves to `needs_reconnect`"*). The code and the measurement
@@ -49,7 +49,8 @@ A trigger run's Chat Output lands in the owner's `GET /api/v1/monitor/messages?f
 `session_id` the event reads once it is `dispatched` (`trigger:<trigger_id>:<event_id>`). The run is
 matched by that `session_id`, never by count or position. Measured: an event is `dispatched` 2–10 s
 after it is appended (the dispatcher polls every 5 s by default), and its message is there ~0.2 s
-after that.
+after that. On the dispatcher's next pass `reconcile_dispatched` closes the event out as
+`completed`, so a run is accepted in either state; both carry the `job_id` and the `session_id`.
 
 ### Measured on `1.13.0.dev47`
 
@@ -68,16 +69,20 @@ after that.
 - **Another user's connection is not the run's to use.** The superuser's own row, opted in, reads
   `connection-unresolved` / `missing` inside the owner's run: the resolver looks the handle up as the
   flow owner, who cannot see it.
-- **`needs_reconnect` holds new events and clears on enable.** A `/test` event appended while the
-  trigger is `needs_reconnect` is accepted (`202`) and stays `pending`. Turning the opt-in on does not
-  move the trigger by itself; `POST …/enable` puts it back to `active` with `last_error: null`, and
-  the next event is dispatched and resolves the row.
+- **`needs_reconnect` marks the trigger; it does not hold its events.** It is one of the dispatcher's
+  dispatchable states (`_DISPATCHABLE_TRIGGER_STATES`), so every new event is claimed and preflighted
+  again. With the opt-in still off, it fails the same way. Once the owner turns the opt-in on, the
+  next event is dispatched and resolves the row **with no re-enable**, and the trigger still reads
+  `needs_reconnect` afterwards: a successful run does not clear the mark. `POST …/enable` clears it,
+  back to `active` with `last_error: null`. (Only Microsoft and Google source triggers are held in
+  that state, and those cannot be created through this API.)
 - **A Schedule trigger imported through flow JSON fires.** A `ScheduleTrigger` node
   (`cron_expression: "* * * * *"`, `timezone: "UTC"`) in a flow created through `POST /api/v1/flows/`
   makes the flow-save reconciler create a `schedule` row in state `pending`, with `node_id` set to the
   node's id and `config` `{cron, timezone, catchup_policy: "coalesce", share_session: false}`.
-  `next_fire_at` is still `null` right after `enable`; the scheduler sets it to the next minute
-  boundary on its next pass (~3 s). At that minute an event with `dedupe_key: "tick:<that instant>"`
+  `next_fire_at` is still `null` right after `enable`; the scheduler sets it on its next pass (up to
+  one 5 s poll later), to the first minute boundary after **that pass** — so an `enable` a few seconds
+  before a boundary can arm the boundary after it. The same write moves the row's `updated_at`. At that minute an event with `dedupe_key: "tick:<that instant>"`
   and `payload.scheduled_at` equal to it is appended, dispatched ~4 s later, and the run reports the
   same verdicts as a webhook run. `disable` answers `paused`.
 
@@ -133,16 +138,17 @@ connections with it.
 6. `PATCH` the owner's row `allow_non_interactive: true`. Deliver a second signed body → `202`; its run
    reads owner → `resolved`, `user`, the owner's row id; instance unchanged; superuser still `missing`.
 
-**Test 2 — `a trigger that names its connection fails closed before any run, and waits in needs_reconnect until the owner opts in`**
+**Test 2 — `a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in`**
 1. Plant the owner's `google` row (opt-in off) and create the probe flow with one field for it.
 2. `POST /api/v1/triggers` (`kind: "inbound_webhook"`, `connection_id` = that row) → `201`. Enable →
    `active`.
 3. `POST …/test` → `202`, a `pending` event. Wait for it to settle → `failed`,
    `error: "connection_not_authorized"`, `job_id: null`, `session_id: null`: no run was created.
 4. `GET` the trigger → `needs_reconnect`, `last_error: "connection_not_authorized"`.
-5. `PATCH` the row `allow_non_interactive: true`. `POST …/enable` → `active`, `last_error: null`.
-6. `POST …/test` → the event is `dispatched` with a `job_id`, and its run reads owner → `resolved`,
-   `user`, the row's id.
+5. `PATCH` the row `allow_non_interactive: true`, with **no** re-enable. `POST …/test` → the event
+   runs (it carries a `job_id` and a `session_id`), and its run reads owner → `resolved`, `user`, the
+   row's id. The trigger still reads `needs_reconnect`.
+6. `POST …/enable` → `active`, `last_error: null`.
 
 **Test 3 — `a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner`**
 1. Plant the owner's `google` row (opt-in off) and an instance row (flag sent `false`).
@@ -150,11 +156,14 @@ connections with it.
    `timezone: "UTC"`), through `POST /api/v1/flows/`.
 3. `GET /api/v1/triggers?flow_id=…` → exactly one row: `kind: "schedule"`, `node_id` = the node's id,
    `config.cron: "* * * * *"`, `config.timezone: "UTC"`, `state: "pending"`, `user_id` = the owner's.
-4. `POST …/enable` → `active`. Poll the trigger until `next_fire_at` is set; it is a whole minute
-   (`:00` seconds) no more than 60 s ahead.
-5. Poll the events until one with `dedupe_key: "tick:<next_fire_at>"` is `dispatched` with a `job_id`
-   and `payload.scheduled_at` equal to `next_fire_at`. The wait is bounded by the minute plus three
-   dispatcher polls (~80 s); the test timeout is set to cover it with room to spare.
+4. `POST …/enable` → `active`. Poll the trigger until `next_fire_at` is set. It is a whole minute
+   (`:00` seconds), after the scheduler's write (the row's `updated_at`) and no more than 61 s after it
+   (60 s to the boundary, plus the second `updated_at` is truncated to). The bound is measured from the
+   scheduler's write, not from the enable, for the reason above.
+5. Poll the events until the one with `dedupe_key: "tick:<next_fire_at>"` has run (it carries a
+   `job_id`), with `payload.scheduled_at` equal to `next_fire_at`. The wait is capped at 120 s: at most
+   the minute to the boundary, plus the scheduler's and the dispatcher's polls and the run. The test
+   timeout is 240 s.
 6. Its run reads owner → `denied` / `non-interactive-opt-in-required`, instance → `resolved`.
 7. `POST …/disable` → `paused`, so the schedule stops firing before teardown.
 
@@ -169,9 +178,11 @@ and once at `--workers=2` together with `api/connections/`, with:
   **exact connection id and `owner_kind`** for a resolution, read from the run whose `session_id`
   the event names;
 - the handle path (test 1) leaving the trigger `active` with `last_error: null` after a refused run;
-- the preflight path (test 2) leaving no run at all (`job_id` and `session_id` both `null`) and
-  the trigger in `needs_reconnect` until `enable`;
-- the schedule (test 3) firing exactly at `next_fire_at`, a whole minute, with the tick's
+- the preflight path (test 2) leaving no run at all (`job_id` and `session_id` both `null`), the
+  trigger marked `needs_reconnect`, the next event running as soon as the opt-in is on, and `enable`
+  clearing the mark;
+- the schedule (test 3) firing exactly at `next_fire_at`, the first whole minute after the
+  scheduler armed it, with the tick's
   `dedupe_key` and `scheduled_at` naming it;
 - no planted token appearing in any probe message;
 - no backend error logged, and the declared coverage matching what the fixture recorded:
