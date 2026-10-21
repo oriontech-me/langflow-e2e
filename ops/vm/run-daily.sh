@@ -312,11 +312,13 @@ main() {
   #
   # Rollback: drop this line. run-e2e.sh compares AUTO_REMOVE strictly against "1", so
   # the lane goes back to removing nothing, and the removal is done by hand again from
-  # this run's results.json.
+  # this run's results.json. To turn it off for a while without a code change, set
+  # AUTO_REMOVE=0 in a drop-in on the unit instead.
   #
   # Overridable, like NOTIFY_SLACK, for the stretch when the umbrella cannot be opened
   # (#2330): a removal nobody is told about is worse than one made by hand. A drop-in on
-  # the unit sets it to 0; with no drop-in the lane removes as before.
+  # the unit sets it to 0; with no drop-in the lane removes as before. An empty value
+  # counts as unset, so the drop-in must say 0.
   export AUTO_REMOVE="${AUTO_REMOVE:-1}"
   # And from 2026-10-05 this lane is also the writer of the tracked history (#2164): the
   # row it adds to its ledger goes to reports/daily-history.jsonl and token-history.jsonl
@@ -327,10 +329,17 @@ main() {
   # Rollback: drop this line. The rows keep landing in the ledger either way.
   export HISTORY_TO_SOURCE=1
   # Overridable for the same stretch (#2330): with the destination out of reach, the
-  # preflight refuses the whole run over the issue credential, and a run with no umbrella
-  # still reports on Slack and the platform. Same drop-in, same default.
+  # preflight refuses the whole run when the host rejects the issue credential, and a run
+  # with no umbrella still reports on Slack and the platform (NOTIFY_SLACK_ALWAYS above,
+  # POST_QA_PLATFORM below). Same drop-in, same default.
   export CREATE_ISSUE="${CREATE_ISSUE:-1}"
   export ISSUE_HOST ISSUE_REPO ISSUE_CC
+  # Said in every day's log while either is off: a drop-in left behind once the
+  # destination is back would otherwise keep red days without an umbrella or a removal,
+  # and only `systemctl cat` would show why.
+  if [ "$CREATE_ISSUE" != "1" ] || [ "$AUTO_REMOVE" != "1" ]; then
+    echo "WARNING: switches overridden by the unit's environment: CREATE_ISSUE=$CREATE_ISSUE AUTO_REMOVE=$AUTO_REMOVE -- no umbrella and no @stable removal while this lasts (#2330)"
+  fi
 
   # The platform half of the verdict (#2013). Until this line the lane produced a run a
   # day that `app.oriontech.me/e2e-tests/spec-files` could not see: the switch defaults

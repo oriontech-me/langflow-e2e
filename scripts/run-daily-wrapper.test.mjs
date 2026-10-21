@@ -305,6 +305,16 @@ test("a drop-in can turn the umbrella and the removal off, and run-e2e.sh receiv
   const dir = makeTempDir("wrapper-switches-off");
   const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }), {}, { AUTO_REMOVE: "0", CREATE_ISSUE: "0" });
   assert.match(r.log, /run-e2e got AUTO_REMOVE=\[0\] CREATE_ISSUE=\[0\]/);
+  // And it is said in the day's log, so a drop-in forgotten after the stretch shows up.
+  assert.match(r.log, /WARNING: switches overridden by the unit's environment: CREATE_ISSUE=0 AUTO_REMOVE=0/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("with no override the log says nothing about the switches (#2330)", () => {
+  const dir = makeTempDir("wrapper-switches-default");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
+  assert.match(r.log, /run-e2e got AUTO_REMOVE=\[1\] CREATE_ISSUE=\[1\]/);
+  assert.doesNotMatch(r.log, /switches overridden/);
   rmSync(dir, { recursive: true, force: true });
 });
 
