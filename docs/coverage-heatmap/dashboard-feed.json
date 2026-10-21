@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-20",
+ "refreshed": "2026-10-21",
  "refreshWindow": {
-  "testHealthSince": "2026-09-05",
+  "testHealthSince": "2026-09-06",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -756,14 +756,14 @@
     "empty": 2
    },
    "specs": {
-    "specs": 40,
-    "stable": 40
+    "specs": 43,
+    "stable": 43
    },
    "testHealth": {
     "chronicHardFailures": 2,
     "chronicFlaky": 2,
-    "stableSpecs": 40,
-    "penalty": 0.038
+    "stableSpecs": 43,
+    "penalty": 0.035
    },
    "upstreamBugsByYear": {
     "2024": 10,
@@ -932,7 +932,7 @@
     "empty": 1
    },
    "specs": {
-    "specs": 8,
+    "specs": 9,
     "stable": 0
    },
    "testHealth": {

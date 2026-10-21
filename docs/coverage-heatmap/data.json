@@ -629,8 +629,8 @@
    "testHealth": {
     "chronicHardFailures": 2,
     "chronicFlaky": 2,
-    "stableSpecs": 40,
-    "penalty": 0.038
+    "stableSpecs": 43,
+    "penalty": 0.035
    },
    "mitigation": 0.72,
    "checklistBullets": 102,
@@ -655,8 +655,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 40,
-    "stable": 40
+    "specs": 43,
+    "stable": 43
    }
   },
   {
@@ -783,7 +783,7 @@
    "upstreamBugsByYear": {},
    "upstreamBugCount": 0,
    "specCounts": {
-    "specs": 8,
+    "specs": 9,
     "stable": 0
    }
   },
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-20",
+ "refreshed": "2026-10-21",
  "refreshWindow": {
-  "testHealthSince": "2026-09-05",
+  "testHealthSince": "2026-09-06",
   "days": 45
  }
 }
