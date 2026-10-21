@@ -313,7 +313,11 @@ main() {
   # Rollback: drop this line. run-e2e.sh compares AUTO_REMOVE strictly against "1", so
   # the lane goes back to removing nothing, and the removal is done by hand again from
   # this run's results.json.
-  export AUTO_REMOVE=1
+  #
+  # Overridable, like NOTIFY_SLACK, for the stretch when the umbrella cannot be opened
+  # (#2330): a removal nobody is told about is worse than one made by hand. A drop-in on
+  # the unit sets it to 0; with no drop-in the lane removes as before.
+  export AUTO_REMOVE="${AUTO_REMOVE:-1}"
   # And from 2026-10-05 this lane is also the writer of the tracked history (#2164): the
   # row it adds to its ledger goes to reports/daily-history.jsonl and token-history.jsonl
   # on the source's main, as the Actions daily's did until it was switched off on
@@ -322,7 +326,10 @@ main() {
   #
   # Rollback: drop this line. The rows keep landing in the ledger either way.
   export HISTORY_TO_SOURCE=1
-  export CREATE_ISSUE=1
+  # Overridable for the same stretch (#2330): with the destination out of reach, the
+  # preflight refuses the whole run over the issue credential, and a run with no umbrella
+  # still reports on Slack and the platform. Same drop-in, same default.
+  export CREATE_ISSUE="${CREATE_ISSUE:-1}"
   export ISSUE_HOST ISSUE_REPO ISSUE_CC
 
   # The platform half of the verdict (#2013). Until this line the lane produced a run a
