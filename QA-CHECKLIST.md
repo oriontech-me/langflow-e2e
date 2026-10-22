@@ -1604,6 +1604,24 @@
 - [x] An anonymous caller resolves none — the shareable playground and the public v2 route (`connection-not-authorized` + the `anonymous-principal` hint), a public MCP project and a public A2A agent (the not-authorized message; the typed reason is not observable there) — judged by a real read-only connector because public execution swaps custom code, and contrasted with the same flow run authenticated stopping at `scope-missing` → api/connections/api-connections-resolution-entry-points.spec.ts
 - [x] An A2A agent behind an API key is held to the anonymous floor too: the probe reports `anonymous-principal`. Code over design — `connection-contract.md` says the authenticated sub-path resolves for its owner, `api/v1/a2a.py` stamps both sub-paths anonymous; recorded in the spec doc, not a `test.fail()` → api/connections/api-connections-resolution-entry-points.spec.ts
 
+#### 24.8 A trigger run acts as the flow owner (#2309)
+
+- [x] A signed `inbound_webhook` delivery (`X-Langflow-Signature`, `202`) runs the flow as its owner, non-interactively: the owner's connection is refused inside the run with `non-interactive-opt-in-required` until the owner opts in, an instance connection resolves with its own flag off, and another user's row (opted in) reads `connection-unresolved` / `missing` — and a refusal inside the run leaves the trigger `active` → api/triggers/api-triggers-run-identity.spec.ts
+- [x] A trigger that names its own `connection_id` is refused by the dispatcher's preflight before any run exists (event `failed` / `connection_not_authorized`, no `job_id`), and marks the trigger `needs_reconnect`. The mark does not hold events: the next one runs as soon as the owner opts in, and only `enable` clears the mark → api/triggers/api-triggers-run-identity.spec.ts
+- [x] A `ScheduleTrigger` node imported through flow JSON creates an unarmed `schedule` row; once enabled it fires at the next whole minute (`tick:<that instant>`) and the run resolves as the owner, non-interactively → api/triggers/api-triggers-run-identity.spec.ts
+- [ ] A trigger created by a collaborator with flow write still runs as the owner — not reachable on the OSS nightly (flows are owner-scoped without an authorization plugin); needs the `@enterprise` `@authz` lane
+
+#### 24.9 Inbound webhook ingress (#2308)
+
+- [x] The signing secret is answered only by the route that mints it — `GET …/ingress` answers the address and `has_signing_secret`, never the secret — and a rotation keeps `public_id` while the old secret is refused on the very next delivery; a `schedule` trigger answers `409` on both routes → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] A signed delivery answers `202` with no body and appends one `ingress:webhook:` row; the identical request again is acknowledged and collapsed; the row runs to `completed` with a `job_id`, and the flow's trigger node receives the exact body through `event_payload` → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] Every refusal is the same `404` byte for byte (status, body, headers but `date`) and writes no row — unknown id, wrong signature, stale and future timestamp, missing headers, non-JSON body, 1 MiB + 1 byte, mismatched or unknown provider segment, paused trigger — each probe carrying one defect and paired with a `202` control (the provider-segment probes pin uniformity only: a regressed kind match would still be refused by the other provider's verifier) → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] `POST …/test` appends a `test:` row with `payload.test = true` that runs through the real dispatcher to the flow, and answers `409` on a dead trigger → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] `POST …/replay` appends a new row linked by `replay_of_event_id` that runs the original payload and leaves the original unchanged; an unknown event, or another trigger's, answers `404` → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [x] A flow that fails on every delivery records each event `failed` / `job_failed` with `attempt: 0`, and nothing is retried → api/triggers/api-triggers-webhook-ingress.spec.ts
+- [ ] A trigger whose every run fails still reads `active` with `last_error: null` — known defect, upstream ticket and `test.fail()` owned by #2328
+- [ ] `/replay` answers `409` outside the 7-day window — not reachable on any lane (the window is at least one day and a delivery cannot be back-dated)
+
 ---
 
 
@@ -1641,8 +1659,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 46 | 43 | 0 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **758** | **673 (89%)** | **38 (5%)** | **13 (2%)** | **34 (4%)** |
+| `integrations/` — Dedicated Integrations | 58 | 52 | 0 | 0 | 6 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **770** | **682 (89%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1658,7 +1676,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 767 `test()` calls carrying the `@stable` tag, distributed across 289 spec
+> 777 `test()` calls carrying the `@stable` tag, distributed across 291 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1840,6 +1858,18 @@
 - [x] two projects sharing their first 26 characters are both created, each with its own MCP server → `api-projects-crud.spec.ts`
 - [x] download refuses an empty project and returns a ZIP for a populated one → `api-projects-transfer.spec.ts`
 - [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
+
+#### api/triggers/
+- [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
+- [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
+- [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
+- [x] the signing secret is answered once, never read back, and a rotation retires the old one at once while the address stays → `api-triggers-webhook-ingress.spec.ts`
+- [x] a signed delivery is accepted once, runs, and reaches the flow through event_payload → `api-triggers-webhook-ingress.spec.ts`
+- [x] every refusal answers the same 404, byte for byte, and writes no ledger row → `api-triggers-webhook-ingress.spec.ts`
+- [x] the test action appends a synthetic event that runs through the real dispatcher → `api-triggers-webhook-ingress.spec.ts`
+- [x] the test action is refused on a dead trigger → `api-triggers-webhook-ingress.spec.ts`
+- [x] replay appends a new linked row that runs the original payload, and leaves the original as it was → `api-triggers-webhook-ingress.spec.ts`
+- [x] a flow that fails on every delivery records each event as failed, with no retry → `api-triggers-webhook-ingress.spec.ts`
 
 #### core-components/
 - [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
