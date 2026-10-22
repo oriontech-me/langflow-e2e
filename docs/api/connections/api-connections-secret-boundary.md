@@ -103,7 +103,8 @@ already credential-free, which no route does; and every `oauth-*` reason needs a
 OAuth registration, which the product does not ship. Since #2301 every lane configures fake
 registrations (`docs/api/connections/oauth-fake-registrations.md`), and a denied callback then
 moves a row to `status: error` with `oauth-denied` — so that half of the OAuth failure path is
-reachable now, and belongs to #2307 rather than to this file.
+reachable now. All three `oauth-*` reasons are asserted in
+`docs/api/connections/api-connections-oauth-callback.md` (#2307) rather than in this file.
 
 So the spec asserts the half it can reach — **`status_reason` is `null` on every status a
 client can drive the connection into** — and says here, rather than in a passing test, that
