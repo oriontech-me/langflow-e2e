@@ -1659,8 +1659,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 58 | 52 | 0 | 0 | 6 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **770** | **682 (89%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
+| `integrations/` — Dedicated Integrations | 64 | 58 | 0 | 0 | 6 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **776** | **688 (89%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1676,7 +1676,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 777 `test()` calls carrying the `@stable` tag, distributed across 291 spec
+> 784 `test()` calls carrying the `@stable` tag, distributed across 292 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1722,6 +1722,13 @@
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for an undeclared key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] status_reason stays null on every status a client can drive the connection into → `api-connections-secret-boundary.spec.ts`
+- [x] the provider filter lists that provider's rows and no other → `api-connections-surface-details.spec.ts`
+- [x] revoke reports what happened at the provider: nothing to revoke, or a revocation that failed → `api-connections-surface-details.spec.ts`
+- [x] the page says the provider revocation failed when Slack refuses the token → `api-connections-surface-details.spec.ts`
+- [x] the deployment snapshot names each connection the project's flows need, with the union of their scopes → `api-connections-surface-details.spec.ts`
+- [x] the KB connector catalog names a provider and its scopes for every connector that needs a credential → `api-connections-surface-details.spec.ts`
+- [x] creating, revoking and deleting a connection writes no global variable → `api-connections-surface-details.spec.ts`
+- [x] on this lane's deployment context no capability is filtered, and none could be → `api-connections-surface-details.spec.ts`
 - [x] every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain → `api-integrations-manifest.spec.ts`
 - [x] every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id → `api-integrations-manifest.spec.ts`
 - [x] a provider's enabled flag and connection count are derived from its connections, and only its own → `api-integrations-manifest.spec.ts`
