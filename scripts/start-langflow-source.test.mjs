@@ -850,6 +850,24 @@ test("the environment block matches the pip starter's, read from that file", () 
   r.cleanup();
 });
 
+test("the fake OAuth registrations reach the server as the canonical JSON (#2301)", () => {
+  // The VM lane sends this script to `bash -s` on the target, so the value cannot be
+  // read from a file there and is inlined (fake-oauth-registrations.test.mjs pins that
+  // no file is read). This proves the inlined copy arrives whole. Parsed, because the
+  // property is that the server can read it.
+  const canonical = JSON.parse(readFileSync(join(HERE, "lib", "fake-oauth-registrations.json"), "utf8"));
+  const r = runScript();
+  assertExit(r, 0);
+  const value = r.langflowEnv.match(/^LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS=(.*)$/m)?.[1];
+  assert.ok(value, "the server received no LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS");
+  assert.deepEqual(JSON.parse(value), canonical);
+  r.cleanup();
+  const off = runScript({ env: { LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS: "{}" } });
+  assertExit(off, 0);
+  assert.match(off.langflowEnv, /^LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS=\{\}$/m);
+  off.cleanup();
+});
+
 test("the default bind is loopback, unlike the pip starter's, because the VM is shared", () => {
   const r = runScript();
   assertExit(r, 0);

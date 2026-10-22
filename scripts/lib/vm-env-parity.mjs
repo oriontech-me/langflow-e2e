@@ -122,6 +122,23 @@ export function readStarterLaunchEnv(text) {
   }
   if (assignments.size === 0) throw new Error("no prefix assignments found before the starter's ${RUN_CMD}");
 
+  // A default too long or too brace-laden for `${NAME:-…}` is held in a constant the
+  // starter assigns once, single-quoted, and the launch line names it —
+  // `NAME="${NAME:-$DEFAULT_X}"`, the shape LANGFLOW_SQLITE_PRAGMAS takes in run-e2e.sh
+  // and the fake OAuth registrations take here (#2301). The value is that literal, not
+  // the text `$DEFAULT_X`, or every such variable would read as drifted. Resolved only
+  // when exactly one `DEFAULT_X='…'` line exists: zero or two is a shape this reader
+  // does not understand, so the reference is left as written and the comparison names it.
+  for (const entry of assignments.values()) {
+    const ref = entry.overridable && entry.value.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/);
+    if (!ref) continue;
+    const literals = [...lines.join("\n").matchAll(new RegExp(`^${ref[1]}='([^']*)'$`, "gm"))];
+    if (literals.length === 1) {
+      entry.value = literals[0][1];
+      entry.resolvedFrom = ref[1];
+    }
+  }
+
   // Flags whose value comes from a variable — `--workers "${LANGFLOW_WORKERS:-1}"`.
   // The workflow sets LANGFLOW_WORKERS as an environment variable and the starter
   // spends it on the command line, so a name-only check would call it missing.
@@ -256,6 +273,11 @@ export const CLASSIFICATION = {
     carrier: "starter",
     reason:
       "product default is OFF and its router is ALWAYS mounted, so with the flag off the three /api/v1/a2a/* routes answer 404 and every A2A spec passes while testing nothing (#1240, #1195). Right for any instance, so the starter carries it",
+  },
+  LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS: {
+    carrier: "starter",
+    reason:
+      "fake OAuth registrations, one per provider and Slack profile (#2301). The product ships none, which stops the Add/Reconnect wizard before consent and leaves every OAuth route unexercised, and the specs that cover those routes fail rather than skip without them. Right for any test instance, so the starter carries it — inlined as DEFAULT_OAUTH_REGISTRATIONS, because this lane pipes the starter to `bash -s` on the target and no file of this repo exists there",
   },
   LANGFLOW_KB_ALLOWED_FOLDER_ROOTS: {
     carrier: "starter",
