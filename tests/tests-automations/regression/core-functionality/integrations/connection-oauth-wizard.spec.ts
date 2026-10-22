@@ -91,11 +91,22 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     return name;
   }
 
+  /**
+   * Opens Add and waits for its registration list. Continue is enabled before
+   * that list arrives, and a Continue sent meanwhile names the provider id as
+   * the registration (`"google"`), which the server refuses: measured by
+   * delaying the list, and seen once in CI. The spec doc records it.
+   */
   async function openAddDialog(page: Page): Promise<Locator> {
     await page.goto(PAGE);
+    const listed = page.waitForResponse(
+      (res) =>
+        new URL(res.url()).pathname === `${COLLECTION}/oauth/registrations` && res.request().method() === "GET",
+    );
     await page.getByTestId("add-connection").click();
     const dialog = page.getByRole("dialog", { name: "Add connection" });
     await expect(dialog).toBeVisible();
+    expect((await listed).status()).toBe(200);
     return dialog;
   }
 

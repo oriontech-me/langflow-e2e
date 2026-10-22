@@ -61,6 +61,14 @@ Two states need the registration list mocked, because the lanes serve one regist
 - **The *Connected* state** needs a real token exchange. It is out of scope with the rest of a successful consent.
 - **The popup after a failure.** The dialog closes the popup on success only. After a denial it stays open on the
   callback's failure page.
+- **Add's *Continue* does not wait for the registration list.** Reconnect's *Authorize* waits for it
+  (`canAuthorize` checks `!registrations.isLoading`), and Add's `canContinue` does not. A *Continue* sent before the
+  list arrives finds no list, falls back to the provider id as the registration (`resolveRegistrationId`'s path for a
+  backend without the listing route) and starts consent with `registration_id: "google"`. The server answers `400 "OAuth
+  registration ID is not configured."`, and the dialog shows *"Authorization did not complete."*. Measured on
+  `1.14.0.dev2` by delaying the list, and seen once in this PR's CI, where it was the first attempt of test 4. A user
+  rarely beats the request, so the spec waits for the list before it touches the dialog, and the race is recorded here
+  instead of asserted.
 - **The 10-minute client timeout**, which also shows the *expired* copy, is not waited out. The server-side
   `oauth-expired` reaches the same copy.
 - **The Reconnect defect manual QA recorded on 1.13** is fixed upstream (langflow#15822), and could not reproduce
