@@ -226,6 +226,19 @@ test("LANGFLOW_A2A_ENABLED can be forced off to reproduce the disabled surface",
   assert.match(runCall, /LANGFLOW_A2A_ENABLED=false/);
 });
 
+test("the fake OAuth registrations reach the container intact, and '{}' restores the product default (#2301)", () => {
+  // Asserted on what docker receives, parsed — not on the script's spelling: a quote
+  // lost on the way splits the JSON into words and the server reads no registration.
+  const canonical = JSON.parse(
+    readFileSync(fileURLToPath(new URL("./lib/fake-oauth-registrations.json", import.meta.url)), "utf8"),
+  );
+  const sent = (r) => r.calls.find((c) => c.startsWith("run ")).match(/(?:^| )LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS=(\S+)/)?.[1];
+  const value = sent(runScript());
+  assert.ok(value, "docker run carries no LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS");
+  assert.deepEqual(JSON.parse(value), canonical);
+  assert.equal(sent(runScript({ env: { LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS: "{}" } })), "{}");
+});
+
 // #2085 — the knobs a lane sets. Each default is asserted as well as the override,
 // because the defaults are what every documented `docker exec langflow-e2e-runner …`
 // and every developer's instance depend on.

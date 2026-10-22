@@ -55,9 +55,10 @@ With `integrations.google.gmail.send` blocked:
   category and the other Google components stay. `include_blocked=true` (superuser) brings it back.
 - **`POST /api/v1/custom_component`** with that component's own code answers **`404 {"detail": "Integration
   not found"}`**. Unblocked, the same body builds (`200`).
-- **`GET /api/v1/connections/oauth/registrations`** filters by policy too, but the nightly has no OAuth
-  registration (`{"registrations": []}` either way), so there is nothing to see disappear. That half belongs to
-  the fake-registration lane (#2301).
+- **`GET /api/v1/connections/oauth/registrations`** filters by policy too. The product ships no OAuth
+  registration, so this file was written against `{"registrations": []}` and has nothing to see disappear. Every
+  lane has carried fake registrations since #2301 (`docs/api/connections/oauth-fake-registrations.md`), so the
+  filter is now observable. It is not asserted here yet.
 
 With the ceiling narrowed to `["microsoft"]`, `/integrations` lists only `microsoft`, and no Google or Slack
 connector component is left in `/all`.

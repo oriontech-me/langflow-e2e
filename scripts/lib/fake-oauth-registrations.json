@@ -1,0 +1,71 @@
+{
+  "e2e-google": {
+    "provider": "google",
+    "client_id": "e2e-fake-client.apps.googleusercontent.com",
+    "client_secret": "e2e-fake-google-client-secret",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/google/callback",
+    "scopes": [
+      "openid",
+      "email",
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar.events.readonly",
+      "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send"
+    ]
+  },
+  "e2e-microsoft": {
+    "provider": "microsoft",
+    "client_id": "00000000-0000-4000-8000-0000000e2e01",
+    "client_secret": "e2e-fake-microsoft-client-secret",
+    "tenant": "00000000-0000-4000-8000-0000000e2e00",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/microsoft/callback",
+    "scopes": [
+      "offline_access",
+      "Calendars.Read",
+      "Calendars.ReadWrite",
+      "ChannelMessage.Send",
+      "ChatMessage.Send",
+      "Files.Read",
+      "Files.Read.All",
+      "Mail.Read",
+      "Mail.Send",
+      "Sites.Read.All"
+    ]
+  },
+  "e2e-slack-user": {
+    "provider": "slack",
+    "client_id": "0000000000.0000000e2e",
+    "client_secret": "e2e-fake-slack-client-secret",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/slack/callback",
+    "scopes": [
+      "canvases:write",
+      "channels:history",
+      "chat:write",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+      "search:read"
+    ]
+  },
+  "e2e-slack-bot": {
+    "provider": "slack",
+    "profile": "bot",
+    "client_id": "0000000000.0000000e2e",
+    "client_secret": "e2e-fake-slack-client-secret",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/slack/callback",
+    "scopes": [
+      "app_mentions:read",
+      "channels:history",
+      "channels:read",
+      "chat:write",
+      "groups:history",
+      "groups:read",
+      "im:history",
+      "mpim:history",
+      "reactions:read",
+      "reactions:write",
+      "users:read"
+    ]
+  }
+}

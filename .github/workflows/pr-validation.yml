@@ -799,6 +799,13 @@ jobs:
           # against a disabled one, which would pass while testing nothing (#1240;
           # surface scoped in #1195).
           LANGFLOW_A2A_ENABLED: "true"
+          # Fake OAuth registrations, one per provider and Slack profile (#2301). The product
+          # ships none, which stops the Add/Reconnect wizard before consent and leaves every
+          # OAuth route unexercised. `oauth/start` calls no provider and a denied callback needs
+          # none, so a fake client id with a loopback redirect reaches every path short of a real
+          # consent. Canonical copy: scripts/lib/fake-oauth-registrations.json; every copy is
+          # pinned to it byte for byte by scripts/fake-oauth-registrations.test.mjs.
+          LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS: '{"e2e-google":{"provider":"google","client_id":"e2e-fake-client.apps.googleusercontent.com","client_secret":"e2e-fake-google-client-secret","redirect_uri":"http://localhost/api/v1/connections/oauth/google/callback","scopes":["openid","email","https://www.googleapis.com/auth/calendar.events","https://www.googleapis.com/auth/calendar.events.readonly","https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/gmail.readonly","https://www.googleapis.com/auth/gmail.send"]},"e2e-microsoft":{"provider":"microsoft","client_id":"00000000-0000-4000-8000-0000000e2e01","client_secret":"e2e-fake-microsoft-client-secret","tenant":"00000000-0000-4000-8000-0000000e2e00","redirect_uri":"http://localhost/api/v1/connections/oauth/microsoft/callback","scopes":["offline_access","Calendars.Read","Calendars.ReadWrite","ChannelMessage.Send","ChatMessage.Send","Files.Read","Files.Read.All","Mail.Read","Mail.Send","Sites.Read.All"]},"e2e-slack-user":{"provider":"slack","client_id":"0000000000.0000000e2e","client_secret":"e2e-fake-slack-client-secret","redirect_uri":"http://localhost/api/v1/connections/oauth/slack/callback","scopes":["canvases:write","channels:history","chat:write","groups:history","im:history","mpim:history","search:read"]},"e2e-slack-bot":{"provider":"slack","profile":"bot","client_id":"0000000000.0000000e2e","client_secret":"e2e-fake-slack-client-secret","redirect_uri":"http://localhost/api/v1/connections/oauth/slack/callback","scopes":["app_mentions:read","channels:history","channels:read","chat:write","groups:history","groups:read","im:history","mpim:history","reactions:read","reactions:write","users:read"]}}'
           # The knowledge-base `folder` connector refuses every walk without an operator
           # allow-list (empty by default). Set to the image's config directory, where
           # POST /api/v1/files/upload/{flow_id} stores uploads, so memory-base-ingestion.spec.ts

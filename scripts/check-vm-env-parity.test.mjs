@@ -233,6 +233,42 @@ test("sameValue: false records a deliberate difference instead of failing on it"
   assert.ok(result.ok, result.findings.map((f) => f.message).join("\n"));
 });
 
+test("a default held in a single-quoted constant is compared by that constant's value", () => {
+  // `NAME="${NAME:-$DEFAULT_X}"` with `DEFAULT_X='…'` assigned once in the starter: the
+  // shape a long, brace-laden default takes (#2301). Read as the text `$DEFAULT_X`, every
+  // such variable would drift; read through the constant, a real drift still fails.
+  const json = '{"a":{"b":["c"]}}';
+  const env = ['LANGFLOW_AUTO_LOGIN: "true"', 'LANGFLOW_DEACTIVATE_TRACING: "false"', `LANGFLOW_X: '${json}'`];
+  const classes = { ...CLASSES, LANGFLOW_X: { carrier: "starter", reason: "a long JSON default" } };
+  const starter = (constants) =>
+    [
+      ...constants,
+      starterWith([
+        "LANGFLOW_AUTO_LOGIN=true",
+        'LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}"',
+        'LANGFLOW_X="${LANGFLOW_X:-$DEFAULT_X}"',
+      ]),
+    ].join("\n");
+
+  const same = check(workflowWith(env), { classification: classes, starter: starter([`DEFAULT_X='${json}'`]) });
+  assert.ok(same.ok, same.findings.map((f) => f.message).join("\n"));
+
+  const drifted = check(workflowWith(env), {
+    classification: classes,
+    starter: starter([`DEFAULT_X='{"a":{"b":["d"]}}'`]),
+  });
+  assert.equal(drifted.findings.find((f) => f.name === "LANGFLOW_X")?.kind, "value-drift");
+
+  // Zero or two constants is a shape the reader does not understand: the reference is
+  // left as written, so the comparison fails naming it instead of picking one.
+  for (const constants of [[], [`DEFAULT_X='${json}'`, `DEFAULT_X='${json}'`], [`# DEFAULT_X='${json}'`]]) {
+    const result = check(workflowWith(env), { classification: classes, starter: starter(constants) });
+    const found = result.findings.find((f) => f.name === "LANGFLOW_X");
+    assert.equal(found?.kind, "value-drift", `constants: ${JSON.stringify(constants)}`);
+    assert.match(found.message, /\$DEFAULT_X/);
+  }
+});
+
 test("a comment naming a variable is not a setting, on either side", () => {
   // #1300's failure: a `#` line spelling a variable both masks a real setting and
   // FAILS A CORRECT WORKFLOW. In the workflow it would invent an unclassified
@@ -327,6 +363,9 @@ test("the readers agree with the real files they were written for", () => {
   assert.equal(launch.assignments.get("LANGFLOW_DEACTIVATE_TRACING").overridable, true);
   assert.equal(launch.assignments.get("LANGFLOW_DEACTIVATE_TRACING").value, "true");
   assert.equal(launch.flags.get("LANGFLOW_WORKERS").value, "1");
+  const oauth = launch.assignments.get("LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS");
+  assert.equal(oauth.resolvedFrom, "DEFAULT_OAUTH_REGISTRATIONS");
+  assert.ok(Object.keys(JSON.parse(oauth.value)).length > 0, "the fake registrations resolve to a JSON object");
 
   const mirrored = readMirroredNames(readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8"));
   assert.ok(mirrored.has("LANGFLOW_SQLITE_PRAGMAS"), "the composer no longer carries the pragmas");
