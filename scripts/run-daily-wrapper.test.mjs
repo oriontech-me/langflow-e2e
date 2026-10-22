@@ -64,7 +64,7 @@ function makeLane(dir, laneLines, files = {}, binStubs = {}) {
   return { repo, home, secrets, lane, logs: join(dir, "logs") };
 }
 
-function runWrapper(dir, laneLines, script = WRAPPER, files = {}, binStubs = {}) {
+function runWrapper(dir, laneLines, script = WRAPPER, files = {}, binStubs = {}, extraEnv = {}) {
   const l = makeLane(dir, laneLines, files, binStubs);
   const tmp = join(dir, "tmp");
   mkdirSync(tmp);
@@ -82,6 +82,7 @@ function runWrapper(dir, laneLines, script = WRAPPER, files = {}, binStubs = {})
       E2E_SHADOW_STATE: join(dir, "shadow-state"),
       // Never the machine's /run/lock: whether a routine holds its turn is the test's.
       E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
+      ...extraEnv,
     },
   });
   return { ...r, log: readFileSync(join(l.logs, "latest.log"), "utf8"), leftInTmp: readdirSync(tmp) };
@@ -295,6 +296,25 @@ test("the lane turns the @stable removal on, and run-e2e.sh receives it (#1945)"
   const dir = makeTempDir("wrapper-auto-remove");
   const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
   assert.match(r.log, /run-e2e got AUTO_REMOVE=\[1\] CREATE_ISSUE=\[1\]/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a drop-in can turn the umbrella and the removal off, and run-e2e.sh receives both (#2330)", () => {
+  // The stretch with the destination out of reach: the unit's environment sets both to 0.
+  // Read from what the orchestrator saw, as above: the wrapper used to assign 1 over it.
+  const dir = makeTempDir("wrapper-switches-off");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }), {}, { AUTO_REMOVE: "0", CREATE_ISSUE: "0" });
+  assert.match(r.log, /run-e2e got AUTO_REMOVE=\[0\] CREATE_ISSUE=\[0\]/);
+  // And it is said in the day's log, so a drop-in forgotten after the stretch shows up.
+  assert.match(r.log, /WARNING: switches overridden by the unit's environment: CREATE_ISSUE=0 AUTO_REMOVE=0/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("with no override the log says nothing about the switches (#2330)", () => {
+  const dir = makeTempDir("wrapper-switches-default");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
+  assert.match(r.log, /run-e2e got AUTO_REMOVE=\[1\] CREATE_ISSUE=\[1\]/);
+  assert.doesNotMatch(r.log, /switches overridden/);
   rmSync(dir, { recursive: true, force: true });
 });
 

@@ -100,9 +100,10 @@ Four of the five statuses are reachable through the API, and **`error` is not**:
 container restart with a different `LANGFLOW_SECRET_KEY`, not an API call);
 `credential-missing` needs the envelope row to vanish while the connection's status is not
 already credential-free, which no route does; and every `oauth-*` reason needs a configured
-OAuth registration — the nightly answers
-`GET /api/v1/connections/oauth/registrations` with `{"registrations":[]}`, so the whole
-OAuth failure path is out of reach without provisioning an OAuth app.
+OAuth registration, which the product does not ship. Since #2301 every lane configures fake
+registrations (`docs/api/connections/oauth-fake-registrations.md`), and a denied callback then
+moves a row to `status: error` with `oauth-denied` — so that half of the OAuth failure path is
+reachable now, and belongs to #2307 rather than to this file.
 
 So the spec asserts the half it can reach — **`status_reason` is `null` on every status a
 client can drive the connection into** — and says here, rather than in a passing test, that
@@ -283,8 +284,8 @@ recorded.
 ## External dependencies *(required)*
 
 - A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser
-  (the superuser creates and deletes the throwaway owner), with the default rate limits and **no OAuth registration configured** (the nightly's
-  state — see the reachability table).
+  (the superuser creates and deletes the throwaway owner), with the default rate limits. The lanes' fake OAuth
+  registrations (#2301) make no difference here: no route this file sweeps starts consent.
 - `src/backend/base/langflow/api/v1/connections.py` — every route swept here, and the
   per-route rate-limit buckets the budget is sized against.
 - `src/backend/base/langflow/services/database/models/connection/schemas.py` —
