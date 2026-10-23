@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-22",
+ "refreshed": "2026-10-23",
  "refreshWindow": {
-  "testHealthSince": "2026-09-07",
+  "testHealthSince": "2026-09-08",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,18 +40,18 @@
   "cappedByProduct": 2,
   "bullets": 822,
   "bulletsAutomatedUnwatched": 125,
-  "residualRiskTotal": 106.6
+  "residualRiskTotal": 106.3
  },
  "areas": [
   {
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 1,
-   "residualRisk": 8.5,
+   "residualRisk": 8.2,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.66,
+   "mitigation": 0.67,
    "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
@@ -75,9 +75,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 7,
+    "chronicFlaky": 6,
     "stableSpecs": 37,
-    "penalty": 0.069
+    "penalty": 0.059
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -91,7 +91,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": 1.1,
+    "residualRisk": 0.8,
     "rank": 3,
     "direction": "worsened"
    },
@@ -756,13 +756,13 @@
     "empty": 2
    },
    "specs": {
-    "specs": 43,
-    "stable": 43
+    "specs": 44,
+    "stable": 44
    },
    "testHealth": {
     "chronicHardFailures": 2,
     "chronicFlaky": 2,
-    "stableSpecs": 43,
+    "stableSpecs": 44,
     "penalty": 0.035
    },
    "upstreamBugsByYear": {
