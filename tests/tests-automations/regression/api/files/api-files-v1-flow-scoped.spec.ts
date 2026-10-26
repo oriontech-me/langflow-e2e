@@ -87,11 +87,14 @@ test.describe("Files API — v1, flow-scoped", () => {
         expect(res.status()).toBe(201);
         const body = await res.json();
         expect(body.flowId).toBe(flowId);
-        // `<flow_id>/<YYYY-MM-DD_HH-MM-SS>_<original name>` — the store stamps
+        // `flow-<flow_id>/<YYYY-MM-DD_HH-MM-SS>_<original name>` — the store stamps
         // the name, so the upload response is the only place the real filename
-        // comes from.
+        // comes from. The `flow-` prefix is the tenant separation of LE-3242
+        // (langflow-ai/langflow#15982, 1.13.1): before it, flow attachments sat in
+        // a bare `<flow_id>/` folder, the namespace user uploads are keyed in too,
+        // so a flow created with a user's id shared that user's folder (#2338).
         expect(body.file_path).toMatch(
-          new RegExp(`^${flowId}/\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET}$`),
+          new RegExp(`^flow-${flowId}/\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET}$`),
         );
         uploadedName = String(body.file_path).split("/").pop() ?? "";
       });

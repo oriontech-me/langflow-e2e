@@ -406,10 +406,14 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  /** Reads the allow-list and starts a folder ingestion of this test's flow folder. */
+  /**
+   * Reads the allow-list and starts a folder ingestion of this test's flow folder,
+   * named as the upload reported it (`flow-<id>` from 1.13.1, #2338).
+   */
   async function ingestOwnFolder(
     request: APIRequestContext,
     dirName: string,
+    uploadFolder: string,
     settings: { chunkSize: number; chunkOverlap: number },
   ): Promise<string> {
     // `/`, non-recursive, with an extension no file carries: outside any sane
@@ -423,7 +427,7 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
         auth(),
       ),
     );
-    const { runId } = await ingestFlowFolder(roots, flowId as string, (folder) =>
+    const { runId } = await ingestFlowFolder(roots, uploadFolder, (folder) =>
       ingestFolderViaConnector(request, dirName, { path: folder }, settings, auth()),
     );
     return runId;
@@ -442,8 +446,8 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
       ]);
       const sentinels = { a: unique("SENTINEL_A"), b: unique("SENTINEL_B") };
 
-      const stored = await test.step("two files are uploaded into this test's flow folder", async () => {
-        return [
+      const uploads = await test.step("two files are uploaded into this test's flow folder", async () => {
+        const both = [
           await uploadToFlowFolder(
             request,
             flowId as string,
@@ -456,11 +460,17 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
             { name: "beta.md", content: `beta ${sentinels.b}\nsome beta text\n` },
             auth(),
           ),
-        ].sort();
+        ];
+        expect(both[1].folder, "both uploads of one flow land in one folder").toBe(both[0].folder);
+        return both;
       });
+      const stored = uploads.map((upload) => upload.name).sort();
 
       const dirName = await createApiKb(request, "kb2043_folder");
-      const runId = await ingestOwnFolder(request, dirName, { chunkSize: 200, chunkOverlap: 0 });
+      const runId = await ingestOwnFolder(request, dirName, uploads[0].folder, {
+        chunkSize: 200,
+        chunkOverlap: 0,
+      });
 
       await test.step("the run reports both files ingested through the folder connector", async () => {
         const run = await waitForRunToFinish(request, dirName, runId, auth());
@@ -514,18 +524,18 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
         `GET ${KB_API}/{kb_name}/chunks`,
       ]);
 
-      await test.step("a file big enough for a ~30 s run is uploaded into this test's flow folder", async () => {
+      const upload = await test.step("a file big enough for a ~30 s run is uploaded into this test's flow folder", async () => {
         // 3000 lines -> 3000 chunks of chunk_size 100 -> 15 embedding batches of 200;
         // measured ~32 s end to end on 1.13.0.dev22, cancelled within seconds here.
         const content = Array.from(
           { length: 3000 },
           (_, i) => `line ${String(i).padStart(5, "0")} lorem ipsum dolor sit amet consectetur adipiscing elit sed do\n`,
         ).join("");
-        await uploadToFlowFolder(request, flowId as string, { name: "large.txt", content }, auth());
+        return uploadToFlowFolder(request, flowId as string, { name: "large.txt", content }, auth());
       });
 
       const dirName = await createApiKb(request, "kb2043_cancel");
-      const runId = await ingestOwnFolder(request, dirName, { chunkSize: 100, chunkOverlap: 0 });
+      const runId = await ingestOwnFolder(request, dirName, upload.folder, { chunkSize: 100, chunkOverlap: 0 });
 
       await test.step("the run is listed and reported running while it is in flight", async () => {
         const deadline = Date.now() + 20000;
