@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-22
+> **Last updated:** 2026-10-26
 
 ---
 
@@ -2067,7 +2067,7 @@
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
-- [x] the Bundles palette holds every manifest action in its provider's group and no trigger → `connector-node-picker.spec.ts`
+- [x] the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4 → `connector-node-picker.spec.ts`
 - [x] every <provider.label> action in the manifest lands on the canvas with an unbound connection field → `connector-node-picker.spec.ts`
 - [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
 - [x] a trigger refuses a connection its flow's owner does not own → `connector-node-picker.spec.ts`
