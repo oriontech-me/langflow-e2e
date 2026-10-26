@@ -7,10 +7,15 @@ import type { APIRequestContext } from "@playwright/test";
  * The connector walks a directory on the SERVER, and only inside the operator
  * allow-list `LANGFLOW_KB_ALLOWED_FOLDER_ROOTS` (empty by default, which refuses
  * every walk). A spec cannot write to the server's filesystem directly, but the
- * product can: `POST /api/v1/files/upload/{flow_id}` stores each upload under
- * `<config_dir>/<flow_id>/`, a directory keyed by a flow the spec creates. So the
- * lanes set the allow-list to the config directory, and the spec uploads its files
- * to its own flow and points the connector at `<root>/<flow_id>`.
+ * product can: `POST /api/v1/files/upload/{flow_id}` stores each upload in a
+ * directory of the config directory keyed by a flow the spec creates. So the lanes
+ * set the allow-list to the config directory, and the spec uploads its files to its
+ * own flow and points the connector at that directory under the root.
+ *
+ * The directory's name is READ from the upload's `file_path`, never built from the
+ * flow id: it was `<flow_id>` until Langflow 1.13.1 moved flow attachments to the
+ * typed namespace `flow-<flow_id>` (LE-3242, langflow-ai/langflow#15982), and a
+ * helper that built it went red on every root with the folder missing (#2338).
  *
  * The root is READ from the server rather than configured on the test side, because
  * the config directory differs per lane — `~/.cache/langflow` in the nightly image,
@@ -62,9 +67,21 @@ export function parseFolderAllowList(detail: unknown): AllowListVerdict {
   return roots.length > 0 ? { kind: "roots", roots } : { kind: "unknown", detail };
 }
 
-/** `<root>/<flowId>`, without doubling a trailing slash on the root. */
-export function folderUnderRoot(root: string, flowId: string): string {
-  return `${root.replace(/\/+$/, "")}/${flowId}`;
+/** `<root>/<folder>`, without doubling a trailing slash on the root. */
+export function folderUnderRoot(root: string, folder: string): string {
+  return `${root.replace(/\/+$/, "")}/${folder}`;
+}
+
+/**
+ * Splits an upload's `file_path` (`<folder>/<stored name>`) into the folder the
+ * server keyed it under and the name it stored it as. `undefined` for anything
+ * that is not exactly those two non-empty parts.
+ */
+export function splitUploadPath(filePath: unknown): { folder: string; name: string } | undefined {
+  if (typeof filePath !== "string") return undefined;
+  const parts = filePath.split("/");
+  if (parts.length !== 2 || parts.some((part) => part === "")) return undefined;
+  return { folder: parts[0], name: parts[1] };
 }
 
 /**
@@ -107,8 +124,9 @@ export async function resolveAllowListRoots(
 }
 
 /**
- * Starts the folder ingestion of `<root>/<flowId>` under the first allow-listed
- * root that holds it.
+ * Starts the folder ingestion of `<root>/<uploadFolder>` under the first
+ * allow-listed root that holds it. `uploadFolder` is the folder the upload
+ * reported (`uploadToFlowFolder(...).folder`), not the flow id.
  *
  * Only a "Folder … does not exist." refusal moves on to the next root; any other
  * answer is quoted and stops the search, because it is about the walk rather than
@@ -116,12 +134,12 @@ export async function resolveAllowListRoots(
  */
 export async function ingestFlowFolder(
   roots: string[],
-  flowId: string,
+  uploadFolder: string,
   attempt: (folder: string) => Promise<FolderAttempt>,
 ): Promise<{ folder: string; runId: string }> {
   const tried: string[] = [];
   for (const root of roots) {
-    const folder = folderUnderRoot(root, flowId);
+    const folder = folderUnderRoot(root, uploadFolder);
     tried.push(folder);
     const answer = await attempt(folder);
     if (answer.status === 200) {
@@ -146,8 +164,9 @@ export async function ingestFlowFolder(
 }
 
 /**
- * Uploads one file into the flow's own folder, `<config_dir>/<flowId>/`, and
- * returns the name it was stored under (the server prefixes a timestamp —
+ * Uploads one file into the flow's own folder of the config directory, and returns
+ * that folder as the server named it (`flow-<flowId>` from 1.13.1, `<flowId>`
+ * before) and the name the file was stored under (the server prefixes a timestamp —
  * `2026-09-24_17-07-13_a.txt` — which is also the `file_name` its chunks carry).
  */
 export async function uploadToFlowFolder(
@@ -155,7 +174,7 @@ export async function uploadToFlowFolder(
   flowId: string,
   file: { name: string; content: string },
   options?: { headers?: Record<string, string> },
-): Promise<string> {
+): Promise<{ folder: string; name: string }> {
   const url = `/api/v1/files/upload/${flowId}`;
   const res = await request.post(url, {
     headers: options?.headers ?? {},
@@ -170,10 +189,13 @@ export async function uploadToFlowFolder(
   if (res.status() !== 201 && res.status() !== 200) {
     throw new Error(`POST ${url} failed: ${res.status()} — ${(await res.text()).slice(0, 200)}`);
   }
-  const body = (await res.json()) as { file_path?: string };
-  const stored = body.file_path?.split("/").pop();
+  const body = (await res.json()) as { file_path?: unknown };
+  const stored = splitUploadPath(body.file_path);
   if (!stored) {
-    throw new Error(`POST ${url} answered ${res.status()} with no file_path`);
+    throw new Error(
+      `POST ${url} answered ${res.status()} with a file_path that is not <folder>/<name>: ` +
+        JSON.stringify(body.file_path),
+    );
   }
   return stored;
 }

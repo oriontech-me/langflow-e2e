@@ -115,8 +115,11 @@ test 1 drives the Knowledge page and never used the helper.
   the line is longer than `chunk_size`. Without that check, a shortened constant would
   turn it into a second copy of test 2.
 - **Tests 4 and 5 own their folder.** `POST /api/v1/files/upload/{flow_id}` stores an
-  upload in `<config_dir>/<flow_id>/` (measured: `~/.cache/langflow/<flow_id>/…` in
-  the nightly image), a directory keyed by a flow the test creates, so nothing another
+  upload in a directory of `<config_dir>` keyed by a flow the test creates:
+  `flow-<flow_id>/` from 1.13.1 (LE-3242), `<flow_id>/` before (measured:
+  `~/.cache/langflow/<flow_id>/…` in the nightly image). The test takes the directory's
+  name from the upload's `file_path` rather than building it from the flow id, so
+  it follows either layout (#2338), and nothing another
   spec or worker uploads can enter the walk. The config directory is **read from the
   server**, not configured on the test side: it is `~/.cache/langflow` in the image,
   `${STATE_DIR}/data` on the source starter (one per shard port on the VM lane) and
@@ -124,7 +127,7 @@ test 1 drives the Knowledge page and never used the helper.
   walk `/` (non-recursive, with an extension no file carries, so it reads nothing even
   where `/` were admitted); the refusal names the enforced roots, resolved —
   `Folder / is outside the configured allow-list (/app/data/.cache/langflow).` — and
-  the test ingests `<root>/<flow_id>` under the root that holds it. The parsing and the
+  the test ingests `<root>/<that directory>` under the root that holds it. The parsing and the
   root search are unit-tested in `tests/helpers/knowledge/folder-source.test.ts`.
 - **Test 4 asserts the run through both run endpoints**, the list (it must contain the
   run id, with `status: "succeeded"`) and the detail (counters, `items[]` naming both

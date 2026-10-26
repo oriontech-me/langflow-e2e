@@ -20,6 +20,7 @@ import {
   ingestFlowFolder,
   parseFolderAllowList,
   resolveAllowListRoots,
+  splitUploadPath,
 } from "./folder-source";
 
 test("an unset allow-list is recognised, so the spec can name the variable", () => {
@@ -84,6 +85,26 @@ test("the unknown verdict carries what the server said, so a failure can quote i
 test("the flow folder is joined under a root without doubling the slash", () => {
   assert.equal(folderUnderRoot("/app/data/.cache/langflow", "abc"), "/app/data/.cache/langflow/abc");
   assert.equal(folderUnderRoot("/app/data/.cache/langflow/", "abc"), "/app/data/.cache/langflow/abc");
+});
+
+// The folder comes from the upload's file_path, never from the flow id: 1.13.1 moved
+// flow attachments from `<flow_id>/` to `flow-<flow_id>/` (LE-3242, #2338), and both
+// layouts must resolve to the folder the server actually wrote.
+test("an upload path splits into the folder the server named and the stored name", () => {
+  assert.deepEqual(splitUploadPath("flow-abc/2026-10-26_09-22-10_a.txt"), {
+    folder: "flow-abc",
+    name: "2026-10-26_09-22-10_a.txt",
+  });
+  assert.deepEqual(splitUploadPath("abc/2026-10-26_09-22-10_a.txt"), {
+    folder: "abc",
+    name: "2026-10-26_09-22-10_a.txt",
+  });
+});
+
+test("an upload path that is not exactly <folder>/<name> is not guessed at", () => {
+  for (const filePath of ["a.txt", "/a.txt", "abc/", "x/abc/a.txt", "", undefined, null, 42]) {
+    assert.equal(splitUploadPath(filePath), undefined, `file_path ${JSON.stringify(filePath)}`);
+  }
 });
 
 // resolveAllowListRoots / ingestFlowFolder take the HTTP calls as functions, so the
