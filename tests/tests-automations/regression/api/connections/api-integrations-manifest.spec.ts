@@ -68,6 +68,15 @@ test.describe("Integrations API — capability manifest and effective policy", (
   const MANUAL_TOKEN_PROFILES_SINCE = "1.14.0.dev4";
   /** `ManualTokenProfileRead`, measured in the `1.14.0.dev4` wheel. */
   const MANUAL_TOKEN_PROFILE_KEYS = ["id", "identity", "required_scopes", "requires_expiry"];
+  /**
+   * Providers whose `manual_token_profiles` is always `[]`. A profile is listed
+   * only for a provider that `services/triggers/providers/registry.py` loads from
+   * the `langflow.trigger_providers` entry points, and that registry refuses these
+   * built-in ids (`_BUILTINS`); no lane installs such an entry point. So the
+   * value is pinned here, and a built-in that starts listing a profile surfaces as
+   * a change of contract, like a new key would.
+   */
+  const BUILTIN_TRIGGER_PROVIDERS = ["google", "microsoft", "slack"];
 
   /**
    * The 15 fields of `IntegrationCapabilityRead`, same reasoning. `required_scopes`
@@ -282,6 +291,16 @@ test.describe("Integrations API — capability manifest and effective policy", (
           expect(Object.keys(provider).sort(), `${id} carries exactly the IntegrationProviderRead keys`).toEqual(
             providerKeys,
           );
+          if (withManualTokens) {
+            expect(Array.isArray(provider.manual_token_profiles), `${id} manual_token_profiles is a list`).toBe(true);
+            if (BUILTIN_TRIGGER_PROVIDERS.includes(id)) {
+              expect(provider.manual_token_profiles, `${id} is built in, so it lists no manual token profile`).toEqual(
+                [],
+              );
+            }
+          }
+          // Live only for a provider installed through the entry points (none on any
+          // lane today), and kept so such a provider is checked the day one appears.
           for (const profile of provider.manual_token_profiles ?? []) {
             const at = `${id} manual token profile "${profile.id}"`;
             expect(Object.keys(profile).sort(), `${at} carries exactly the ManualTokenProfileRead keys`).toEqual(

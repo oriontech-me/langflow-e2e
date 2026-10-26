@@ -107,9 +107,15 @@ The change is intended, and the set stays exact. But the 1.13 line never gets th
 on-demand runs validate 1.13.x patch releases with this same suite. So the expected set is
 chosen by the **served version** (`tests/helpers/other/served-version.ts`): 9 keys from
 `1.14.0.dev4`, 8 before. The version decides, never the presence of the key, which would let a
-1.14 build that lost it pass. Each profile is asserted to carry exactly those four keys, an
-`id` in the auth-profile pattern, an `identity` in the declared domain, a list of scopes and a
-boolean expiry flag.
+1.14 build that lost it pass. On the 1.14 side the value must be a list, and for `google`,
+`microsoft` and `slack` it must be `[]`. A profile is listed only for a trigger provider loaded
+from the `langflow.trigger_providers` entry points, and that registry refuses the built-in ids
+(`_BUILTINS` in `services/triggers/providers/registry.py`), so on every lane the list is empty
+(measured on `1.14.0.dev6`: no entry point in that group). A built-in that starts listing a
+profile is therefore a change of contract. Any profile that does appear, from a provider
+installed through an entry point, is asserted to carry exactly those four keys, an `id` in the
+auth-profile pattern, an `identity` in the declared domain, a list of scopes and a boolean
+expiry flag. No lane exercises that check today.
 
 ### The scope fields (#2310)
 

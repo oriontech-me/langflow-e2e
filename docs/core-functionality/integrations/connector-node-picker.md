@@ -36,7 +36,7 @@ Measured on `1.13.0.dev47`:
   merged into `release-1.14.0` on 2026-10-23) turned `ENABLE_TRIGGERS` on, together with the trigger
   badge, the Enabled switch and a one-trigger-per-flow placement rule. The test reads the served version
   (`tests/helpers/other/served-version.ts`) and asserts the side that version is on: each trigger in its
-  own provider's group, or no trigger in any group. It never decides by what the palette shows, which
+  own provider's group and in no other, or no trigger in any group. It never decides by what the palette shows, which
   would let either regression pass.
 - **The Google group also lists 4 components the manifest does not own** (BigQuery, Google Generative AI
   and its Embeddings, Google Serper API). The group is therefore asserted to *contain* the manifest's

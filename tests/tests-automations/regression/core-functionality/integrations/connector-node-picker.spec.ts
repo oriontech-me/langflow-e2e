@@ -307,11 +307,16 @@ test.describe("Connector components — the palette, the canvas and the connecti
       // provider's group, beside the actions. The 1.13 line keeps the flag off and
       // hides every trigger, so the version decides which of the two is asserted.
       if (await servedVersionAtLeast(request, TRIGGERS_IN_PALETTE_SINCE)) {
-        await test.step("every trigger is in its own provider's group", async () => {
+        await test.step("every trigger is in its own provider's group and in no other", async () => {
           for (const trigger of connectors.filter((c) => c.trigger)) {
-            expect(groups.get(trigger.provider), `${trigger.displayName} (${trigger.ref})`).toContain(
-              addButtonId(trigger.displayName),
-            );
+            const button = addButtonId(trigger.displayName);
+            expect(groups.get(trigger.provider), `${trigger.displayName} (${trigger.ref})`).toContain(button);
+            for (const [provider, buttons] of groups) {
+              if (provider === trigger.provider) continue;
+              expect(buttons, `${trigger.displayName} (${trigger.ref}) is not in the ${provider} group`).not.toContain(
+                button,
+              );
+            }
           }
         });
       } else {
