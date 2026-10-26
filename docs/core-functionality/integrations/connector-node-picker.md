@@ -29,9 +29,15 @@ Measured on `1.13.0.dev47`:
   The catalog marks every trigger with `metadata.trigger_kind`, and the palette uses that marker.
 - **All 20 actions are in their provider's group**: 5 Google, 8 Microsoft 365, 7 Slack. Each one's add
   button is `add-component-button-<display name, lowercased, spaces as ->`.
-- **No trigger is in the palette.** `ENABLE_TRIGGERS = false` is a compile-time flag, and
-  `applyFeatureFlagFilters` drops every component carrying `trigger_kind`, including the ones that sit in
-  a provider's group. A trigger node reaches a canvas only through a flow saved over the API or imported.
+- **No trigger is in the palette on the 1.13 line.** `ENABLE_TRIGGERS = false` is a compile-time flag,
+  and `applyFeatureFlagFilters` drops every component carrying `trigger_kind`, including the ones that sit
+  in a provider's group. A trigger node reaches a canvas only through a flow saved over the API or imported.
+- **From `1.14.0.dev4` every provider trigger is in its provider's group** (#2336). Upstream #15940 (TRG-7,
+  merged into `release-1.14.0` on 2026-10-23) turned `ENABLE_TRIGGERS` on, together with the trigger
+  badge, the Enabled switch and a one-trigger-per-flow placement rule. The test reads the served version
+  (`tests/helpers/other/served-version.ts`) and asserts the side that version is on: each trigger in its
+  own provider's group, or no trigger in any group. It never decides by what the palette shows, which
+  would let either regression pass.
 - **The Google group also lists 4 components the manifest does not own** (BigQuery, Google Generative AI
   and its Embeddings, Google Serper API). The group is therefore asserted to *contain* the manifest's
   actions, never to *equal* them.
@@ -211,7 +217,8 @@ connections."* within 60 s.
 All eleven tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`, and
 once at `--workers=2`. The following hold on every run:
 
-- the palette groups contain every manifest action under its own provider, and no trigger;
+- the palette groups contain every manifest action under its own provider, and each trigger under its
+  own provider from `1.14.0.dev4` (no trigger before);
 - every action lands with an unbound field for its provider;
 - every unusable row carries its exact reason, and the usable one none;
 - the picker requests its own provider and lists only `<provider>/` handles;

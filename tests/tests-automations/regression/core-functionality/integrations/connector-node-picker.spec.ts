@@ -19,6 +19,7 @@ import {
   type CreatedConnection,
   createConnectionViaApi,
 } from "../../../../helpers/integrations/create-connection";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 
 // Connector components on the canvas, and the connection picker beside their field.
 // Spec doc: docs/core-functionality/integrations/connector-node-picker.md
@@ -48,6 +49,8 @@ test.describe("Connector components — the palette, the canvas and the connecti
     pending: "Pending",
     revoked: "Revoked",
   };
+  /** First build whose palette shows the provider triggers (upstream #15940, #2336). */
+  const TRIGGERS_IN_PALETTE_SINCE = "1.14.0.dev4";
   /** The palette group each manifest provider lives in, under the Bundles tab. */
   const PROVIDERS = [
     { id: "google", label: "Google", group: "disclosure-bundles-google" },
@@ -261,7 +264,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
   }
 
   test(
-    "the Bundles palette holds every manifest action in its provider's group and no trigger",
+    "the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4",
     { tag: ["@stable", "@components", "@integrations"] },
     async ({ page, request }) => {
       const groups = new Map<string, string[]>();
@@ -299,12 +302,28 @@ test.describe("Connector components — the palette, the canvas and the connecti
         }
       });
 
-      await test.step("no trigger is in any group", async () => {
-        const everything = [...groups.values()].flat();
-        for (const trigger of connectors.filter((c) => c.trigger)) {
-          expect(everything, `${trigger.displayName} (${trigger.ref})`).not.toContain(addButtonId(trigger.displayName));
-        }
-      });
+      // `ENABLE_TRIGGERS` went on with upstream #15940 (TRG-7), first in 1.14.0.dev4
+      // (#2336): from then on the palette offers each provider trigger in its
+      // provider's group, beside the actions. The 1.13 line keeps the flag off and
+      // hides every trigger, so the version decides which of the two is asserted.
+      if (await servedVersionAtLeast(request, TRIGGERS_IN_PALETTE_SINCE)) {
+        await test.step("every trigger is in its own provider's group", async () => {
+          for (const trigger of connectors.filter((c) => c.trigger)) {
+            expect(groups.get(trigger.provider), `${trigger.displayName} (${trigger.ref})`).toContain(
+              addButtonId(trigger.displayName),
+            );
+          }
+        });
+      } else {
+        await test.step("no trigger is in any group", async () => {
+          const everything = [...groups.values()].flat();
+          for (const trigger of connectors.filter((c) => c.trigger)) {
+            expect(everything, `${trigger.displayName} (${trigger.ref})`).not.toContain(
+              addButtonId(trigger.displayName),
+            );
+          }
+        });
+      }
 
       await test.step("every Slack action names the identity it runs as", async () => {
         for (const action of connectors.filter((c) => c.provider === "slack" && !c.trigger)) {

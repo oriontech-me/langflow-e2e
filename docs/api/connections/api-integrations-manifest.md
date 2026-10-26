@@ -43,7 +43,8 @@ between the two moved:
   (only `providers` on `dev21`/`dev23`; see the #2074 section below).
 - The provider row carries **8** keys: `provider_id`, `display_name`, `icon`, `docs_url`,
   `approved`, `enabled`, `connection_count`, `capabilities`. Rows come back sorted by
-  `provider_id`.
+  `provider_id`. From `1.14.0.dev4` it carries a 9th, `manual_token_profiles`; see the #2336
+  section below.
 - The capability carries **15** on `dev47` (13 until then): `id`, `display_name`,
   `policy_keys`, `risk`, `maturity`, `substrate`, `identity`, `auth_profile_id`,
   `deployment_contexts`, `component_ref`, `mcp_tool`, `allowed`, `blocked_policy_key`, and
@@ -92,6 +93,23 @@ documented contract addition.
   context. With the per-capability `deployment_contexts` (test 5), it is the value those
   lists are compared against — and on the `self_managed` instance the lanes run, **all 24**
   capabilities declare `self_managed`, so nothing is excluded here.
+
+### `manual_token_profiles` on the 1.14 line (#2336)
+
+`1.14.0.dev4` turned test 1 red on the daily of 2026-10-26: every provider row carried a key the
+exact set did not list. Upstream #15947 (*"feat(triggers): support provider-owned connection and
+source runtimes"*, merged into `release-1.14.0` on 2026-10-23) added to `IntegrationProviderRead`
+`manual_token_profiles: list[ManualTokenProfileRead]`, default `[]`. It lists the `api_key`
+auth profiles whose credential the provider itself validates, each one exactly
+`{id, identity, required_scopes, requires_expiry}`.
+
+The change is intended, and the set stays exact. But the 1.13 line never gets the key, and the
+on-demand runs validate 1.13.x patch releases with this same suite. So the expected set is
+chosen by the **served version** (`tests/helpers/other/served-version.ts`): 9 keys from
+`1.14.0.dev4`, 8 before. The version decides, never the presence of the key, which would let a
+1.14 build that lost it pass. Each profile is asserted to carry exactly those four keys, an
+`id` in the auth-profile pattern, an `identity` in the declared domain, a list of scopes and a
+boolean expiry flag.
 
 ### The scope fields (#2310)
 

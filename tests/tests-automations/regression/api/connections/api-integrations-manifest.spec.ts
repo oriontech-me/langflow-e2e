@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
 import { createConnectionViaApi, uniqueConnectionName } from "../../../../helpers/integrations/create-connection";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 
 // The capability manifest (GET /api/v1/integrations), the operator ceiling
 // (GET /api/v1/integrations/policy/effective), and the cross-check between the
@@ -56,6 +57,17 @@ test.describe("Integrations API — capability manifest and effective policy", (
     "icon",
     "provider_id",
   ];
+
+  /**
+   * `manual_token_profiles` joined the provider row on `1.14.0.dev4` with upstream
+   * #15947 (#2336): the api_key auth profiles whose credential the provider itself
+   * validates. Intended, and surfaced by the exact set as the two keys above were.
+   * The 1.13 line never gets it, so the set is chosen by the served version
+   * (`servedVersionAtLeast`), and the RC runs of 1.13.x keep the old set.
+   */
+  const MANUAL_TOKEN_PROFILES_SINCE = "1.14.0.dev4";
+  /** `ManualTokenProfileRead`, measured in the `1.14.0.dev4` wheel. */
+  const MANUAL_TOKEN_PROFILE_KEYS = ["id", "identity", "required_scopes", "requires_expiry"];
 
   /**
    * The 15 fields of `IntegrationCapabilityRead`, same reasoning. `required_scopes`
@@ -170,6 +182,13 @@ test.describe("Integrations API — capability manifest and effective policy", (
     enabled: boolean;
     connection_count: number;
     capabilities: Capability[];
+    /** From `1.14.0.dev4` only (`MANUAL_TOKEN_PROFILES_SINCE`). */
+    manual_token_profiles?: Array<{
+      id: string;
+      identity: string;
+      required_scopes: string[];
+      requires_expiry: boolean;
+    }>;
   }
 
   interface EffectivePolicy {
@@ -249,6 +268,8 @@ test.describe("Integrations API — capability manifest and effective policy", (
       apiCoverage.declare([`GET ${MANIFEST}`]);
       const headers = { Authorization: await getAuthToken(request) };
       const providers = await readManifest(request, headers);
+      const withManualTokens = await servedVersionAtLeast(request, MANUAL_TOKEN_PROFILES_SINCE);
+      const providerKeys = withManualTokens ? [...PROVIDER_KEYS, "manual_token_profiles"].sort() : PROVIDER_KEYS;
 
       await test.step("the provider list is sorted, unique and carries the IntegrationProviderRead shape", async () => {
         const ids = providers.map((provider) => provider.provider_id);
@@ -259,8 +280,20 @@ test.describe("Integrations API — capability manifest and effective policy", (
           const id = provider.provider_id;
           expect(id, `provider id "${id}" matches PROVIDER_ID_PATTERN`).toMatch(PROVIDER_ID);
           expect(Object.keys(provider).sort(), `${id} carries exactly the IntegrationProviderRead keys`).toEqual(
-            PROVIDER_KEYS,
+            providerKeys,
           );
+          for (const profile of provider.manual_token_profiles ?? []) {
+            const at = `${id} manual token profile "${profile.id}"`;
+            expect(Object.keys(profile).sort(), `${at} carries exactly the ManualTokenProfileRead keys`).toEqual(
+              MANUAL_TOKEN_PROFILE_KEYS,
+            );
+            expect(profile.id, `${at} id matches the auth profile id pattern`).toMatch(AUTH_PROFILE_ID);
+            expect(IDENTITIES, `${at} identity "${profile.identity}" is a declared identity`).toContain(
+              profile.identity,
+            );
+            expect(Array.isArray(profile.required_scopes), `${at} required_scopes is a list`).toBe(true);
+            expect(typeof profile.requires_expiry, `${at} requires_expiry is a boolean`).toBe("boolean");
+          }
           expect(provider.display_name, `${id} has a display name`).not.toBe("");
           expect(Number.isInteger(provider.connection_count), `${id} connection_count is an integer`).toBe(true);
           expect(provider.connection_count, `${id} connection_count is not negative`).toBeGreaterThanOrEqual(0);
