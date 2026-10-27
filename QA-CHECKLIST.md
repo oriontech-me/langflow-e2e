@@ -1643,7 +1643,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 102 | 96 | 1 | 3 | 2 |
+| `api/flows/` — REST API | 106 | 96 | 4 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1667,7 +1667,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 67 | 62 | 0 | 0 | 5 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **779** | **692 (89%)** | **38 (5%)** | **13 (2%)** | **36 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **783** | **692 (88%)** | **41 (5%)** | **14 (2%)** | **36 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2544,7 +2544,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 1 | 2 |
+| `api/flows/` — REST API | 4 | 2 |
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
