@@ -299,8 +299,8 @@ test.describe("Integrations API — capability manifest and effective policy", (
               );
             }
           }
-          // Live only for a provider installed through the entry points (none on any
-          // lane today), and kept so such a provider is checked the day one appears.
+          // Live only for a provider installed through the entry points: none on the
+          // 1.13 line; from 1.14.0.dev7, github and its `github-installation` (#2360).
           for (const profile of provider.manual_token_profiles ?? []) {
             const at = `${id} manual token profile "${profile.id}"`;
             expect(Object.keys(profile).sort(), `${at} carries exactly the ManualTokenProfileRead keys`).toEqual(
