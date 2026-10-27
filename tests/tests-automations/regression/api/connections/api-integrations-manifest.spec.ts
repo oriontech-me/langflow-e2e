@@ -72,7 +72,8 @@ test.describe("Integrations API — capability manifest and effective policy", (
    * Providers whose `manual_token_profiles` is always `[]`. A profile is listed
    * only for a provider that `services/triggers/providers/registry.py` loads from
    * the `langflow.trigger_providers` entry points, and that registry refuses these
-   * built-in ids (`_BUILTINS`); no lane installs such an entry point. So the
+   * built-in ids (`_BUILTINS`); github, from 1.14.0.dev7, is such an entry point
+   * and not one of these (#2360). So the
    * value is pinned here, and a built-in that starts listing a profile surfaces as
    * a change of contract, like a new key would.
    */
