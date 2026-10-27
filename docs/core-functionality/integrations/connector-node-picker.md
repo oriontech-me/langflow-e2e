@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connector-node-picker.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev7`) and 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev7`) and 1.13.x (`1.13.1rc0`)
 
 Owning issue: #2297 (Dedicated Integrations, batch 2). It opens `QA-CHECKLIST.md` § 24.6, the
 builder-facing half of the feature: placing a connector and binding it to a connection. The picker is
@@ -37,9 +37,11 @@ Measured on `1.13.0.dev47`:
   and **asserts that the manifest names exactly the providers that table expects on the served version**.
   A provider added upstream then fails that first step by name, instead of failing three steps later on
   a group nobody read (`toContain` on `undefined`, which is how #2360 surfaced).
-- **The manifest names 28 distinct components behind 30 capabilities.** Two Slack trigger components
+- **On the 1.13 line the manifest names 28 distinct components behind 30 capabilities.** Two Slack trigger components
   each back two capabilities, one per transport. Of the 28, **20 are actions and 8 are triggers**.
   The catalog marks every trigger with `metadata.trigger_kind`, and the palette uses that marker.
+  With GitHub (`1.14.0.dev7`) the totals are 38 components behind 40 capabilities: 28 actions and
+  10 triggers.
 - **All 20 actions are in their provider's group**: 5 Google, 8 Microsoft 365, 7 Slack. Each one's add
   button is `add-component-button-<display name, lowercased, spaces as ->`.
 - **No trigger is in the palette on the 1.13 line.** `ENABLE_TRIGGERS = false` is a compile-time flag,
@@ -234,8 +236,8 @@ connections."* within 60 s.
 
 All eleven tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`, and
 once at `--workers=2`. With the GitHub provider (#2360), all twelve pass three consecutive times at
-`--retries=0 --workers=1` against `1.14.0.dev7`, and on the 1.13 line the GitHub canvas test skips while
-the other eleven pass. The following hold on every run:
+`--retries=0 --workers=1` against `1.14.0.dev7`, and against `1.13.1rc0` the GitHub canvas test skips
+while the other eleven pass (two runs). The following hold on every run:
 
 - the manifest names exactly the providers expected on the served version;
 - the palette groups contain every manifest action under its own provider, and each trigger under its

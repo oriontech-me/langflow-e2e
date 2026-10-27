@@ -29,7 +29,7 @@ import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 // run seeded. Every assertion keys on this file's own handles; no count is read.
 //
 // Rows are planted through a throwaway owner (#2295), whose rows the superuser's
-// picker lists. Only test 6 spends superuser writes (2 rows, 4 writes): a trigger
+// picker lists. Only test 7 spends superuser writes (2 rows, 4 writes): a trigger
 // accepting its flow owner's own row needs a row the superuser owns.
 test.describe("Connector components — the palette, the canvas and the connection picker", () => {
   /** The connection field's id on every connector node; always scoped by its node. */
