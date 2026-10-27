@@ -1662,8 +1662,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 64 | 58 | 0 | 0 | 6 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **776** | **688 (89%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
+| `integrations/` — Dedicated Integrations | 67 | 62 | 0 | 0 | 5 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **779** | **692 (89%)** | **38 (5%)** | **13 (2%)** | **36 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1679,7 +1679,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 783 `test()` calls carrying the `@stable` tag, distributed across 292 spec
+> 793 `test()` calls carrying the `@stable` tag, distributed across 294 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1699,6 +1699,9 @@
 - [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a callback without the binding cookie is refused and leaves the state usable, and the state completes neither on another provider's path nor twice → `api-connections-oauth-callback.spec.ts`
+- [x] a newer start supersedes the older one, and a denied consent keeps the saved credential → `api-connections-oauth-callback.spec.ts`
+- [x] the OAuth routes a browser reaches answer an HTML 429, and oauth/start answers the JSON one → `api-connections-oauth-callback.spec.ts`
 - [x] another user's connection answers 404 on every route, exactly like one that does not exist → `api-connections-ownership.spec.ts`
 - [x] an instance connection is visible to every user, but only a superuser may create, change or remove it → `api-connections-ownership.spec.ts`
 - [x] only the owner may allow non-interactive use, and anyone with write access may clear it → `api-connections-ownership.spec.ts`
@@ -2065,6 +2068,13 @@
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/integrations/
+- [x] the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in → `connection-oauth-wizard.spec.ts`
+- [x] with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL → `connection-oauth-wizard.spec.ts`
+- [x] the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection → `connection-oauth-wizard.spec.ts`
+- [x] a denied consent, then an expired sign-in link, each say so, and the row records why → `connection-oauth-wizard.spec.ts`
+- [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
+- [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
+- [x] the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need → `connection-oauth-wizard.spec.ts`
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
 - [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
