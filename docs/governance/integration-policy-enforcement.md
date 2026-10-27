@@ -116,8 +116,9 @@ is configured, i.e. every loaded provider is allowed."* Blocked actions are repo
 not folded into `unrestricted`. So this file asserts the documented meaning both ways:
 
 - `true` with an action blocked;
-- `false`, with `approved_provider_ids: ["microsoft"]` and `loaded_provider_ids` still all three, under the
-  ceiling.
+- `false`, with `approved_provider_ids: ["microsoft"]` and `loaded_provider_ids` still every provider the
+  unrestricted manifest listed, under the ceiling. That set is read, not pinned: `1.14.0.dev7` added `github`
+  (upstream #15957, #2360), so it is three providers on 1.13 and four from that build.
 
 The issue's second ask, a connection whose only action is blocked "keeps reading `ready` without saying why",
 also reproduces, and is also by design. A connection carries no policy field. Upstream's design puts the policy
@@ -165,7 +166,8 @@ fails if the active bundle does not match it.
    configured."
 2. Approve `["microsoft"]` only.
 3. `/integrations` lists only `microsoft`. `/policy/effective` reads `unrestricted: false`,
-   `approved_provider_ids: ["microsoft"]`, and all three `loaded_provider_ids`.
+   `approved_provider_ids: ["microsoft"]`, and as `loaded_provider_ids` every provider the manifest
+   listed before the ceiling.
 4. No Google or Slack component of the manifest is left in `/all`.
 5. Create a Google row → the exact `403 policy-blocked` body, and no row by that name exists after.
 6. `test`, `health` and `oauth/start` on the planted row → the same `403`. `health_checked_at` is unchanged.

@@ -330,7 +330,11 @@ test.describe("governance — integration policy enforced at discovery, mutation
           const policy = await effective(request, superHeaders);
           expect(policy.unrestricted).toBe(false);
           expect(policy.approved_provider_ids).toEqual(["microsoft"]);
-          expect([...policy.loaded_provider_ids].sort()).toEqual(["google", "microsoft", "slack"]);
+          // Every provider the unrestricted manifest listed, whichever the build ships:
+          // 1.14.0.dev7 added github (#2360), and a fixed list went red on it.
+          expect([...policy.loaded_provider_ids].sort(), "loaded providers, ceiling or not").toEqual(
+            manifest.map((p) => p.provider_id).sort(),
+          );
         });
 
         await test.step("no Google or Slack connector component is left in the catalog", async () => {
