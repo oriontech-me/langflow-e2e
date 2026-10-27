@@ -2327,6 +2327,46 @@
 
 ---
 
+### 24.11 Multi-edit — the exits of *Review Version Changes* keep their promises `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts` (spec doc: `docs/flow-functionality/multi-edit/multi-edit-conflict-exits.md`, issue #2343)
+
+**Objective:** Verify that each exit of the conflict dialog puts the viewer's work where its message says, checked on the server and not only in the toast.
+
+**Preconditions:**
+- A flow built over the API with *Chat Input* (`"hello"`), *Chat Output* and a Prompt Template, *Mine Prompt*.
+- Open the flow. The other session (an API `PATCH`) sets *Chat Input* to `"their text"`. Drag *Mine Prompt*; its autosave answers `409`. Click *Review changes*.
+
+**Step by step:**
+1. **Update Current Flow** (`confirm-overwrite-flow`).
+   - Verify `POST /overwrite` → `200` and *"Flow updated. The version it replaced is in the history."*
+   - Verify that the server has *Mine Prompt* moved and *Chat Input* at `hello`, and that the history's only entry is *"Replaced by a newer edit"*, holding `their text`.
+   - Verify that the banner is gone.
+2. **Duplicate Flow** (`confirm-duplicate-flow`).
+   - Verify `POST /fork` → `201` and that the editor opens `/flow/<copy id>`.
+   - Verify that the copy is `<name> (copy)` with *Mine Prompt* moved and *Chat Input* at `hello`.
+   - Edit the copy and wait for its `PATCH` (`200`). Verify that no `PATCH` reached the original, and that the original keeps its token, `their text` and *Mine Prompt*'s position.
+   - Reopen the original. Verify that it shows `their text` and that an edit saves with `200`, with no banner.
+3. **Load Latest** (`dialog-load-latest-button`).
+   - Verify the confirmation (`load-latest-confirm`): *"Load the latest version?"* and its description.
+   - Confirm (`load-latest-confirm-button`). Verify `POST /versions/` → `201` and *"Your changes are in version history. The canvas shows the latest version."*
+   - Verify that the canvas and the server show `their text`, the token is unchanged, and the banner is gone.
+   - Verify that the history's only entry is *"Saved when discarding a conflict"*, holding the move.
+   - Open version history (`sidebar-nav-versions`), select that entry, click *Restore* and confirm *Restore*. Verify `POST …/activate` → `200`, and that the server has the move and `hello` back.
+4. **Moved again.** With the dialog open, the other session saves `"their second text"`. Click *Update*.
+   - Verify `POST /overwrite` → `409` and *"Someone saved again while you were choosing. The changes below are up to date."*
+   - Verify that the dialog now lists *"Input Text updated from hello to their second text."*, and that the server keeps it.
+5. **Cancel.** Verify that the dialog closes, the banner stays, and the server's token, text, positions and history are unchanged.
+6. **Archive failure.** Route `POST /versions/` to `500`, then *Load Latest* and confirm.
+   - Verify *"Your changes could not be saved to version history, so nothing was discarded."*
+   - Verify that the confirmation, the dialog and the banner stay, the server is unchanged, and the history is empty.
+
+**Validation:** No exit loses the viewer's work or the other session's. Every message about where a version went matches the server.
+
+**Not covered:** the *"This flow was duplicated, so it is no longer being saved."* notice. *Duplicate* navigates to the copy at once, and reopening the original clears the block by design, so it cannot be reached from the UI.
+
+---
+
 ---
 
 ## 25. MCP — Client and Server
