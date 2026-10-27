@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connector-node-picker.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev7`) and 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #2297 (Dedicated Integrations, batch 2). It opens `QA-CHECKLIST.md` § 24.6, the
 builder-facing half of the feature: placing a connector and binding it to a connection. The picker is
@@ -21,9 +21,22 @@ Measured on `1.13.0.dev47`:
 
 ### The palette
 
-- **The provider groups live under the sidebar's *Bundles* tab**, not under *Components*. There are three
-  disclosures: `disclosure-bundles-google` (*Google*), `disclosure-bundles-microsoft 365`
+- **The provider groups live under the sidebar's *Bundles* tab**, not under *Components*. On the 1.13
+  line there are three disclosures: `disclosure-bundles-google` (*Google*), `disclosure-bundles-microsoft 365`
   (*Microsoft 365*) and `disclosure-bundles-slack` (*Slack*).
+- **From `1.14.0.dev7` there is a fourth provider, GitHub** (#2360). Upstream #15957 (merged into
+  `release-1.14.0` on 2026-10-26) adds the `github` provider to the manifest and its group,
+  `disclosure-bundles-github`. Measured on `1.14.0.dev7`: 10 components, 8 actions and 2 triggers
+  (*GitHub: On Issue*, *GitHub: On Pull Request*), every capability with identity `service`. Their
+  display names start with *"GitHub:"*, and the colon stays in the add button's id
+  (`add-component-button-github:-get-repository`). A GitHub action lands on the canvas with the same
+  unbound field as the other providers, reading *"Select a github connection"*.
+- **The group a provider lives in is not derivable from the manifest.** The group is named after the
+  bundle, not after the provider's `display_name`: the manifest says *Google Workspace* and the group is
+  *google*. So the test keeps a table of provider → group, each row with the first build that ships it,
+  and **asserts that the manifest names exactly the providers that table expects on the served version**.
+  A provider added upstream then fails that first step by name, instead of failing three steps later on
+  a group nobody read (`toContain` on `undefined`, which is how #2360 surfaced).
 - **The manifest names 28 distinct components behind 30 capabilities.** Two Slack trigger components
   each back two capabilities, one per transport. Of the 28, **20 are actions and 8 are triggers**.
   The catalog marks every trigger with `metadata.trigger_kind`, and the palette uses that marker.
@@ -148,23 +161,28 @@ UI user), built through `POST /api/v1/flows/` and opened with `openFlowById`, an
 Every connection is deleted after its test too. Handles are unique per run.
 
 **Test 1 — the palette.**
-1. Read the manifest and the catalog. Split each provider's `component_ref`s by the catalog entry's
-   `metadata.trigger_kind`: actions and triggers. Floors: at least one action and one trigger.
-2. Open a blank flow, switch the sidebar to *Bundles*, and expand *Google*, *Microsoft 365* and *Slack*
-   one at a time. Collect each group's `add-component-button-*` ids.
-3. Every action's add button is in its own provider's group, under the id derived from its catalog
+1. Read the manifest and the catalog. The manifest's provider ids equal the providers the test expects on
+   the served version: `google`, `microsoft` and `slack`, plus `github` from `1.14.0.dev7`.
+2. Split each provider's `component_ref`s by the catalog entry's `metadata.trigger_kind`: actions and
+   triggers. Floors: at least one action per expected provider, and one trigger.
+3. Open a blank flow, switch the sidebar to *Bundles*, and expand each expected provider's group one at a
+   time. Collect each group's `add-component-button-*` ids.
+4. Every action's add button is in its own provider's group, under the id derived from its catalog
    display name.
-4. No trigger's add button is in any group.
-5. Every Slack action's display name ends in *"(as user)"* when its capability is `user_delegated`, and
+5. From `1.14.0.dev4`, every trigger's add button is in its own provider's group and in no other. Before
+   it, no trigger's add button is in any group.
+6. Every Slack action's display name ends in *"(as user)"* when its capability is `user_delegated`, and
    in *"(as app)"* when it is `bot`.
 
-**Tests 2–4 — one per provider (Google, Microsoft 365, Slack): every manifest action lands on the
-canvas.** On a blank flow, each of the provider's actions, read from the manifest at run time:
+**Tests 2–5 — one per provider (Google, Microsoft 365, Slack, GitHub): every manifest action lands on
+the canvas.** The GitHub test skips, naming the version, on a build older than `1.14.0.dev7`; test 1
+already asserts that such a build has no GitHub provider. On a blank flow, each of the provider's
+actions, read from the manifest at run time:
 1. It is added from the sidebar search (`addComponentFromSidebar`).
 2. Its new node is found by diffing the node ids.
 3. The node's connection field reads *"Select a <provider> connection"*, and no handle is bound.
 
-**Test 5 — the picker lists the provider's connections and says why each cannot run.**
+**Test 6 — the picker lists the provider's connections and says why each cannot run.**
 1. Plant five owner `google` rows: usable (`gmail.send` granted), no scopes, identity `bot`,
    credential-free (`pending`), and revoked.
 2. Build a flow with *Gmail: Send Email* and *Slack: Post Message (as app)*, and open the Google picker.
@@ -176,7 +194,7 @@ canvas.** On a blank flow, each of the provider's actions, read from the manifes
 5. The Slack picker requested `provider=slack`. It lists none of the planted handles, and every handle
    it lists starts with `slack/`.
 
-**Test 6 — a trigger refuses a connection its flow's owner does not own.**
+**Test 7 — a trigger refuses a connection its flow's owner does not own.**
 1. Plant three rows, each granting `gmail.readonly`:
    - the superuser's own row;
    - an instance row (the superuser's);
@@ -186,26 +204,26 @@ canvas.** On a blank flow, each of the provider's actions, read from the manifes
 3. In the picker, the superuser's own row has no badge. The instance row and the other user's row both
    read *"Not owned by the flow owner"*.
 
-**Test 7 — the requirement line follows the node's inputs.** A flow with *SharePoint/OneDrive: List
+**Test 8 — the requirement line follows the node's inputs.** A flow with *SharePoint/OneDrive: List
 Items* and *Slack: On Message*. The four footers in the table above are read in that order, then the
 Slack trigger's *"No scope required"*. No connection is planted.
 
-**Test 8 — empty, then Refresh.**
+**Test 9 — empty, then Refresh.**
 1. The picker's `GET …?provider=google` is fulfilled with `[]`, and the picker reads *"No google
    connections yet. Create one in Settings, then refresh."* with no option.
 2. The route is removed, and an owner row is planted. It is not listed yet: the list is cached.
 3. **Refresh** lists it.
 
-**Test 9 — a failed list.** The same request is fulfilled with `500`. The picker reads *"Could not load
+**Test 10 — a failed list.** The same request is fulfilled with `500`. The picker reads *"Could not load
 connections."* within 60 s.
 
-**Test 10 — binding.**
+**Test 11 — binding.**
 1. Pick a planted row on *Gmail: Send Email*. The field shows its handle, and the saved flow's
    `template.connection.value` becomes that handle (polled through `GET /api/v1/flows/{id}`).
 2. Reload. The field still shows it.
 3. **Clear**. The field reads *"Select a google connection"*, and the saved value becomes `""`.
 
-**Test 11 — a handle that outlived its connection.**
+**Test 12 — a handle that outlived its connection.**
 1. Build a flow whose *Gmail: Send Email* is saved with a planted row's handle.
 2. Delete the row, then open the flow.
 3. The field shows the handle and the *"not found"* badge.
@@ -215,8 +233,11 @@ connections."* within 60 s.
 ## Validation criterion *(required)*
 
 All eleven tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`, and
-once at `--workers=2`. The following hold on every run:
+once at `--workers=2`. With the GitHub provider (#2360), all twelve pass three consecutive times at
+`--retries=0 --workers=1` against `1.14.0.dev7`, and on the 1.13 line the GitHub canvas test skips while
+the other eleven pass. The following hold on every run:
 
+- the manifest names exactly the providers expected on the served version;
 - the palette groups contain every manifest action under its own provider, and each trigger under its
   own provider from `1.14.0.dev4` (no trigger before);
 - every action lands with an unbound field for its provider;
@@ -232,7 +253,7 @@ Each test also has a force-fail mutation executed against it.
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login.
+- A running Langflow **1.13** or **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login.
 - `src/frontend/src/components/core/parameterRenderComponent/components/connectionRefComponent/index.tsx`
   — the picker, its testids, the empty, failed and dangling states, Clear and Refresh.
 - `src/frontend/src/components/core/parameterRenderComponent/components/connectionRefComponent/helpers/connection-options.ts`
@@ -242,6 +263,7 @@ Each test also has a force-fail mutation executed against it.
 - `src/frontend/src/customization/feature-flags.ts` — `ENABLE_TRIGGERS` and `ENABLE_INTEGRATIONS`.
 - `src/frontend/src/locales/en.json` — the `connections.picker.*` copy.
 - `src/backend/base/langflow/api/v1/integrations.py` — the manifest the palette is derived from.
+- `src/bundles/github/extension.json` — the GitHub bundle and its `github` provider, from `1.14.0.dev7`.
 - `src/backend/base/langflow/services/connection/service.py` — `_list_visible_rows`, and the superuser
   seeing every user's rows.
 - `src/lfx/src/lfx/inputs/input_mixin.py` — `identity_kind` and `ownership_mode` on a connection field.
