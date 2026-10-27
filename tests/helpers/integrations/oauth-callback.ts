@@ -109,8 +109,14 @@ export async function startOAuth(
 
 /** The per-minute windows the OAuth buckets use; a refused hit does not extend one. */
 export const RATE_LIMIT_POLL_MS = 5_000;
-/** One whole window plus slack: a bucket still refusing after this is not a timing accident. */
-export const RATE_LIMIT_CAP_MS = 75_000;
+/**
+ * Two whole windows plus slack: a bucket still refusing after this is not a
+ * timing accident. One window is not enough, because the API spec exhausts the
+ * per-IP callback bucket on purpose. A waiter in the wizard spec can lose the
+ * first reset to that spec and then has to sit out the window it just used
+ * (measured at `--workers=2`: still refused after 80 s).
+ */
+export const RATE_LIMIT_CAP_MS = 135_000;
 
 export interface RateLimitWaitOptions {
   /** **Unit tests only.** */

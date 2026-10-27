@@ -1,4 +1,4 @@
-import type { BrowserContext, Page, Response } from "@playwright/test";
+import type { BrowserContext, Page, Response, Route } from "@playwright/test";
 import { type RateLimitWaitOptions, untilNotRateLimited } from "./oauth-callback";
 
 /**
@@ -126,13 +126,44 @@ async function deliverCallback(
     await reloadFromThePage(popup);
     return next;
   };
-  const { result } = await untilNotRateLimited(
-    "the callback in the consent popup",
-    reload,
-    (response) => response.status(),
-    wait,
+  const { result } = await holdConnectionList(context, () =>
+    untilNotRateLimited("the callback in the consent popup", reload, (response) => response.status(), wait),
   );
   return result;
+}
+
+/**
+ * Runs `wait` with the connection list served from one snapshot.
+ *
+ * A dialog waiting for consent reads `GET /api/v1/connections` every 2 s
+ * (measured on `1.14.0.dev7`), and list reads are limited to 60/minute per user.
+ * Waiting out a callback window with a dialog open therefore spends about half
+ * of the superuser's read budget, and at `--workers=2`, where the API spec holds
+ * the callback bucket, waits ran long enough to read the list into `429`.
+ *
+ * Only use it while the callback has not landed. Until then the row cannot
+ * change, so the snapshot is what the server would answer. The route is gone
+ * before this returns, so the read that teaches the dialog the outcome is a
+ * real one.
+ */
+export async function holdConnectionList<T>(context: BrowserContext, wait: () => Promise<T>): Promise<T> {
+  const isList = (url: URL) => url.pathname === "/api/v1/connections";
+  let snapshot: { status: number; headers: Record<string, string>; body: Buffer } | undefined;
+  const handler = async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    if (snapshot) return route.fulfill(snapshot);
+    const res = await route.fetch();
+    const answer = { status: res.status(), headers: res.headers(), body: await res.body() };
+    // Only a successful read stands in for the server; anything else passes through as it came.
+    if (answer.status === 200) snapshot = answer;
+    await route.fulfill(answer);
+  };
+  await context.route(isList, handler);
+  try {
+    return await wait();
+  } finally {
+    await context.unroute(isList, handler);
+  }
 }
 
 /**

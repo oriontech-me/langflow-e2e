@@ -10,8 +10,10 @@ import { deleteConnection } from "../../../../helpers/integrations/delete-connec
 import {
   type FakeOAuthProvider,
   absorbStartRateLimit,
+  holdConnectionList,
   installFakeOAuthProvider,
 } from "../../../../helpers/integrations/fake-oauth-provider";
+import { untilNotRateLimited } from "../../../../helpers/integrations/oauth-callback";
 
 // The Add / Reconnect wizard of /settings/connections, walked up to consent (#2307).
 // Spec doc: docs/core-functionality/integrations/connection-oauth-wizard.md
@@ -33,8 +35,17 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
   const PAGE = "/settings/connections";
   const COLLECTION = "/api/v1/connections";
   const GOOGLE = "e2e-google";
-  const HELD = ["openid", "email", "https://www.googleapis.com/auth/gmail.send"];
-  // Exact copy, measured on 1.14.0.dev2 (connections.add.* in the en bundle).
+  const MICROSOFT = "e2e-microsoft";
+  /** What test 5's Microsoft row holds; Entra never reports `offline_access` as granted. */
+  const HELD = ["Mail.Read", "Mail.Send"];
+  const OFFLINE_ACCESS = "offline_access";
+  /** Each OAuth provider's *Setup guide*, measured on 1.14.0.dev7 (langflow#15796). */
+  const SETUP_GUIDE: Record<string, string> = {
+    google: "https://docs.langflow.org/connection-oauth#customer-owned-google-registration",
+    microsoft: "https://docs.langflow.org/entra-app-registration",
+    slack: "https://docs.langflow.org/connection-oauth#customer-owned-slack-registration",
+  };
+  // Exact copy, measured on 1.14.0.dev2 and 1.14.0.dev7 (connections.* in the en bundle).
   const COPY = {
     waiting: "Waiting for consent in the provider's window…",
     denied: "The provider denied authorization.",
@@ -49,6 +60,10 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       "Open Langflow at its public HTTPS URL (or localhost for local use) to get a suggested redirect URI.",
     copied: "Redirect URI copied.",
     granted: "Granted",
+    someInputs: "For some inputs",
+    handleTooltip: (provider: string) =>
+      `The identifier flows use to reference this connection, such as ${provider}/work.`,
+    displayNameTooltip: "A readable name shown in connection lists to help you recognize this account.",
   };
   const RISK_LABEL: Record<string, string> = { read: "Read", write: "Write", destructive: "Destructive" };
 
@@ -92,12 +107,16 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
   }
 
   /**
-   * Opens Add and waits for its registration list. Continue is enabled before
-   * that list arrives, and a Continue sent meanwhile names the provider id as
-   * the registration (`"google"`), which the server refuses: measured by
-   * delaying the list, and seen once in CI. The spec doc records it.
+   * Opens Add, waits for its registration list, then picks `provider`. Continue
+   * is enabled before that list arrives, and a Continue sent meanwhile names the
+   * provider id as the registration (`"google"`), which the server refuses:
+   * measured by delaying the list, and seen once in CI. The spec doc records it.
+   *
+   * The dialog preselects the first provider listed, which on 1.14.0.dev7 is
+   * GitHub (langflow#15957), so every test picks the one it needs. `null` keeps
+   * the preselection, for the test that asserts it.
    */
-  async function openAddDialog(page: Page): Promise<Locator> {
+  async function openAddDialog(page: Page, provider: string | null = "google"): Promise<Locator> {
     await page.goto(PAGE);
     const listed = page.waitForResponse(
       (res) =>
@@ -107,7 +126,21 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     const dialog = page.getByRole("dialog", { name: "Add connection" });
     await expect(dialog).toBeVisible();
     expect((await listed).status()).toBe(200);
+    if (provider) await page.getByTestId("connection-provider").selectOption(provider);
     return dialog;
+  }
+
+  /**
+   * The tooltip a help button shows on hover, closed again afterwards. The
+   * content is hoverable, so leaving the trigger opens a grace area towards it,
+   * and a tooltip closes only on a later pointer move outside that area: a single
+   * jump away left it open (measured), so the pointer leaves in steps.
+   */
+  async function expectTooltip(page: Page, testId: string, text: string) {
+    await page.getByTestId(testId).hover();
+    await expect(page.getByRole("tooltip")).toHaveText(text);
+    await page.mouse.move(0, 0, { steps: 5 });
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
   }
 
   async function fillDetails(page: Page, name: string) {
@@ -152,13 +185,14 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       const google = manifest.providers.find((item) => item.provider_id === "google")!;
       expect(google, "the manifest serves Google").toBeDefined();
       const writes = recordWrites(page);
-      const dialog = await openAddDialog(page);
+      const dialog = await openAddDialog(page, null);
 
-      await test.step("the provider options are the manifest's, Google first and selected", async () => {
+      await test.step("the provider options are the manifest's, the first one selected", async () => {
         const select = page.getByTestId("connection-provider");
         const values = await select.locator("option").evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value));
         expect(values).toEqual(manifest.providers.map((item) => item.provider_id));
-        await expect(select).toHaveValue("google");
+        await expect(select).toHaveValue(manifest.providers[0].provider_id);
+        await select.selectOption("google");
       });
 
       await test.step("every scope a Google action needs is checked and names that action with its risk", async () => {
@@ -252,7 +286,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
   );
 
   test(
-    "the registration picked is the one consent starts with, a closed sign-in window is reported, and Cancel discards the half-made connection",
+    "the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection",
     { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       // A second Google registration, listed first: the picker must not just
@@ -293,15 +327,44 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
         return popup;
       });
 
-      await test.step("closing the sign-in window unanswered is reported, with Try again", async () => {
+      await test.step("closing the sign-in window unanswered is reported, with the setup guide and Try again", async () => {
         await popup.close();
-        await expect(dialog.getByText(COPY.untracked)).toBeVisible();
+        await expect(dialog.getByRole("status")).toHaveText(COPY.untracked);
+        await expect(dialog.getByTestId("connection-setup-guide")).toHaveAttribute("href", SETUP_GUIDE.google);
         await expect(dialog.getByTestId("connection-try-again")).toBeVisible();
+        expect(await readConnection(request, name), "Continue created the row").toMatchObject({ status: "pending" });
+      });
+
+      await test.step("the provider's answer arriving anyway still reaches the dialog", async () => {
+        // The popup is gone, so the denial is delivered the way its redirect would
+        // have: the attempt's state, to the real callback, with the binding cookie
+        // oauth/start set. page.request shares the context's jar, which holds that
+        // cookie; it is path-scoped, so context.cookies(origin) does not list it.
+        const state = provider.requests.at(-1)?.searchParams.get("state");
+        expect(state, "the popup opened an authorization URL with a state").toBeTruthy();
+        const params = new URLSearchParams({ state: state!, error: "access_denied" });
+        // The dialog keeps polling while a 429 is waited out: hold its reads until the callback lands.
+        const { result: callback } = await holdConnectionList(page.context(), () =>
+          untilNotRateLimited(
+            "the Google callback delivered after the popup closed",
+            () => page.request.get(`${COLLECTION}/oauth/google/callback?${params}`, { maxRedirects: 0 }),
+            (res) => res.status(),
+          ),
+        );
+        expect(callback.status(), await callback.text()).toBe(400);
+        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied);
+        await expect(dialog.getByText(COPY.untracked)).toHaveCount(0);
+        await expect(dialog.getByTestId("connection-setup-help")).toHaveCount(0);
+        expect(await readConnection(request, name)).toMatchObject({
+          status: "error",
+          status_reason: "oauth-denied",
+          has_credentials: false,
+        });
       });
 
       await test.step("Cancel deletes the unfinished connection", async () => {
         const row = await readConnection(request, name);
-        expect(row, "Continue created the row").toMatchObject({ status: "pending" });
+        expect(row, "the denied row is still there").toBeDefined();
         const deleted = page.waitForResponse(
           (res) => res.request().method() === "DELETE" && res.url().endsWith(`${COLLECTION}/${row!.id}`),
         );
@@ -356,14 +419,15 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
   );
 
   test(
-    "an abandoned Reconnect leaves a working connection as it was",
+    "an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted",
     { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
-    async ({ page, request }) => {
+    async ({ page, request }, testInfo) => {
       const name = newHandle("reconnect");
-      await createConnectionViaApi(request, superHeaders, { name, grantedScopes: HELD });
+      await createConnectionViaApi(request, superHeaders, { name, providerKey: "microsoft", grantedScopes: HELD });
       const before = await readConnection(request, name);
       expect(before).toMatchObject({ status: "ready", status_reason: null, has_credentials: true });
-      provider.answer("stall");
+      const microsoft = await installFakeOAuthProvider(page.context(), testInfo.project.use.baseURL!, "microsoft");
+      const requested = [...HELD, OFFLINE_ACCESS].sort();
 
       await page.goto(PAGE);
       const row = page.getByTestId(`connection-row-${name}`);
@@ -372,25 +436,36 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       await page.getByRole("menuitem", { name: "Reconnect" }).click();
       const dialog = page.getByRole("dialog", { name: `Reconnect E2E ${name}` });
 
-      await test.step("the dialog checks the scopes the connection holds and marks them Granted", async () => {
+      await test.step("the held scopes are checked and Granted; offline_access is checked, not Granted", async () => {
         await expect(dialog).toBeVisible();
         for (const scope of HELD) {
           await expect(dialog.getByTestId(`connection-scope-${scope}`), scope).toBeChecked();
           await expect(scopeLabel(dialog, scope), scope).toContainText(COPY.granted);
         }
+        await expect(dialog.getByTestId(`connection-scope-${OFFLINE_ACCESS}`)).toBeChecked();
+        await expect(scopeLabel(dialog, OFFLINE_ACCESS)).not.toContainText(COPY.granted);
+        // The registration offers more, and none of it is preselected.
+        const offered = await dialog.locator('[data-testid^="connection-scope-"]').count();
+        expect(offered, "the registration offers scopes the row does not hold").toBeGreaterThan(requested.length);
+        expect((await checkedScopes(dialog)).sort()).toEqual(requested);
       });
 
-      const popup = await test.step("Authorize starts consent for the held scopes", async () => {
+      const popup = await test.step("Authorize asks for the held scopes and offline_access, in the start and the URL", async () => {
         const started = page.waitForResponse((res) => res.url().endsWith("/oauth/start"));
         const opened = page.context().waitForEvent("page");
         await page.getByTestId("connection-authorize").click();
         const start = await started;
         expect(start.status(), await start.text()).toBe(200);
         const sent = start.request().postDataJSON() as { registration_id: string; scopes: string[] };
-        expect(sent.registration_id).toBe(GOOGLE);
-        expect([...sent.scopes].sort()).toEqual([...HELD].sort());
+        expect(sent.registration_id).toBe(MICROSOFT);
+        expect([...sent.scopes].sort()).toEqual(requested);
+        const popup = await opened;
+        await expect(popup).toHaveURL(/^https:\/\/login\.microsoftonline\.com\/[^/]+\/oauth2\/v2\.0\/authorize\?/);
+        const url = microsoft.requests.at(-1);
+        expect(url, "the popup reached the provider").toBeDefined();
+        expect((url!.searchParams.get("scope") ?? "").split(" ").sort()).toEqual(requested);
         await expect(dialog).toContainText(COPY.waiting);
-        return await opened;
+        return popup;
       });
 
       await test.step("Cancel closes the dialog and the window, and writes nothing", async () => {
@@ -445,7 +520,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       await test.step("the provider denies, and Cancel keeps the row", async () => {
         provider.answer("deny");
         const callback = provider.nextCallback();
+        const started = page.waitForResponse((res) => res.url().endsWith("/oauth/start"));
         await page.getByTestId("connection-authorize").click();
+        const sent = (await started).request().postDataJSON() as { scopes: string[] };
+        // Google adds nothing of its own to what was checked, unlike Microsoft in test 5.
+        expect([...sent.scopes].sort()).toEqual(["email", "openid"]);
         expect((await callback).status()).toBe(400);
         await expect(dialog.getByRole("alert")).toHaveText(COPY.denied);
         const writes = recordWrites(page);
@@ -463,6 +542,68 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
           has_credentials: false,
         });
       });
+    },
+  );
+
+  test(
+    "the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need",
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    async ({ page, request }) => {
+      const res = await request.get("/api/v1/integrations", { headers: superHeaders });
+      expect(res.status(), await res.text()).toBe(200);
+      const manifest = (await res.json()) as {
+        providers: Array<{
+          provider_id: string;
+          capabilities: Array<{
+            display_name: string;
+            risk: string;
+            required_scopes: string[];
+            conditional_scopes: Array<{ scope: string }>;
+          }>;
+        }>;
+      };
+      const microsoft = manifest.providers.find((item) => item.provider_id === "microsoft")!;
+      expect(microsoft, "the manifest serves Microsoft 365").toBeDefined();
+      const writes = recordWrites(page);
+      const dialog = await openAddDialog(page);
+
+      await test.step("Handle and Display name each explain themselves", async () => {
+        await expectTooltip(page, "connection-handle-help", COPY.handleTooltip("google"));
+        await expectTooltip(page, "connection-display-name-help", COPY.displayNameTooltip);
+      });
+
+      await test.step("each OAuth provider links its own setup guide, and the handle example follows it", async () => {
+        for (const [providerId, guide] of Object.entries(SETUP_GUIDE)) {
+          await page.getByTestId("connection-provider").selectOption(providerId);
+          await expect(dialog.getByTestId("connection-setup-guide"), providerId).toHaveAttribute("href", guide);
+          await expectTooltip(page, "connection-handle-help", COPY.handleTooltip(providerId));
+        }
+      });
+
+      await test.step("a Microsoft scope names each action needing it, marking those that need it only for some inputs", async () => {
+        await page.getByTestId("connection-provider").selectOption("microsoft");
+        const pairs = microsoft.capabilities.flatMap((capability) => [
+          ...capability.required_scopes.map((scope) => ({ scope, capability, conditional: false })),
+          ...capability.conditional_scopes.map(({ scope }) => ({ scope, capability, conditional: true })),
+        ]);
+        expect(
+          pairs.filter((pair) => pair.conditional).length,
+          "the manifest declares Microsoft scopes that only some inputs need",
+        ).toBeGreaterThan(0);
+        for (const { scope, capability, conditional } of pairs) {
+          const lines = (await scopeLabel(dialog, scope).innerText()).split("\n").map((line) => line.trim());
+          const at = lines.indexOf(capability.display_name);
+          expect(at, `${scope} names ${capability.display_name}: ${JSON.stringify(lines)}`).toBeGreaterThanOrEqual(0);
+          expect(lines[at + 1], `${capability.display_name}'s risk`).toBe(RISK_LABEL[capability.risk]);
+          expect(lines[at + 2] === COPY.someInputs, `${scope} for ${capability.display_name}: conditional`).toBe(
+            conditional,
+          );
+        }
+      });
+
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
+      expect(writes, "browsing the dialog creates nothing").toEqual([]);
     },
   );
 });

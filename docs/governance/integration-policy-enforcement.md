@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/governance/integration-policy-enforcement.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev7`)
 
 Owning issue: #2299 (Dedicated Integrations, batch 2). It closes the bullet `QA-CHECKLIST.md` § 24.3 deferred
 to this lane. Batch 1 asserted only the **unrestricted** effective policy (#1968).
@@ -56,9 +56,13 @@ With `integrations.google.gmail.send` blocked:
 - **`POST /api/v1/custom_component`** with that component's own code answers **`404 {"detail": "Integration
   not found"}`**. Unblocked, the same body builds (`200`).
 - **`GET /api/v1/connections/oauth/registrations`** filters by policy too. The product ships no OAuth
-  registration, so this file was written against `{"registrations": []}` and has nothing to see disappear. Every
-  lane has carried fake registrations since #2301 (`docs/api/connections/oauth-fake-registrations.md`), so the
-  filter is now observable. It is not asserted here yet.
+  registration, so this file was first written against `{"registrations": []}` and had nothing to see disappear.
+  Every lane has carried fake registrations since #2301 (`docs/api/connections/oauth-fake-registrations.md`), and
+  test 3 asserts the filter (#2307, upstream langflow#15809). Measured on `1.14.0.dev7`: with **every** Google
+  `policy_key` blocked, `e2e-google` leaves the list and the other three registrations stay. With only Google's
+  **triggers** left allowed, `e2e-google` stays listed: a provider is offered while any of its actions is usable,
+  and a trigger counts. A trigger is a capability whose catalog component carries `metadata.trigger_kind`; the
+  manifest itself has no field for it.
 
 With the ceiling narrowed to `["microsoft"]`, `/integrations` lists only `microsoft`, and no Google or Slack
 connector component is left in `/all`.
@@ -74,7 +78,8 @@ current integration policy.", "hint": "Ask an administrator to approve the integ
 | Policy state | create | `oauth/start` | `test` / `health` |
 |---|---|---|---|
 | one Google action blocked | allowed (`201`) | not refused (`400` "OAuth registration ID is not configured.") | allowed (`200`) |
-| **every** Google action blocked | **refused** | **refused** | allowed (`200`) |
+| every Google action **except its triggers** blocked | not asserted | allowed: `200` with the real `e2e-google` registration | not asserted |
+| **every** Google action blocked | **refused** | **refused**, even with the real `e2e-google` registration (langflow#15809: consent needs a usable action) | allowed (`200`) |
 | Google outside the ceiling | **refused** | **refused** | **refused** |
 
 - **A refusal is decided before anything is stored.** A refused create leaves no row, and a refused `health`
@@ -116,8 +121,9 @@ is configured, i.e. every loaded provider is allowed."* Blocked actions are repo
 not folded into `unrestricted`. So this file asserts the documented meaning both ways:
 
 - `true` with an action blocked;
-- `false`, with `approved_provider_ids: ["microsoft"]` and `loaded_provider_ids` still all three, under the
-  ceiling.
+- `false`, with `approved_provider_ids: ["microsoft"]` and `loaded_provider_ids` still every loaded provider,
+  under the ceiling. The test reads that set from the unrestricted manifest rather than naming it: `1.14.0.dev7`
+  loads a fourth provider, GitHub (langflow#15957).
 
 The issue's second ask, a connection whose only action is blocked "keeps reading `ready` without saying why",
 also reproduces, and is also by design. A connection carries no policy field. Upstream's design puts the policy
@@ -165,16 +171,23 @@ fails if the active bundle does not match it.
    configured."
 2. Approve `["microsoft"]` only.
 3. `/integrations` lists only `microsoft`. `/policy/effective` reads `unrestricted: false`,
-   `approved_provider_ids: ["microsoft"]`, and all three `loaded_provider_ids`.
+   `approved_provider_ids: ["microsoft"]`, and every provider the unrestricted manifest listed as
+   `loaded_provider_ids`.
 4. No Google or Slack component of the manifest is left in `/all`.
 5. Create a Google row → the exact `403 policy-blocked` body, and no row by that name exists after.
 6. `test`, `health` and `oauth/start` on the planted row → the same `403`. `health_checked_at` is unchanged.
 
-**Test 3 — blocking every action of an approved provider refuses its connections, not its checks.**
-1. Plant a Google row, then block every Google `policy_key` read from the manifest.
-2. `/integrations` no longer lists `google`.
-3. Create a Google row → `403 policy-blocked`, and no row is left.
-4. `health` on the planted row still answers `200`: only the ceiling refuses checks.
+**Test 3 — blocking every action of an approved provider refuses its connections and its consent, not its
+checks, and one allowed trigger keeps it offered.**
+1. Plant a Google row. Control: the owner's registration list offers `e2e-google`.
+2. Block every Google `policy_key` read from the manifest. `/integrations` no longer lists `google`.
+3. The registration list no longer offers `e2e-google`, and still offers `e2e-microsoft`.
+4. Create a Google row → `403 policy-blocked`, and no row is left.
+5. `oauth/start` on the planted row, naming the real `e2e-google` registration → the same `403`.
+6. `health` on the planted row still answers `200`: only the ceiling refuses checks.
+7. Unblock Google's triggers only (every capability whose catalog component carries `metadata.trigger_kind`;
+   at least one, or the step proves nothing). The registration list offers `e2e-google` again, and the same
+   `oauth/start` answers `200` with an authorization URL on `accounts.google.com`.
 
 **Test 4 — a saved flow is refused at run time, before its component runs.**
 1. Save a flow with *Gmail: Send Email*, every field empty. Create an API key.
@@ -209,6 +222,7 @@ fails if the active bundle does not match it.
 ## Validation criterion *(required)*
 
 All seven tests pass three consecutive times with `PW_DESTRUCTIVE=1 --retries=0` against `1.13.0.dev47`, and
+again against `1.14.0.dev7` after test 3 gained its registration and consent steps (#2307), and
 the following holds on every run:
 
 - every refusal carries its exact status and body;
@@ -224,8 +238,11 @@ Each test also has a force-fail mutation executed against it.
 
 - A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login, with
   `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` (for `POST /api/v1/custom_component`).
-- No provider key, no OAuth registration, no network egress. The run in test 4 stops at the component's own
-  input validation when allowed, and at the policy gate when not.
+- No provider key and no network egress. The run in test 4 stops at the component's own input validation when
+  allowed, and at the policy gate when not.
+- #2301's fake OAuth registrations (`LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS`), for test 3's registration list and
+  its `oauth/start` with the real `e2e-google`. Without them the control in step 1 fails, rather than the filter
+  passing on an empty list.
 - `src/lfx/src/lfx/services/integration_policy/base.py` — key format, the deny-list and `IntegrationPolicyError`
   messages.
 - `src/lfx/src/lfx/services/integration_policy/service.py` — an empty ceiling means unrestricted.
@@ -237,6 +254,8 @@ Each test also has a force-fail mutation executed against it.
   computes `unrestricted`.
 - `src/backend/base/langflow/api/v1/connections.py` and `src/backend/base/langflow/services/connection/service.py`
   — which mutations check the policy, and the `policy-blocked` body.
+- `src/backend/base/langflow/services/connection/policy.py` — `providers_with_usable_actions`: which providers the
+  registration list offers and `oauth/start` accepts, a trigger counting as usable.
 - `src/lfx/src/lfx/custom/custom_component/component.py` — the run-time gate in `build_results`.
 - `src/backend/base/langflow/api/v1/endpoints.py` — `/run`'s `policy-blocked` response and the
   `custom_component` 404.

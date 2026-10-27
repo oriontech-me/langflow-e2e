@@ -78,7 +78,8 @@ Every spec in a lane reaches the instance from one client IP, so the 5 callbacks
 and the wizard spec, which runs callbacks in its popup. This file spends 5 and then exhausts the bucket on purpose
 (test 3). The cost is handled rather than avoided: the callback helper waits out a `429` and sends the same request
 again, which is safe for the reason above. Its log line names the wait. The one test that wants the `429` reads it
-raw.
+raw. The wait is capped at two windows, not one, because a waiter in the wizard spec can lose the first reset to
+this file's test 3 (measured at `--workers=2`; the wizard spec doc has the sequence).
 
 ### Recorded, not asserted
 
