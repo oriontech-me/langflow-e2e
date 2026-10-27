@@ -1644,6 +1644,18 @@
 - [ ] A trigger whose every run fails still reads `active` with `last_error: null` — known defect, upstream ticket and `test.fail()` owned by #2328
 - [ ] `/replay` answers `409` outside the 7-day window — not reachable on any lane (the window is at least one day and a delivery cannot be back-dated)
 
+#### 24.10 Health after creation and connector run errors (#2355)
+
+- [x] A run refused for an expired credential writes `expired` / `unhealthy` (with `health_checked_at`) on the row itself, with no health check, and keeps the credential, while a run refused for a missing scope leaves its row exactly as created (langflow#15763) → api/connections/api-connections-health.spec.ts
+- [x] A pasted Slack token is checked with Slack's `auth.test` before it is stored: an unknown `xoxb-` token and a string that is not Slack-shaped are both refused `422` *"Slack rejected this token…"*, and an app-level token breaking its rules (identity, refresh, the `connections:write` scope) is refused locally with its reason; no refusal leaves a row (langflow#15767) → api/connections/api-connections-health.spec.ts
+- [x] *Check credential* and the health check on an app-level (`xapp-`) row answer `200` and stay `unknown`, never `healthy` (langflow#15767) → api/connections/api-connections-health.spec.ts
+- [x] `DELETE` of a row whose provider revocation fails (Slack refuses an `xapp-` token) removes it whole: `204`, not listed, a second `DELETE` `404` (langflow#15766) → api/connections/api-connections-health.spec.ts
+- [x] A connector run's `RUN_ERROR` carries the integration's `code`, with its hint after the message, and the canvas shows `[code] message` plus the hint in the *Workflow run failed* notice and the node's *Flow build failed* panel; the fixture counts it as a failure, not a provider outage (langflow#15773) → core-functionality/integrations/connector-run-errors.spec.ts
+- [x] A run refused for an expired credential reads `[auth-expired]` with *"Reconnect the integration and try again."*, leaks the planted token nowhere, and leaves the row `Expired` on `/settings/connections` across a reload → core-functionality/integrations/connector-run-errors.spec.ts
+- [x] A `connection_ref` field has no canvas handle: a click-to-connect or a drag onto it draws no edge, while the same gesture onto `query` draws one and saves it on `query` (langflow#15753) → core-functionality/integrations/connector-run-errors.spec.ts
+- [ ] A Google transport failure (`network-error`) versus a provider outage (`provider-unavailable`), as produced live — raised inside the Langflow process, so a Playwright route cannot reach it; needs an instance without egress to `googleapis.com`. The suite's flow-error gate is pinned not to take a genuine integration error for a provider outage (`flow-error-policy.test.ts`) (langflow#15775)
+- [ ] A planted Google token that Google itself rejects leaves the row `ready` (run-time rejection is persisted only on the OAuth refresh path and for a pasted Slack token) — recorded in `docs/api/connections/api-connections-health.md`, not asserted
+
 ---
 
 
