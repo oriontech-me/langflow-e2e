@@ -402,6 +402,45 @@ Review (2026-10-08): re-read `dashboard-feed.json` and compare the Memory Base a
 Agents rows against this wave's baseline, then coin the next wave from the refreshed
 ranking.
 
+### Wave 11 — Multi-edit, instance migration & integrations  ·  2026-10-27 → 2026-11-10 ◀ **NEXT**
+
+**Feature-driven** wave, like Wave 5: three surfaces that reached the nightly from
+upstream's 1.13/1.14 lines and that no spec touches. Two are new. **Multi-edit
+safety** (upstream #14903) changes every flow save: a save is now conditional on a
+version token, a stale one gets `409`, and autosave moved from 2 s to 5 s.
+**Instance migration** (*Settings > Migration*) moves a whole instance to a new one,
+behind a flag. The third, **Dedicated Integrations**, already has a batch-2 backlog, and
+this wave adds the upstream fixes merged after it.
+
+Requires (GitHub milestone *Wave 11 — Multi-edit, instance migration & integrations*):
+- **Infra** (prerequisite, no coverage bullet):
+  - the 5 s autosave audit and the `409` logging decision (#2346);
+  - the `@instance-migration` lane (#2347), which blocks every instance-migration
+    spec except #2348.
+- **Create** (`[ ]` → `[x]`, new Part II sections):
+  - multi-edit safety: #2341 → #2342 → #2343, #2344, #2345 (tracker #2356);
+  - instance migration: #2348, then #2349–#2353, and #2354 once its spec-vs-VM-cell
+    decision is recorded (tracker #2357);
+  - integrations: #2355 (tracker #2358).
+
+Notes: instance migration is **not** the schema-upgrade migration the
+`e2e-routine-migration` VM routine covers (#2193), so the repo calls it
+*instance migration* everywhere. The `@instance-migration` specs run under a lane
+selector, so they cannot carry `@stable` until a scheduled lane exists (#1010, the
+same open question as #2051). #2348 is the exception: it runs on the normal lane.
+Every issue's premises were read from upstream code (`release-1.14.0`, `1fe2fb2f77`) and
+not measured. Each spec doc measures on the nightly first. Off-band on purpose:
+13 creation issues plus 2 infra.
+
+Convergence: directional. The new Part II sections add both numerator and denominator.
+Exit:
+- #2341 and #2348 are `@stable`.
+- The `@instance-migration` lane runs locally end to end.
+- Each tracker (#2356, #2357, #2358) has every child closed or re-scoped with its reason.
+
+Review (2026-11-10): record what landed per tracker, then decide whether the
+`@instance-migration` lane earns a scheduled run.
+
 ---
 
 ## Pool — not yet dated
