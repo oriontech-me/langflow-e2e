@@ -1693,8 +1693,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 67 | 62 | 0 | 0 | 5 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **793** | **692 (87%)** | **51 (6%)** | **14 (2%)** | **36 (5%)** |
+| `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **802** | **699 (87%)** | **51 (6%)** | **14 (2%)** | **38 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1710,7 +1710,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 793 `test()` calls carrying the `@stable` tag, distributed across 294 spec
+> 800 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1722,6 +1722,10 @@
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
 
 #### api/connections/
+- [x] a run refused for an expired credential marks the connection expired and unhealthy, with no health check, while a run refused for a missing scope leaves its connection as it was → `api-connections-health.spec.ts`
+- [x] a pasted Slack token is checked with Slack before it is saved, and an app-level token breaking its rules is refused locally, each with its reason → `api-connections-health.spec.ts`
+- [x] checking an app-level token does not report it healthy → `api-connections-health.spec.ts`
+- [x] deleting a connection whose provider revocation fails removes it whole → `api-connections-health.spec.ts`
 - [x] a connection is created with its full body, listed by its unique name and deleted by id → `api-connections-lifecycle.spec.ts`
 - [x] PATCH renames and grants the non-interactive opt-in, and refuses a field it does not declare → `api-connections-lifecycle.spec.ts`
 - [x] a create body with no provider_key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
@@ -2119,6 +2123,9 @@
 - [x] a list that fails to load says so → `connector-node-picker.spec.ts`
 - [x] picking a connection binds its handle, a reload keeps it, and Clear unbinds it → `connector-node-picker.spec.ts`
 - [x] a handle that outlived its connection is shown as not found → `connector-node-picker.spec.ts`
+- [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
+- [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
+- [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
