@@ -2266,6 +2266,67 @@
 
 ---
 
+### 24.9 Multi-edit — the conflict banner and *Review Version Changes* `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts` (spec doc: `docs/flow-functionality/multi-edit/multi-edit-conflict-review.md`, issue #2342)
+
+**Objective:** Verify that when another session saved first, the editor's refused save raises a banner, and that the review dialog lists every incoming change with the right badge and sentence.
+
+**Preconditions:**
+- A flow built over the API with *Chat Input* (`"hello"`), *Chat Output*, and two Prompt Template nodes, *Doomed Prompt* and *Mine Prompt*.
+- The other session is an API `PATCH` from the test's own request context.
+
+**Step by step:**
+1. Open the flow.
+2. As the other session, save in one `PATCH`:
+   - change *Chat Input*'s text and move it;
+   - move *Chat Output*;
+   - delete *Doomed Prompt*;
+   - add *Arrived Prompt*;
+   - link *Chat Input* → *Chat Output*.
+3. In the editor, drag *Mine Prompt*. Verify that its autosave `PATCH` answers `409`.
+4. Verify that `flow-conflict-banner` reads *"A newer version of this flow is available"* and *"Review changes before saving."*, and that `flow-conflict-frame` is attached.
+5. Click *Review changes* (`flow-conflict-review-button`). Verify that *Review Version Changes* opens and shows *Available changes*.
+6. Verify these rows under *Available changes* (`conflict-change-theirs-…`):
+   - *Arrived Prompt*: **Added**, *"New node added to the flow."*
+   - *Doomed Prompt*: **Removed**, *"Node removed from the flow."*
+   - *Chat Input*: **Modified**, with *"Moved on the canvas."* and *"Input Text updated from hello to from the other session."* in one row.
+   - *Chat Output*: **Modified**, with only *"Moved on the canvas."*
+   - The edge: **Added**, *"Chat Input to Chat Output link added."*
+7. Verify that there are exactly 5 rows under *Available changes*, and exactly 1 under *Your changes*: *Mine Prompt*, *"Moved on the canvas."*
+
+**Validation:** The banner appears only after the refused save. The dialog describes exactly what the other session changed: one row per component, with the right badge and sentence.
+
+---
+
+### 24.10 Multi-edit — no banner without someone else's change `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+
+**Objective:** Guard against false conflicts. A flow that only the viewer edits, a version-history round trip, or a reload must never raise the banner. Upstream fixed *"version history faking an edit"* inside #14903.
+
+**Preconditions:** As 24.9.
+
+**Step by step:**
+1. **Only the viewer edits.**
+   - Drag *Mine Prompt* three times, waiting each time for an autosave that answers `200`.
+   - Open version history (`sidebar-nav-versions`, which answers `GET /versions/`), then return to components.
+   - Drag again. Verify that every `PATCH` answered `200` and that the banner never appeared.
+2. **History is not an edit.**
+   - Open the flow without editing, open version history and return.
+   - Let the other session change *Chat Input*'s text.
+   - Click *Chat Output*'s run button (`button_run_chat output`).
+   - Verify the notice *"{user} updated this flow. The canvas now shows the latest version — run again to execute it."*
+   - Verify that *Chat Input*'s `textarea_str_input_value` shows the new text.
+   - Verify that there is no banner, and that the editor issued no `PATCH` at all.
+3. **Reload.**
+   - Reload the editor and drag *Mine Prompt*.
+   - Verify that the autosave answers `200` and that there is no banner.
+
+**Validation:** No banner appears without a server change the viewer had not seen. A viewer with no edits of their own adopts a newer version instead of being asked to resolve it.
+
+---
+
 ---
 
 ## 25. MCP — Client and Server
