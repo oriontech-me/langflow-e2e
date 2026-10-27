@@ -880,6 +880,12 @@
 - [-] A flow only the viewer edits never shows the banner: every autosave answers `200` across several cycles and a version-history round trip → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
 - [-] Browsing version history is not an edit (guard for upstream's *"stop version history from faking an edit"*): after a history round trip and another session's save, a run adopts the newer version with *"{user} updated this flow… run again"*, shows the new value, raises no banner, and the viewer issued no `PATCH` → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
 - [-] Reloading with no change on the server shows no banner, and the next edit saves with `200` → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+- [-] *Update Current Flow* overwrites with `200` and *"Flow updated. The version it replaced is in the history."*: the server holds the viewer's canvas, the history's one entry is *"Replaced by a newer edit"* holding the other session's version, and the banner is gone → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] *Duplicate Flow* forks with `201` and opens `<name> (copy)` holding the viewer's canvas; the original keeps its token and the other version, receives no `PATCH`, and saves normally once reopened (the *"This flow was duplicated…"* notice is unreachable from the UI, see the spec doc) → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] *Load Latest* asks first (*"Load the latest version?"*), archives the viewer's canvas as *"Saved when discarding a conflict"* (`201`), shows the latest version with the server untouched, and restoring that entry from version history brings the viewer's edit back → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] A second save by the other session while the dialog is open refuses *Update* with `409` and *"Someone saved again while you were choosing…"*, refreshes the dialog with the newer change, and keeps that save on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] *Cancel* closes the dialog, keeps the banner and changes nothing on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] When the archive `POST /versions/` fails, *Load Latest* discards nothing: *"Your changes could not be saved to version history, so nothing was discarded."*, the dialog and banner stay, the server is unchanged and the history is empty → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 
 ---
 
