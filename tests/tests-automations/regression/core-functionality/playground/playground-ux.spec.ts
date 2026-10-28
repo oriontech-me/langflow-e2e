@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 test.describe("Playground UX", () => {
   test.describe.configure({ mode: "serial" });
@@ -30,17 +31,16 @@ test.describe("Playground UX", () => {
       await test.step("Send message and confirm it appears in chat", async () => {
         const userMessage = "Hello from regression test";
         await page.getByTestId("input-chat-playground").last().fill(userMessage);
-        await page.getByTestId("button-send").last().click();
-
-        await expect(page.getByText(userMessage).last()).toBeVisible({
-          timeout: 3000,
+        // The user message must render before the turn finishes, so its check
+        // runs inside `send`, ahead of the start-then-finish wait.
+        await sendAndAwaitPlaygroundTurn(page, {
+          send: async () => {
+            await page.getByTestId("button-send").last().click();
+            await expect(page.getByText(userMessage).last()).toBeVisible({
+              timeout: 3000,
+            });
+          },
         });
-      });
-
-      await test.step("Wait for flow to complete", async () => {
-        await expect(
-          page.getByTestId("input-chat-playground").last(),
-        ).toBeEnabled({ timeout: 15000 });
       });
     },
   );
@@ -64,10 +64,7 @@ test.describe("Playground UX", () => {
         ];
         for (const msg of messages) {
           await page.getByTestId("input-chat-playground").last().fill(msg);
-          await page.getByTestId("button-send").last().click();
-          await expect(
-            page.getByTestId("input-chat-playground").last(),
-          ).toBeEnabled({ timeout: 15000 });
+          await sendAndAwaitPlaygroundTurn(page);
         }
       });
 
@@ -79,12 +76,9 @@ test.describe("Playground UX", () => {
     },
   );
 
-  // Quarantined for #2368: recurrent flake (VM dailies 2026-10-09, 2026-10-14 and
-  // 2026-10-28), the input is still disabled when the follow-up message is typed.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2368's deliverable.
-  test.fixme(
+  test(
     "playground input field must be ready after flow responds",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
@@ -96,10 +90,10 @@ test.describe("Playground UX", () => {
 
       await test.step("Send message and wait for flow to respond", async () => {
         await page.getByTestId("input-chat-playground").last().fill("Hi.");
-        await page.getByTestId("button-send").last().click();
-        await expect(
-          page.getByTestId("input-chat-playground").last(),
-        ).toBeEnabled({ timeout: 15000 });
+        // Not `toBeEnabled` right after Send (#2368): the build awaits a
+        // version-state request before it disables the input, so that check
+        // passes before the turn has even started.
+        await sendAndAwaitPlaygroundTurn(page);
       });
 
       await test.step("Confirm input is ready for a follow-up message", async () => {
