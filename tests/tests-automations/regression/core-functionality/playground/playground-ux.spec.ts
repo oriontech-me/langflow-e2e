@@ -36,9 +36,11 @@ test.describe("Playground UX", () => {
         await sendAndAwaitPlaygroundTurn(page, {
           send: async () => {
             await page.getByTestId("button-send").last().click();
-            await expect(page.getByText(userMessage).last()).toBeVisible({
-              timeout: 3000,
-            });
+            // By testid, not by text: ChatOutput echoes the same text, so a
+            // text match could pass on the bot's bubble instead.
+            await expect(
+              page.getByTestId(`chat-message-User-${userMessage}`),
+            ).toBeVisible({ timeout: 3000 });
           },
         });
       });
