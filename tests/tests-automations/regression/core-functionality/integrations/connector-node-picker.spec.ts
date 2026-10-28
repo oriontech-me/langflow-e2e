@@ -29,7 +29,7 @@ import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 // run seeded. Every assertion keys on this file's own handles; no count is read.
 //
 // Rows are planted through a throwaway owner (#2295), whose rows the superuser's
-// picker lists. Only test 6 spends superuser writes (2 rows, 4 writes): a trigger
+// picker lists. Only test 7 spends superuser writes (2 rows, 4 writes): a trigger
 // accepting its flow owner's own row needs a row the superuser owns.
 test.describe("Connector components — the palette, the canvas and the connection picker", () => {
   /** The connection field's id on every connector node; always scoped by its node. */
@@ -51,12 +51,20 @@ test.describe("Connector components — the palette, the canvas and the connecti
   };
   /** First build whose palette shows the provider triggers (upstream #15940, #2336). */
   const TRIGGERS_IN_PALETTE_SINCE = "1.14.0.dev4";
-  /** The palette group each manifest provider lives in, under the Bundles tab. */
-  const PROVIDERS = [
+  /**
+   * The palette group each manifest provider lives in, under the Bundles tab, and the
+   * first build that ships it. The group is named after the bundle, not after the
+   * provider's display_name (the manifest says "Google Workspace"), so it is declared
+   * here, and test 1 asserts the manifest names exactly these providers on the served
+   * version: a new one fails there by name (#2360). GitHub arrived with upstream
+   * #15957, first in 1.14.0.dev7.
+   */
+  const PROVIDERS: ReadonlyArray<{ id: string; label: string; group: string; since?: string }> = [
     { id: "google", label: "Google", group: "disclosure-bundles-google" },
     { id: "microsoft", label: "Microsoft 365", group: "disclosure-bundles-microsoft 365" },
     { id: "slack", label: "Slack", group: "disclosure-bundles-slack" },
-  ] as const;
+    { id: "github", label: "GitHub", group: "disclosure-bundles-github", since: "1.14.0.dev7" },
+  ];
 
   interface Capability {
     id: string;
@@ -82,6 +90,8 @@ test.describe("Connector components — the palette, the canvas and the connecti
   let superHeaders: Record<string, string>;
   let catalog: Record<string, unknown>;
   let connectors: Connector[];
+  /** The provider ids `GET /api/v1/integrations` names, in its order. */
+  let manifestProviders: string[];
   const flowIds: string[] = [];
   const rows: CreatedConnection[] = [];
 
@@ -95,6 +105,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
     const res = await request.get("/api/v1/integrations", { headers: superHeaders });
     expect(res.status(), await res.text()).toBe(200);
     const { providers } = (await res.json()) as { providers: ManifestProvider[] };
+    manifestProviders = providers.map((provider) => provider.provider_id);
     connectors = [];
     for (const provider of providers) {
       for (const capability of provider.capabilities) {
@@ -134,6 +145,15 @@ test.describe("Connector components — the palette, the canvas and the connecti
     // Deleting the owner takes any row it still owns with it.
     await owner?.dispose();
   });
+
+  /** The declared providers the served version ships. */
+  async function shippedProviders(request: APIRequestContext): Promise<typeof PROVIDERS> {
+    const shipped = [];
+    for (const provider of PROVIDERS) {
+      if (!provider.since || (await servedVersionAtLeast(request, provider.since))) shipped.push(provider);
+    }
+    return shipped;
+  }
 
   /** The catalog key of a manifest `component_ref` (`ext:<provider>:<ref>@official`). */
   function catalogKey(ref: string): string {
@@ -265,12 +285,20 @@ test.describe("Connector components — the palette, the canvas and the connecti
 
   test(
     "the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4",
-    { tag: ["@components", "@integrations"] },
+    { tag: ["@stable", "@components", "@integrations"] },
     async ({ page, request }) => {
       const groups = new Map<string, string[]>();
+      const expected = await shippedProviders(request);
+
+      await test.step("the manifest names exactly the providers this version ships", async () => {
+        expect(
+          [...manifestProviders].sort(),
+          "manifest providers; a new one needs its palette group declared in PROVIDERS",
+        ).toEqual(expected.map((provider) => provider.id).sort());
+      });
 
       await test.step("the manifest splits into actions and triggers by the catalog's trigger_kind", async () => {
-        for (const provider of PROVIDERS) {
+        for (const provider of expected) {
           const actions = connectors.filter((c) => c.provider === provider.id && !c.trigger);
           expect(actions.length, `${provider.label} actions in the manifest`).toBeGreaterThan(0);
         }
@@ -280,7 +308,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
       await test.step("each provider group under Bundles is read", async () => {
         await openBlankFlow(page, request, "palette");
         await page.getByTestId("sidebar-nav-bundles").click();
-        for (const provider of PROVIDERS) {
+        for (const provider of expected) {
           const disclosure = page.getByTestId(provider.group);
           await expect(disclosure, `the ${provider.label} group`).toBeVisible({ timeout: 30000 });
           await disclosure.click();
@@ -348,6 +376,12 @@ test.describe("Connector components — the palette, the canvas and the connecti
       `every ${provider.label} action in the manifest lands on the canvas with an unbound connection field`,
       { tag: ["@stable", "@components", "@integrations"] },
       async ({ page, request }) => {
+        if (provider.since) {
+          test.skip(
+            !(await servedVersionAtLeast(request, provider.since)),
+            `${provider.label} is in the manifest only from ${provider.since}; test 1 asserts its absence before`,
+          );
+        }
         const actions = connectors.filter((c) => c.provider === provider.id && !c.trigger);
         expect(actions.length, `${provider.label} actions in the manifest`).toBeGreaterThan(0);
         await openBlankFlow(page, request, `canvas-${provider.id}`);
