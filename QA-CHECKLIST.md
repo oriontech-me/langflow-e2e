@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-27
+> **Last updated:** 2026-10-28
 
 ---
 
@@ -1710,7 +1710,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 800 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 797 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1881,7 +1881,6 @@
 - [x] schema-derived ctx survives while the value does not → `api-validation-redaction.spec.ts`
 
 #### api/models/
-- [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
 - [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
 - [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
 - [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
@@ -2158,13 +2157,11 @@
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent reply renders as correct Markdown in the Playground → `agent-markdown-output.spec.ts`
 - [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
-- [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
-- [x] agent runs the URL then Web Search tools in sequence for a chained prompt → `agent-multi-tool-selection.spec.ts`
 - [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
