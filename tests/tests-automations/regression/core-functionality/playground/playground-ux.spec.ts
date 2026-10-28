@@ -79,9 +79,12 @@ test.describe("Playground UX", () => {
     },
   );
 
-  test(
+  // Quarantined for #2368: recurrent flake (VM dailies 2026-10-09, 2026-10-14 and
+  // 2026-10-28), the input is still disabled when the follow-up message is typed.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2368's deliverable.
+  test.fixme(
     "playground input field must be ready after flow responds",
-    { tag: ["@release", "@regression", "@playground", "@stable"] },
+    { tag: ["@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
