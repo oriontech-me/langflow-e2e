@@ -33,6 +33,29 @@
  * value is unknown the safe direction is to wait too long, because the failure
  * of waiting too little is a test that asserts against a save that never left
  * the browser.
+ *
+ * ## The 15 s ceiling, and the save queue (#2346)
+ *
+ * Multi-edit safety also capped the debounce: `use-autosave-flow.ts` passes
+ * `maxWait = AUTOSAVE_MAX_WAIT_FACTOR (3) × interval`, so on 5000 ms a burst of
+ * edits that keeps restarting the debounce is still saved after 15 s. The cap
+ * only makes a save EARLIER, so every window derived here from the interval
+ * still holds. Saves are also queued per flow (`saveQueueTails`): a save issued
+ * while another is in flight waits for it, which a drain sees as one longer
+ * in-flight period rather than two overlapping ones.
+ *
+ * Audited on `1.14.0.dev8` (#2346): no `expect.poll` that reads a persisted flow
+ * relies on the default 5 s expect timeout (all pass 10 s or more), and no fixed
+ * wait stands in for a save. None of the bare `waitForFlowSaveSettled(page)`
+ * calls has to prove a save landed:
+ * - most precede a node or Playground run, and both runs send the canvas graph
+ *   in the `POST /api/v2/workflows` body (measured: an edit reached the run
+ *   before its `PATCH` was sent);
+ * - the rest only let in-flight saves finish before the next UI step, or come
+ *   before a server read that polls with its own window of 15 s.
+ *
+ * Several of those call sites still say the Playground "builds the PERSISTED
+ * flow". On `1.14.0.dev8` it does not.
  */
 
 /** Environment variable carrying the resolved interval to the workers. */

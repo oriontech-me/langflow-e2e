@@ -23,6 +23,35 @@
  * same three 500s is a log nobody reads carefully. That is what #1084 was
  * raised for — every entry in `IGNORED` below exists to keep a logged error
  * meaningful, and nothing is ignored merely because it is inconvenient.
+ *
+ * ## `409 flow_version_conflict` on `/api/v1/flows/{id}` stays advisory (#2346)
+ *
+ * Multi-edit safety (upstream #14903) lets a flow save be refused with
+ * `409 flow_version_conflict`, and #2220 recorded the editor refusing ITSELF:
+ * a second autosave sent while the first was in flight, carrying the same
+ * `If-Match`. Three treatments were weighed and the 409 is left exactly as any
+ * other 4xx — reported, never failing, never ignored:
+ *
+ * - **Not in `IGNORED`.** A refused save is the one signal that the user's work
+ *   did not land. Hiding it suite-wide would hide a real conflict as well as the
+ *   self-race, and the body (`flow_version_conflict`, printed under the
+ *   `🚨` line) already tells the two apart from a 409 on another route — the only
+ *   409s the four dailies on `1.13.0.dev27`–`dev30` logged were the MCP
+ *   duplicate guard on `/api/v2/mcp/servers/{name}`, none on a flow.
+ * - **Not declared with `expectKnownHttpError()`.** A declaration fails its test
+ *   when the response does NOT fire, which suits a defect that fires every time.
+ *   The self-race fired in 4 of 5 runs on `1.13.0.dev35`, so declaring it would
+ *   have turned the fifth run into a red test. Specs that stage a conflict on
+ *   purpose (`flow-functionality/multi-edit/`) do declare their 409, because
+ *   there it is deterministic.
+ * - **The self-race is gone on `1.14.0.dev8`.** `release-1.14.0` queues autosaves
+ *   per flow (`saveQueueTails` in `use-autosave-flow.ts`), so the next save is
+ *   sent only after the previous one answers, with the token it returned.
+ *   Measured with the first `PATCH` held for 9 s and a second edit made while it
+ *   was held: the second `PATCH` left after the first answered, carried the
+ *   rotated token, and both returned 200. The test that showed #2220 in 4 of 5
+ *   runs showed it in 0 of 5. A flow 409 in a log is therefore worth reading as a
+ *   real conflict or a regression of that queue.
  */
 
 export interface HttpResponseFacts {
