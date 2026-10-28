@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-27",
+ "refreshed": "2026-10-28",
  "refreshWindow": {
-  "testHealthSince": "2026-09-12",
+  "testHealthSince": "2026-09-13",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 822,
-  "bulletsAutomatedUnwatched": 125,
-  "residualRiskTotal": 100.3
+  "bullets": 826,
+  "bulletsAutomatedUnwatched": 128,
+  "residualRiskTotal": 100.8
  },
  "areas": [
   {
@@ -638,7 +638,7 @@
     "empty": 0
    },
    "specs": {
-    "specs": 38,
+    "specs": 40,
     "stable": 38
    },
    "testHealth": {
@@ -674,11 +674,11 @@
    "key": "playground",
    "label": "9 Playground / chat",
    "rank": 12,
-   "residualRisk": 4,
+   "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
    "impact": 4,
-   "mitigation": 0.8,
+   "mitigation": 0.78,
    "mitigationBulletDerived": 0.8,
    "mitigationOverride": null,
    "axes": {
@@ -702,9 +702,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 24,
-    "penalty": 0
+    "penalty": 0.017
    },
    "upstreamBugsByYear": {
     "2023": 2,
@@ -719,7 +719,7 @@
     "mitigation": 0.77
    },
    "delta": {
-    "residualRisk": -0.7,
+    "residualRisk": -0.3,
     "rank": 0,
     "direction": "improved"
    },
@@ -792,12 +792,12 @@
    "key": "rest-api",
    "label": "1 REST API / endpoints",
    "rank": 14,
-   "residualRisk": 3.8,
+   "residualRisk": 3.9,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
-   "mitigation": 0.75,
-   "mitigationBulletDerived": 0.76,
+   "mitigation": 0.74,
+   "mitigationBulletDerived": 0.75,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 3,
@@ -807,22 +807,22 @@
     "weightedChurn": 2.61
    },
    "bullets": {
-    "total": 102,
+    "total": 106,
     "validated": 96,
-    "automatedUnwatched": 1,
-    "partial": 2,
+    "automatedUnwatched": 4,
+    "partial": 3,
     "flaky": 1,
     "empty": 2
    },
    "specs": {
-    "specs": 44,
-    "stable": 44
+    "specs": 47,
+    "stable": 46
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 1,
-    "stableSpecs": 44,
-    "penalty": 0.009
+    "stableSpecs": 46,
+    "penalty": 0.008
    },
    "upstreamBugsByYear": {
     "2024": 10,
@@ -836,7 +836,7 @@
     "mitigation": 0.78
    },
    "delta": {
-    "residualRisk": -0.6,
+    "residualRisk": -0.5,
     "rank": 0,
     "direction": "improved"
    },
