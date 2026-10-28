@@ -41,6 +41,9 @@ const COMPONENT_KEY = "ext:google:GmailSendComponent@official";
 /** Another Google component, which a block on Gmail Send must leave alone. */
 const CONTROL_COMPONENT_KEY = "ext:google:GoogleDriveListComponent@official";
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+/** #2301's fake registrations, which every lane carries. */
+const GOOGLE_REGISTRATION = "e2e-google";
+const MICROSOFT_REGISTRATION = "e2e-microsoft";
 const REASON = "e2e #2299 integration policy enforcement";
 
 // Exact copy, measured on 1.13.0.dev47.
@@ -226,11 +229,34 @@ test.describe("governance — integration policy enforced at discovery, mutation
     );
   }
 
-  function oauthStart(request: APIRequestContext, id: string): Promise<APIResponse> {
+  /**
+   * `oauth/start` as the owner. With no registration given it names one that does
+   * not exist, so an allowed provider stops at the registration check (`400`).
+   */
+  function oauthStart(request: APIRequestContext, id: string, registrationId: string = randomUUID()): Promise<APIResponse> {
     return request.post(`/api/v1/connections/${id}/oauth/start`, {
       headers: owner.headers,
-      data: { registration_id: randomUUID(), scopes: [GMAIL_SEND_SCOPE] },
+      data: { registration_id: registrationId, scopes: [GMAIL_SEND_SCOPE] },
     });
+  }
+
+  /** The registrations the owner's Add dialog would offer. */
+  async function registrationIds(request: APIRequestContext): Promise<string[]> {
+    const res = await request.get("/api/v1/connections/oauth/registrations", { headers: owner.headers });
+    expect(res.status(), await res.text()).toBe(200);
+    return ((await res.json()) as { registrations: Array<{ id: string }> }).registrations.map((r) => r.id);
+  }
+
+  /**
+   * The policy keys of a provider's triggers. The manifest has no field for a
+   * trigger; the catalog marks its component with `metadata.trigger_kind`.
+   */
+  function triggerPolicyKeys(provider: ProviderRow): string[] {
+    const entries = (catalog[provider.provider_id] ?? {}) as Record<string, { metadata?: { trigger_kind?: string } }>;
+    const triggers = provider.capabilities.filter(
+      (c) => c.component_ref && entries[`ext:${provider.provider_id}:${c.component_ref}@official`]?.metadata?.trigger_kind,
+    );
+    return [...new Set(triggers.flatMap((c) => c.policy_keys))];
   }
 
   test(
@@ -330,11 +356,8 @@ test.describe("governance — integration policy enforced at discovery, mutation
           const policy = await effective(request, superHeaders);
           expect(policy.unrestricted).toBe(false);
           expect(policy.approved_provider_ids).toEqual(["microsoft"]);
-          // Every provider the unrestricted manifest listed, whichever the build ships:
-          // 1.14.0.dev7 added github (#2360), and a fixed list went red on it.
-          expect([...policy.loaded_provider_ids].sort(), "loaded providers, ceiling or not").toEqual(
-            manifest.map((p) => p.provider_id).sort(),
-          );
+          // Every provider loaded stays loaded: the ceiling only stops listing them.
+          expect([...policy.loaded_provider_ids].sort()).toEqual(manifest.map((p) => p.provider_id).sort());
         });
 
         await test.step("no Google or Slack connector component is left in the catalog", async () => {
@@ -370,34 +393,67 @@ test.describe("governance — integration policy enforced at discovery, mutation
   );
 
   test(
-    "blocking every action of an approved provider refuses its connections, not its checks",
+    "blocking every action of an approved provider refuses its connections and its consent, not its checks, and one allowed trigger keeps it offered",
     { tag: ["@destructive", "@api", "@integrations", "@governance"] },
     async ({ request, apiCoverage }) => {
       test.skip(!pristine, skipReason);
       apiCoverage.declare([
         "PUT /api/v1/policy-bundle",
         "GET /api/v1/integrations",
+        "GET /api/v1/connections/oauth/registrations",
         "POST /api/v1/connections",
+        "POST /api/v1/connections/{connection_id}/oauth/start",
         "POST /api/v1/connections/{connection_id}/health",
       ]);
       const google = (await providers(request, superHeaders)).find((p) => p.provider_id === "google");
-      const googleKeys = [...new Set((google?.capabilities ?? []).flatMap((c) => c.policy_keys))];
+      expect(google, "the manifest serves Google").toBeDefined();
+      const googleKeys = [...new Set(google!.capabilities.flatMap((c) => c.policy_keys))];
       expect(googleKeys.length, "Google's policy keys, from the manifest").toBeGreaterThan(1);
+      const triggerKeys = triggerPolicyKeys(google!);
+      expect(triggerKeys.length, "Google's trigger keys, from the catalog's trigger_kind").toBeGreaterThan(0);
+      const actionKeys = googleKeys.filter((key) => !triggerKeys.includes(key));
+      expect(actionKeys.length, "Google has actions that are not triggers").toBeGreaterThan(0);
       const row = await plantGoogleRow(request, "allblocked");
       try {
+        await test.step("control: the registration list offers Google while it is allowed", async () => {
+          expect(await registrationIds(request)).toContain(GOOGLE_REGISTRATION);
+        });
+
         await setPolicy(request, { blocked_integration_action_keys: googleKeys });
 
         await test.step("Google is no longer listed", async () => {
           expect((await providers(request, superHeaders)).map((p) => p.provider_id)).not.toContain("google");
         });
 
+        await test.step("the registration list stops offering Google, and only Google", async () => {
+          const ids = await registrationIds(request);
+          expect(ids).not.toContain(GOOGLE_REGISTRATION);
+          expect(ids).toContain(MICROSOFT_REGISTRATION);
+        });
+
         await test.step("a Google connection cannot be created", async () => {
           await expectCreateRefused(request, "allblocked_new");
+        });
+
+        await test.step("consent cannot start on an existing Google connection, even with its real registration", async () => {
+          const res = await oauthStart(request, row.id, GOOGLE_REGISTRATION);
+          expect(res.status(), await res.text()).toBe(403);
+          expect((await res.json()).detail).toEqual(POLICY_BLOCKED);
         });
 
         await test.step("an existing Google connection can still be checked", async () => {
           const health = await request.post(`/api/v1/connections/${row.id}/health`, { headers: owner.headers });
           expect(health.status(), await health.text()).toBe(200);
+        });
+
+        await setPolicy(request, { blocked_integration_action_keys: actionKeys });
+
+        await test.step("with only its triggers allowed, Google is offered again and consent starts", async () => {
+          expect(await registrationIds(request)).toContain(GOOGLE_REGISTRATION);
+          const res = await oauthStart(request, row.id, GOOGLE_REGISTRATION);
+          expect(res.status(), await res.text()).toBe(200);
+          const { authorization_url } = (await res.json()) as { authorization_url: string };
+          expect(new URL(authorization_url).origin).toBe("https://accounts.google.com");
         });
       } finally {
         await restore(request);

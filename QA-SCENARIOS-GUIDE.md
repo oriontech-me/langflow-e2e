@@ -175,6 +175,78 @@
 
 ---
 
+### 2.7 Multi-edit save precondition — `If-Match` on `PATCH /api/v1/flows/{id}` `[-]`
+
+**File:** `api/flows/flow-version-precondition.spec.ts` (spec doc: `docs/api/flows/flow-version-precondition.md`, issue #2341)
+
+**Objective:** Verify that a flow save is a conditional write. A stale `version_token` sent as `If-Match` is refused with a structured `409`, a current one saves and rotates the token, a malformed one is refused with `400`, and an absent one still saves (ADR-002).
+
+**Precondition:** Authenticated superuser. Each test creates its own empty flow via `POST /api/v1/flows/`, and an id-scoped `afterEach` deletes it. Every write changes `data` (the viewport), because only a graph change rotates the token.
+
+**Step by step:**
+1. Read `T0` from `GET /api/v1/flows/{id}/version-state`.
+2. `PATCH` a graph change with `If-Match: T0`. Verify `200`, and that `version-state` now reports a new token `T1`.
+3. `PATCH` another graph change with `If-Match: T0`. Verify `409`.
+4. Verify that `detail` has exactly these keys: `code`, `message`, `flow_id`, `expected_version_token`, `current_version_token`, `modified_by`, `modified_at`.
+5. Verify that `code` is `"flow_version_conflict"`, `expected_version_token` is `T0`, and `current_version_token` is `T1`.
+6. Verify that `modified_by` and `modified_at` match `version-state`.
+7. Verify that the stored graph and the token are still the ones from step 2.
+8. `PATCH` with `If-Match: not-a-uuid`. Verify `400` with `"Invalid If-Match header: expected a version token"`, and that nothing was written.
+9. `PATCH` with `If-Match: "<token>"`, then with `If-Match: W/"<token>"`. Verify `200` for each, and that the token rotates each time.
+10. `PATCH` with no `If-Match`. Verify `200`, that the graph was saved, and that the token rotated.
+
+**Validation:** The `409` body matches the row's real state and nothing is written. A current, quoted or weak token saves and rotates. A request with no precondition still saves.
+
+---
+
+### 2.8 Concurrent writers — exactly one wins `[~]`
+
+**File:** `api/flows/flow-version-precondition.spec.ts`
+
+**Objective:** Verify that parallel saves holding the same token cannot all succeed. This is the lost update that `claim_version_token` closes; upstream recorded SQLite once accepting 6 of 6.
+
+**Precondition:** As 2.7.
+
+**Step by step:**
+1. Read the current token `T`.
+2. Fire 6 graph-changing `PATCH`es in parallel, each with `If-Match: T` and a distinct viewport.
+3. Verify exactly one `200`, five `409`, and no `5xx`.
+4. Verify that the stored graph is the winner's payload.
+5. Verify that every `409`'s `current_version_token` equals the final `version-state` token.
+
+**Validation:** One winner, no server error, and every loser told the real current token.
+
+**Known product defect (measured on `1.14.0.dev7`, not filed yet):** step 5 fails. A concurrent loser's `409` reports a token the row never held. This was measured 10/10 with two writers. The UI sends that token as the `overwrite` `If-Match` and is refused again. Steps 3–4 are their own green test; step 5 is a separate test wrapped in `test.fail()`, which turns red when the defect is fixed.
+
+---
+
+### 2.9 Fork and overwrite `[-]`
+
+**File:** `api/flows/flow-version-precondition.spec.ts`
+
+**Objective:** Verify the two exits of the conflict dialog.
+- *Duplicate Flow* (`POST /fork`) creates an inert copy and leaves the source untouched.
+- *Keep my version* (`POST /overwrite`) is guarded by `If-Match` and archives the graph it replaces.
+
+**Precondition:** As 2.7, plus one graph change on the flow.
+
+**Step by step:**
+1. `POST /api/v1/flows/{id}/fork` with a distinct graph. Verify:
+   - `201`, a new id, and the name `<source> (copy)`;
+   - the supplied graph;
+   - `endpoint_name: null`, `webhook: false`, `mcp_enabled: false`, `access_type: "PRIVATE"`;
+   - the source's name, graph and token unchanged.
+2. `POST /api/v1/flows/{id}/overwrite` without `If-Match`. Verify `428`, and that `GET /api/v1/flows/{id}/versions/` is still empty.
+3. Overwrite with the current token. Verify:
+   - `200`, and the new graph stored with a rotated token;
+   - exactly one version entry, `"Replaced by a newer edit"`;
+   - that entry's `data` is the replaced graph.
+4. Overwrite again with the now-stale token. Verify `409 flow_version_conflict`, still exactly one version entry, and the graph unchanged.
+
+**Validation:** The fork is a new, inert flow. The overwrite refuses a missing or stale precondition, never leaves an orphan version, and keeps the replaced work in the history.
+
+---
+
 ---
 
 ## 3. REST API — Flow Execution
@@ -2191,6 +2263,107 @@
 3. Verify that execution stops and the "Run" button becomes available again.
 
 **Validation:** Execution interrupted when clicking Stop.
+
+---
+
+### 24.9 Multi-edit — the conflict banner and *Review Version Changes* `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts` (spec doc: `docs/flow-functionality/multi-edit/multi-edit-conflict-review.md`, issue #2342)
+
+**Objective:** Verify that when another session saved first, the editor's refused save raises a banner, and that the review dialog lists every incoming change with the right badge and sentence.
+
+**Preconditions:**
+- A flow built over the API with *Chat Input* (`"hello"`), *Chat Output*, and two Prompt Template nodes, *Doomed Prompt* and *Mine Prompt*.
+- The other session is an API `PATCH` from the test's own request context.
+
+**Step by step:**
+1. Open the flow.
+2. As the other session, save in one `PATCH`:
+   - change *Chat Input*'s text and move it;
+   - move *Chat Output*;
+   - delete *Doomed Prompt*;
+   - add *Arrived Prompt*;
+   - link *Chat Input* → *Chat Output*.
+3. In the editor, drag *Mine Prompt*. Verify that its autosave `PATCH` answers `409`.
+4. Verify that `flow-conflict-banner` reads *"A newer version of this flow is available"* and *"Review changes before saving."*, and that `flow-conflict-frame` is attached.
+5. Click *Review changes* (`flow-conflict-review-button`). Verify that *Review Version Changes* opens and shows *Available changes*.
+6. Verify these rows under *Available changes* (`conflict-change-theirs-…`):
+   - *Arrived Prompt*: **Added**, *"New node added to the flow."*
+   - *Doomed Prompt*: **Removed**, *"Node removed from the flow."*
+   - *Chat Input*: **Modified**, with *"Moved on the canvas."* and *"Input Text updated from hello to from the other session."* in one row.
+   - *Chat Output*: **Modified**, with only *"Moved on the canvas."*
+   - The edge: **Added**, *"Chat Input to Chat Output link added."*
+7. Verify that there are exactly 5 rows under *Available changes*, and exactly 1 under *Your changes*: *Mine Prompt*, *"Moved on the canvas."*
+
+**Validation:** The banner appears only after the refused save. The dialog describes exactly what the other session changed: one row per component, with the right badge and sentence.
+
+---
+
+### 24.10 Multi-edit — no banner without someone else's change `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+
+**Objective:** Guard against false conflicts. A flow that only the viewer edits, a version-history round trip, or a reload must never raise the banner. Upstream fixed *"version history faking an edit"* inside #14903.
+
+**Preconditions:** As 24.9.
+
+**Step by step:**
+1. **Only the viewer edits.**
+   - Drag *Mine Prompt* three times, waiting each time for an autosave that answers `200`.
+   - Open version history (`sidebar-nav-versions`, which answers `GET /versions/`), then return to components.
+   - Drag again. Verify that every `PATCH` answered `200` and that the banner never appeared.
+2. **History is not an edit.**
+   - Open the flow without editing, open version history and return.
+   - Let the other session change *Chat Input*'s text.
+   - Click *Chat Output*'s run button (`button_run_chat output`).
+   - Verify the notice *"{user} updated this flow. The canvas now shows the latest version — run again to execute it."*
+   - Verify that *Chat Input*'s `textarea_str_input_value` shows the new text.
+   - Verify that there is no banner, and that the editor issued no `PATCH` at all.
+3. **Reload.**
+   - Reload the editor and drag *Mine Prompt*.
+   - Verify that the autosave answers `200` and that there is no banner.
+
+**Validation:** No banner appears without a server change the viewer had not seen. A viewer with no edits of their own adopts a newer version instead of being asked to resolve it.
+
+---
+
+### 24.11 Multi-edit — the exits of *Review Version Changes* keep their promises `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts` (spec doc: `docs/flow-functionality/multi-edit/multi-edit-conflict-exits.md`, issue #2343)
+
+**Objective:** Verify that each exit of the conflict dialog puts the viewer's work where its message says, checked on the server and not only in the toast.
+
+**Preconditions:**
+- A flow built over the API with *Chat Input* (`"hello"`), *Chat Output* and a Prompt Template, *Mine Prompt*.
+- Open the flow. The other session (an API `PATCH`) sets *Chat Input* to `"their text"`. Drag *Mine Prompt*; its autosave answers `409`. Click *Review changes*.
+
+**Step by step:**
+1. **Update Current Flow** (`confirm-overwrite-flow`).
+   - Verify `POST /overwrite` → `200` and *"Flow updated. The version it replaced is in the history."*
+   - Verify that the server has *Mine Prompt* moved and *Chat Input* at `hello`, and that the history's only entry is *"Replaced by a newer edit"*, holding `their text`.
+   - Verify that the banner is gone.
+2. **Duplicate Flow** (`confirm-duplicate-flow`).
+   - Verify `POST /fork` → `201` and that the editor opens `/flow/<copy id>`.
+   - Verify that the copy is `<name> (copy)` with *Mine Prompt* moved and *Chat Input* at `hello`.
+   - Edit the copy and wait for its `PATCH` (`200`). Verify that no `PATCH` reached the original, and that the original keeps its token, `their text` and *Mine Prompt*'s position.
+   - Reopen the original. Verify that it shows `their text` and that an edit saves with `200`, with no banner.
+3. **Load Latest** (`dialog-load-latest-button`).
+   - Verify the confirmation (`load-latest-confirm`): *"Load the latest version?"* and its description.
+   - Confirm (`load-latest-confirm-button`). Verify `POST /versions/` → `201` and *"Your changes are in version history. The canvas shows the latest version."*
+   - Verify that the canvas and the server show `their text`, the token is unchanged, and the banner is gone.
+   - Verify that the history's only entry is *"Saved when discarding a conflict"*, holding the move.
+   - Open version history (`sidebar-nav-versions`), select that entry, click *Restore* and confirm *Restore*. Verify `POST …/activate` → `200`, and that the server has the move and `hello` back.
+4. **Moved again.** With the dialog open, the other session saves `"their second text"`. Click *Update*.
+   - Verify `POST /overwrite` → `409` and *"Someone saved again while you were choosing. The changes below are up to date."*
+   - Verify that the dialog now lists *"Input Text updated from hello to their second text."*, and that the server keeps it.
+5. **Cancel.** Verify that the dialog closes, the banner stays, and the server's token, text, positions and history are unchanged.
+6. **Archive failure.** Route `POST /versions/` to `500`, then *Load Latest* and confirm.
+   - Verify *"Your changes could not be saved to version history, so nothing was discarded."*
+   - Verify that the confirmation, the dialog and the banner stay, the server is unchanged, and the history is empty.
+
+**Validation:** No exit loses the viewer's work or the other session's. Every message about where a version went matches the server.
+
+**Not covered:** the *"This flow was duplicated, so it is no longer being saved."* notice. *Duplicate* navigates to the copy at once, and reopening the original clears the block by design, so it cannot be reached from the UI.
 
 ---
 

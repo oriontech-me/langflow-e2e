@@ -556,7 +556,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "causal control — a high max iterations does not hit the limit",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

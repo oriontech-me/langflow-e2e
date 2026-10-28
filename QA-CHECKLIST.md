@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-27
+> **Last updated:** 2026-10-28
 
 ---
 
@@ -167,6 +167,10 @@
 - [x] `POST /api/v1/flows/{id}/events` refuses a missing or unknown `type` with `422` whose message enumerates the **seven** literals (asserted by name), records a valid one as `201 {type, timestamp, summary}`, drops extra fields, and the log then lists both events in order with **`settled: false`** → `api/flows/api-flows-events.spec.ts`
 - [x] Versions lifecycle (`{id}/versions/`, five hidden operations): empty list `{entries:[], max_entries:50}`; `POST {}` → v1; `POST {name, description}` → v2 with `name` **ignored**; `GET one` carries `data` and `is_deployed`; **activate returns the flow and auto-snapshots the replaced state** as v3 `"Auto-saved before activating v1"`; `DELETE` → `204` removing only that entry — `@stable` restored once `LE-2598` was fixed upstream (#1777), with the first read-back's `detail`+readback diagnosis kept → `api/flows/api-flows-versions.spec.ts`
 - [x] Unknown version ids answer `404` with two **different** messages (`"Version entry not found"` on GET, `"Version entry <id> not found"` on DELETE), each pinned as measured → `api/flows/api-flows-versions.spec.ts`
+- [-] Multi-edit save precondition (#2341): a graph `PATCH` with a stale `If-Match` answers `409` whose `detail` has exactly `{code: "flow_version_conflict", message, flow_id, expected_version_token, current_version_token, modified_by: {id, username}, modified_at}`, agreeing with `GET {id}/version-state`, and writes nothing; a current token answers `200` and rotates `version_token` → `api/flows/flow-version-precondition.spec.ts`
+- [-] `If-Match: not-a-uuid` answers `400 "Invalid If-Match header: expected a version token"` and writes nothing; quoted (`"…"`) and weak (`W/"…"`) tokens are accepted; a `PATCH` with **no** `If-Match` still saves (ADR-002) → `api/flows/flow-version-precondition.spec.ts`
+- [~] Six parallel `PATCH`es with one token: exactly one `200`, five `409`, no `5xx`, the winner's graph stored — **but each loser's `409` reports a `current_version_token` the row never held** (and a `modified_at` that is not the row's), measured 10/10 with two writers on `1.14.0.dev7`; the UI sends that token as the `overwrite` `If-Match`, which is refused again. The guarantee is asserted green; the phantom token is pinned in a separate `test.fail()` test that turns red when upstream fixes it → `api/flows/flow-version-precondition.spec.ts`
+- [-] `POST {id}/fork` answers `201` with an inert `<name> (copy)` (`endpoint_name: null`, `webhook`/`mcp_enabled: false`, `PRIVATE`) and leaves the source untouched; `POST {id}/overwrite` answers `428` without `If-Match`, `200` with the reviewed token (archiving the replaced graph as `"Replaced by a newer edit"`), and `409` with the now-stale token **without** an orphan version → `api/flows/flow-version-precondition.spec.ts`
 - [x] `POST /api/v1/flows/batch/` creates every flow in `{"flows": [...]}` (`201` list, each readable by id), refuses a duplicate name `409 "Name must be unique"`, accepts `[]` as `201 []`, and **without the trailing slash answers `405`** — the trap the file's first version fell into → `api/flows/api-flows-batch.spec.ts`
 - [~] `GET /api/v1/flows/?page=1&size=2` returns a plain array of **every** flow — `page`/`size` are ignored on `1.13.0.dev0`. The former "pagination" test asserted `length >= 0` on that array and could not fail; dropped rather than pinned, since asserting either behaviour would defend a defect or invent one. Recorded here so the finding is not lost.
 
@@ -868,6 +872,21 @@
 - [!] Partial failure on the **canvas** — the failed node is flagged and the branches that completed show as built (**declared failing** — `test.fail()` against the AG-UI defect, #1896: the run stream emits `RUN_ERROR` mid-run and the frontend stops there, so no `node_status_icon` renders and a completed branch's `node_duration` never shows; flips to an unexpected pass the day upstream stops treating a component error as terminal) → `flow-functionality/graph-execution-canvas.spec.ts`
 - [x] Playground button disabled with empty flow, and enabled once one Chat Output is on the canvas — the trigger's disabled twin is asserted first, then the Playground dialog is asserted by role and accessible name. Quarantine lifted in #1791: the failure was a stale expectation on `"Langflow Chat"`, the value of an i18n key with zero call sites in the bundle, not the product behaviour the TODO suspected. Quarantine lifted again in #2197: the Chat Output drag was issued while the editor was still read-only (sidebar entries are not draggable while `POST /api/v1/authz/me/permissions` is in flight — langflow#14523), so no node landed and the enabled trigger never rendered; every sidebar drag in the file now waits for `draggable="true"` and verifies the node landed. Quarantine lifted a third time in #2237: the blank flow was never created — a concurrent creation under the same superuser made the backend refuse it (`400 Name must be unique`, its check-then-insert name race), and upstream then leaves the templates modal open over the welcome overlay, which hides the toolbar; both tests now open the blank flow through `openBlankFlowFromModal` (wait for the modal to close, one repair click) → `regression/flow-functionality/generalBugs-shard-3.spec.ts`
 
+#### 12.7 Multi-edit safety (1.13+)
+
+> Upstream langflow#14903 / #15824. The API contract under it is §1.11 (`api/flows/flow-version-precondition.spec.ts`). The banner is raised by the editor's **own** autosave being refused with `409` — there is no polling — so a viewer with no edits of their own adopts a newer version silently instead. On OSS one user cannot open another's flow (`404`), so only the same-user wording is reachable.
+
+- [-] A refused autosave raises the banner (*"A newer version of this flow is available"* / *"Review changes before saving."*) and *Review Version Changes* lists one row per component under *Available changes*: **Added** (new node), **Removed** (deleted node), **Modified** with a move and *"Input Text updated from hello to …"* grouped in one row, a pure move (*"Moved on the canvas."*), and *"Chat Input to Chat Output link added."*, with the viewer's own move under *Your changes* and nothing else listed → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+- [-] A flow only the viewer edits never shows the banner: every autosave answers `200` across several cycles and a version-history round trip → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+- [-] Browsing version history is not an edit (guard for upstream's *"stop version history from faking an edit"*): after a history round trip and another session's save, a run adopts the newer version with *"{user} updated this flow… run again"*, shows the new value, raises no banner, and the viewer issued no `PATCH` → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+- [-] Reloading with no change on the server shows no banner, and the next edit saves with `200` → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
+- [-] *Update Current Flow* overwrites with `200` and *"Flow updated. The version it replaced is in the history."*: the server holds the viewer's canvas, the history's one entry is *"Replaced by a newer edit"* holding the other session's version, and the banner is gone → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] *Duplicate Flow* forks with `201` and opens `<name> (copy)` holding the viewer's canvas; the original keeps its token and the other version, receives no `PATCH`, and saves normally once reopened (the *"This flow was duplicated…"* notice is unreachable from the UI, see the spec doc) → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] *Load Latest* asks first (*"Load the latest version?"*), archives the viewer's canvas as *"Saved when discarding a conflict"* (`201`), shows the latest version with the server untouched, and restoring that entry from version history brings the viewer's edit back → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] A second save by the other session while the dialog is open refuses *Update* with `409` and *"Someone saved again while you were choosing…"*, refreshes the dialog with the newer change, and keeps that save on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] *Cancel* closes the dialog, keeps the banner and changes nothing on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] When the archive `POST /versions/` fails, *Load Latest* discards nothing: *"Your changes could not be saved to version history, so nothing was discarded."*, the dialog and banner stay, the server is unchanged and the history is empty → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+
 ---
 
 ## mcp/ — Model Context Protocol
@@ -1548,6 +1567,8 @@
 - [x] `status_reason` is `null` on every status a client can reach (`ready` → `expired` via a past `expires_at` + `/health` → `revoked`) → api/connections/api-connections-secret-boundary.spec.ts
 - [x] A connection never writes a global variable: the owner's `GET /api/v1/variables/` is the same set before the create, after it and after the revoke and delete — upstream's own rule that connections stay out of `/settings/global-variables`, where provider credentials land → api/connections/api-connections-surface-details.spec.ts
 - [ ] `status_reason` as `credential-missing` vs `credential-undecryptable` — the distinction that sends a user to re-authorize versus to fix the instance key. **Not black-box reachable:** `status: error` needs the instance key to change under a stored envelope, the envelope row to vanish, or an OAuth failure, which needs a registration — since #2301 every lane carries fake ones, and a denied callback reaches `status: error` with `oauth-denied`, which #2307 covers. The enum also has five values, not two, and `_record_failed_authorization` writes a reason **without** setting `error`, so "a reason implies error" is not a contract to assert
+- [x] The OAuth callback's controls, each read from the row it leaves behind: without the browser-binding cookie it answers `400` and consumes nothing (the same `state` completes afterwards); a `state` completes neither on another provider's callback path (`error` / `oauth-failed`, the provider mix-up) nor twice; a newer `oauth/start` supersedes the older one; a denial on a row holding a credential records `oauth-denied` and keeps it `ready`, and the next `/health` still reads the credential. Every refusal is the same HTML page with `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` → api/connections/api-connections-oauth-callback.spec.ts
+- [x] The two OAuth routes a browser reaches, the callback and the Desktop handoff (a per-IP bucket each, 5/minute), answer an HTML `429` *"Too many OAuth attempts"* with `Retry-After: 60` and the same three headers, while `oauth/start` (per user) answers the JSON `429` every other route uses → api/connections/api-connections-oauth-callback.spec.ts
 
 #### 24.3 Capability manifest and effective policy (#1968)
 
@@ -1560,7 +1581,7 @@
 - [x] `deployment_contexts` is documented as filtering (*"not offered here"*) and read nowhere — #2074 measured a `hosted` instance still listing the Socket Mode capabilities that exclude it. On this lane's `self_managed` every capability includes the context, so filtering and no filtering list the same set: the spec asserts that blind spot, and fails the day a capability drops `self_managed` and the filter becomes observable → api/connections/api-connections-surface-details.spec.ts
 - [x] The KB connector catalog (`GET /api/v1/knowledge_bases/connectors`) carries the exact seven-key entry: `folder` names no provider and no scope, `google_drive` reads `google` + `drive.file`, `onedrive` and `sharepoint` read `microsoft` + `Files.Read` — and every credentialed connector's provider is in the manifest and asks only for scopes that provider's capabilities declare, so its ingest is not bound to stop at `scope-missing` → api/connections/api-connections-surface-details.spec.ts
 - [x] A blocked action (`blocked_integration_action_keys`) leaves discovery and stops building: `/integrations` drops the capability while its provider stays listed (`include_blocked` shows it `allowed: false` with its `blocked_policy_key`), `/all` drops the component while another Google one stays, and `POST /custom_component` with its own code answers `404 {"detail": "Integration not found"}` — each next to its unblocked control. `unrestricted` stays `true`: the schema defines it as *no provider ceiling*, so the manual-QA reading of it as a defect is recorded as the documented contract, not a `test.fail()` (#2299) → governance/integration-policy-enforcement.spec.ts
-- [x] Mutations are refused per **provider**, not per action, with one `403 policy-blocked` body: a partial block refuses nothing; every action blocked refuses create and `oauth/start` but not `health`; a provider outside the ceiling (`approved_integration_provider_ids`) refuses create, `test`, `health` and `oauth/start` — `oauth/start` before its own registration check — and a refusal stores no row and writes no `health_checked_at` → governance/integration-policy-enforcement.spec.ts
+- [x] Mutations are refused per **provider**, not per action, with one `403 policy-blocked` body: a partial block refuses nothing; every action blocked refuses create and `oauth/start` (even naming a real registration) and drops the provider from `oauth/registrations`, but not `health`, while a provider whose triggers alone stay allowed is still offered and still starts consent (langflow#15809); a provider outside the ceiling (`approved_integration_provider_ids`) refuses create, `test`, `health` and `oauth/start` — `oauth/start` before its own registration check — and a refusal stores no row and writes no `health_checked_at` → governance/integration-policy-enforcement.spec.ts
 - [x] A saved flow is refused at run time before its component runs: `POST /api/v1/run` answers `500` with the component's own input error when allowed, `403 policy-blocked` naming the key (`details.policy_key`) when the action is blocked, and the *outside the approved integration set* message under the ceiling — no provider is ever called → governance/integration-policy-enforcement.spec.ts
 - [x] Policy data is operator-only (`include_blocked` → `403` on `/integrations` and `/all`, the bundle unreadable and unwritable, `blocked_action_keys: []` for a non-superuser while the operator reads the key); the bundle write validates the key form and the actions a **loaded** provider declares (`422`), refuses a stale `expected_revision` (`409`), moves no revision when it refuses, and accepts a key for a provider not yet installed; rollback writes a new `source: rollback` revision that restores discovery → governance/integration-policy-enforcement.spec.ts
 
@@ -1571,8 +1592,9 @@
 - [x] A row seeded through the API renders its display name, handle, owner, account — the account line **and** the executing-identity line beneath it (*The signed-in user* / *A bot*, since langflow#15263), each exact, so a subtitle that ignored the connection fails — status badge, **and both** the scope count and the abbreviated scope list (screen-reader text) — a count alone passes on an empty list → core-functionality/integrations/connections-page.spec.ts
 - [x] The `Mine` / `Instance` / `Other users` tabs each hold only their own ownership kind — a `user`-owned connection, an `instance`-owned one, and another user's private one, which must stay out of a superuser's `Mine` (the defect langflow#15182 fixed) and whose Owner reads *Other user* (*Shared* until langflow#15263) → core-functionality/integrations/connections-page.spec.ts
 - [x] Search keeps the row its name, handle or account matches and drops a second seeded one, asserted as *"the other row is gone"* rather than as a total → core-functionality/integrations/connections-page.spec.ts
-- [x] The status badge per state reachable from outside — `Ready`, `Pending` with *Authorize*, `Expired` and `Revoked` with *Reconnect*; `error` has no route from outside and the spec doc records why, instead of the spec skipping silently → core-functionality/integrations/connections-page.spec.ts
-- [ ] The Add / Reconnect wizard — it stopped at *"No OAuth registration is configured for this provider"* until #2301 gave every lane fake OAuth registrations (`docs/api/connections/oauth-fake-registrations.md`); walking it up to consent is #2307
+- [x] The status badge per state reachable from outside — `Ready`, `Pending` with *Authorize*, `Expired` and `Revoked` with *Reconnect*; `Error` is reached only through a failed OAuth callback, which the wizard spec covers (bullet below) → core-functionality/integrations/connections-page.spec.ts
+- [x] The Add / Reconnect wizard, walked up to consent with the test playing the provider (a context route redirects the popup to the real callback): every scope a Google action needs is listed with that action's risk, Slack offers *Sign in with Slack* / *Paste a token*, the registration picked (from two) is the one `oauth/start` names, and the dialog reports a denial, an expired sign-in link and a closed sign-in window in their exact copy while the row records `oauth-denied` / `oauth-expired`; a lost sign-in window still learns the provider's later denial (langflow#15816); *Cancel* deletes an unfinished Add, and an abandoned *Reconnect* writes nothing and leaves a `ready` row as it was, while a Microsoft *Reconnect* asks for `offline_access` without marking it *Granted* (langflow#15780). *Handle* and *Display name* explain themselves, each OAuth provider links its own *Setup guide* (langflow#15796), and a Microsoft scope that only some inputs need is marked *For some inputs* (langflow#15810). With no registration (mocked list) the setup help names `LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS` and copies `<origin>/api/v1/connections/oauth/<provider>/callback` → core-functionality/integrations/connection-oauth-wizard.spec.ts
+- [x] The `Error` badge: a `pending` row authorized from the page (`authorize-<name>`) and denied by the provider shows `Error` with *"The provider denied authorization."* under it, and a Reconnect's *Cancel* keeps the row → core-functionality/integrations/connection-oauth-wizard.spec.ts
 
 #### 24.5 Row actions and the non-interactive opt-in (#1970)
 
@@ -1622,6 +1644,18 @@
 - [ ] A trigger whose every run fails still reads `active` with `last_error: null` — known defect, upstream ticket and `test.fail()` owned by #2328
 - [ ] `/replay` answers `409` outside the 7-day window — not reachable on any lane (the window is at least one day and a delivery cannot be back-dated)
 
+#### 24.10 Health after creation and connector run errors (#2355)
+
+- [x] A run refused for an expired credential writes `expired` / `unhealthy` (with `health_checked_at`) on the row itself, with no health check, and keeps the credential, while a run refused for a missing scope leaves its row exactly as created (langflow#15763) → api/connections/api-connections-health.spec.ts
+- [x] A pasted Slack token is checked with Slack's `auth.test` before it is stored: an unknown `xoxb-` token and a string that is not Slack-shaped are both refused `422` *"Slack rejected this token…"*, and an app-level token breaking its rules (identity, refresh, the `connections:write` scope) is refused locally with its reason; no refusal leaves a row (langflow#15767) → api/connections/api-connections-health.spec.ts
+- [x] *Check credential* and the health check on an app-level (`xapp-`) row answer `200` and stay `unknown`, never `healthy` (langflow#15767) → api/connections/api-connections-health.spec.ts
+- [x] `DELETE` of a row whose provider revocation fails (Slack refuses an `xapp-` token) removes it whole: `204`, not listed, a second `DELETE` `404` (langflow#15766) → api/connections/api-connections-health.spec.ts
+- [x] A connector run's `RUN_ERROR` carries the integration's `code`, with its hint after the message, and the canvas shows `[code] message` plus the hint in the *Workflow run failed* notice and the node's *Flow build failed* panel; the fixture counts it as a failure, not a provider outage (langflow#15773) → core-functionality/integrations/connector-run-errors.spec.ts
+- [x] A run refused for an expired credential reads `[auth-expired]` with *"Reconnect the integration and try again."*, leaks the planted token nowhere, and leaves the row `Expired` on `/settings/connections` across a reload → core-functionality/integrations/connector-run-errors.spec.ts
+- [x] A `connection_ref` field has no canvas handle: a click-to-connect or a drag onto it draws no edge, while the same gesture onto `query` draws one and saves it on `query` (langflow#15753) → core-functionality/integrations/connector-run-errors.spec.ts
+- [ ] A Google transport failure (`network-error`) versus a provider outage (`provider-unavailable`), as produced live — raised inside the Langflow process, so a Playwright route cannot reach it; needs an instance without egress to `googleapis.com`. The suite's flow-error gate is pinned not to take a genuine integration error for a provider outage (`flow-error-policy.test.ts`) (langflow#15775)
+- [ ] A planted Google token that Google itself rejects leaves the row `ready` (run-time rejection is persisted only on the OAuth refresh path and for a pasted Slack token) — recorded in `docs/api/connections/api-connections-health.md`, not asserted
+
 ---
 
 
@@ -1636,7 +1670,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 102 | 96 | 1 | 3 | 2 |
+| `api/flows/` — REST API | 106 | 96 | 4 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1648,7 +1682,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
-| `flow-functionality/` | 37 | 34 | 0 | 2 | 1 |
+| `flow-functionality/` | 47 | 34 | 10 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1659,8 +1693,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 64 | 58 | 0 | 0 | 6 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **776** | **688 (89%)** | **38 (5%)** | **13 (2%)** | **37 (5%)** |
+| `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **802** | **699 (87%)** | **51 (6%)** | **14 (2%)** | **38 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1676,7 +1710,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 783 `test()` calls carrying the `@stable` tag, distributed across 292 spec
+> 796 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1688,6 +1722,10 @@
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
 
 #### api/connections/
+- [x] a run refused for an expired credential marks the connection expired and unhealthy, with no health check, while a run refused for a missing scope leaves its connection as it was → `api-connections-health.spec.ts`
+- [x] a pasted Slack token is checked with Slack before it is saved, and an app-level token breaking its rules is refused locally, each with its reason → `api-connections-health.spec.ts`
+- [x] checking an app-level token does not report it healthy → `api-connections-health.spec.ts`
+- [x] deleting a connection whose provider revocation fails removes it whole → `api-connections-health.spec.ts`
 - [x] a connection is created with its full body, listed by its unique name and deleted by id → `api-connections-lifecycle.spec.ts`
 - [x] PATCH renames and grants the non-interactive opt-in, and refuses a field it does not declare → `api-connections-lifecycle.spec.ts`
 - [x] a create body with no provider_key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
@@ -1696,6 +1734,9 @@
 - [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a callback without the binding cookie is refused and leaves the state usable, and the state completes neither on another provider's path nor twice → `api-connections-oauth-callback.spec.ts`
+- [x] a newer start supersedes the older one, and a denied consent keeps the saved credential → `api-connections-oauth-callback.spec.ts`
+- [x] the OAuth routes a browser reaches answer an HTML 429, and oauth/start answers the JSON one → `api-connections-oauth-callback.spec.ts`
 - [x] another user's connection answers 404 on every route, exactly like one that does not exist → `api-connections-ownership.spec.ts`
 - [x] an instance connection is visible to every user, but only a superuser may create, change or remove it → `api-connections-ownership.spec.ts`
 - [x] only the owner may allow non-interactive use, and anyone with write access may clear it → `api-connections-ownership.spec.ts`
@@ -1840,7 +1881,6 @@
 - [x] schema-derived ctx survives while the value does not → `api-validation-redaction.spec.ts`
 
 #### api/models/
-- [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
 - [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
 - [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
 - [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
@@ -2062,6 +2102,13 @@
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/integrations/
+- [x] the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in → `connection-oauth-wizard.spec.ts`
+- [x] with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL → `connection-oauth-wizard.spec.ts`
+- [x] the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection → `connection-oauth-wizard.spec.ts`
+- [x] a denied consent, then an expired sign-in link, each say so, and the row records why → `connection-oauth-wizard.spec.ts`
+- [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
+- [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
+- [x] the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need → `connection-oauth-wizard.spec.ts`
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
 - [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
@@ -2075,6 +2122,9 @@
 - [x] a list that fails to load says so → `connector-node-picker.spec.ts`
 - [x] picking a connection binds its handle, a reload keeps it, and Clear unbinds it → `connector-node-picker.spec.ts`
 - [x] a handle that outlived its connection is shown as not found → `connector-node-picker.spec.ts`
+- [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
+- [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
+- [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
@@ -2107,13 +2157,11 @@
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent reply renders as correct Markdown in the Playground → `agent-markdown-output.spec.ts`
 - [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
-- [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
-- [x] agent runs the URL then Web Search tools in sequence for a chained prompt → `agent-multi-tool-selection.spec.ts`
 - [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
@@ -2280,7 +2328,6 @@
 - [x] Shareable playground URL is generated when publishing is enabled → `playground-shareable-url.spec.ts`
 - [x] user message must appear instantly in playground before AI responds → `playground-ux.spec.ts`
 - [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
-- [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
@@ -2527,7 +2574,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 1 | 2 |
+| `api/flows/` — REST API | 4 | 2 |
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
@@ -2548,7 +2595,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 0 | 1 |
+| `flow-functionality/` | 10 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 9 |
 | `ui-ux/` — Settings | 0 | 0 |

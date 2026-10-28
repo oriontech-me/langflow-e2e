@@ -53,7 +53,7 @@ test.describe("Models API — the catalog read surface", () => {
 
   test(
     "the three provider lists are a strict hierarchy, not three views of one list",
-    { tag: ["@stable", "@api", "@model-provider"] },
+    { tag: ["@api", "@model-provider"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "GET /api/v1/models",

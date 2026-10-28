@@ -562,13 +562,13 @@
    },
    "upstreamBugCount": 74,
    "specCounts": {
-    "specs": 38,
+    "specs": 40,
     "stable": 38
    }
   },
   {
    "area": "9 Playground / chat",
-   "residualRisk": 4,
+   "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
    "impact": 4,
@@ -583,11 +583,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 24,
-    "penalty": 0
+    "penalty": 0.017
    },
-   "mitigation": 0.8,
+   "mitigation": 0.78,
    "checklistBullets": 70,
    "bulletStates": {
     "x": 70
@@ -660,7 +660,7 @@
   },
   {
    "area": "1 REST API / endpoints",
-   "residualRisk": 3.8,
+   "residualRisk": 3.9,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
@@ -671,21 +671,21 @@
     "weightedBugs": 9.5,
     "weightedChurn": 2.61
    },
-   "mitigationBulletDerived": 0.76,
+   "mitigationBulletDerived": 0.75,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 1,
-    "stableSpecs": 44,
-    "penalty": 0.009
+    "stableSpecs": 46,
+    "penalty": 0.008
    },
-   "mitigation": 0.75,
-   "checklistBullets": 102,
+   "mitigation": 0.74,
+   "checklistBullets": 106,
    "bulletStates": {
     "x": 96,
     "!": 1,
-    "-": 1,
-    "~": 2,
+    "-": 4,
+    "~": 3,
     " ": 2
    },
    "previous": {
@@ -702,8 +702,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 44,
-    "stable": 44
+    "specs": 47,
+    "stable": 46
    }
   },
   {
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-27",
+ "refreshed": "2026-10-28",
  "refreshWindow": {
-  "testHealthSince": "2026-09-12",
+  "testHealthSince": "2026-09-13",
   "days": 45
  }
 }
