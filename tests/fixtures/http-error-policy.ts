@@ -40,18 +40,20 @@
  *   duplicate guard on `/api/v2/mcp/servers/{name}`, none on a flow.
  * - **Not declared with `expectKnownHttpError()`.** A declaration fails its test
  *   when the response does NOT fire, which suits a defect that fires every time.
- *   The self-race fired in 4 of 5 runs on `1.13.0.dev35`, so declaring it would
- *   have turned the fifth run into a red test. Specs that stage a conflict on
- *   purpose (`flow-functionality/multi-edit/`) do declare their 409, because
- *   there it is deterministic.
- * - **The self-race is gone on `1.14.0.dev8`.** `release-1.14.0` queues autosaves
- *   per flow (`saveQueueTails` in `use-autosave-flow.ts`), so the next save is
- *   sent only after the previous one answers, with the token it returned.
- *   Measured with the first `PATCH` held for 9 s and a second edit made while it
- *   was held: the second `PATCH` left after the first answered, carried the
- *   rotated token, and both returned 200. The test that showed #2220 in 4 of 5
- *   runs showed it in 0 of 5. A flow 409 in a log is therefore worth reading as a
- *   real conflict or a regression of that queue.
+ *   The self-race is intermittent: 4 of 5 runs on `1.13.0.dev35`, 1 of 30 on
+ *   `1.14.0.dev8`. Declaring it would turn every run where it does not fire into
+ *   a red test. Specs that stage a conflict on purpose
+ *   (`flow-functionality/multi-edit/`) do declare their 409, because there it is
+ *   deterministic.
+ * - **On `1.14.0.dev8` it is much rarer, but not gone.** `release-1.14.0` queues
+ *   autosaves per flow (`saveQueueTails` in `use-autosave-flow.ts`), so the next
+ *   save is sent only after the previous one answers, with the token it returned.
+ *   Measured 4 times with the first `PATCH` held for 9 s and a second edit made
+ *   while it was held: each time the second `PATCH` left after the first
+ *   answered, carried the rotated token, and both returned 200. Still, #2220's
+ *   test logged one `409 flow_version_conflict` in 30 runs. The 20 runs
+ *   instrumented to catch it showed no save sent while another was in flight and
+ *   no `If-Match` reused, so that occurrence has no attributed cause yet.
  */
 
 export interface HttpResponseFacts {
