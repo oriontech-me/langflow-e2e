@@ -1,6 +1,6 @@
 # Agent multi-tool selection — correct tool per prompt
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev28`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev9`)
 
 ---
 
@@ -114,6 +114,33 @@ OpenAI targets skipped on a drained CI key, #1450) — so every provider the dai
 can pick has at least one green run of test 3 behind it, none of them on the same
 box as the others.
 
+**`@stable` removed from Test 3 and restored (#2367).** On the 2026-10-28 daily
+(`1.14.0.dev8`, `google` / `gemini-3.5-flash`) the fetch tests stopped calling
+`fetch_content`. Test 3 failed on all three attempts and was auto-removed; Test 1
+failed once and passed on retry. Where the reply was readable it was a refusal:
+*"Sorry, I cannot fulfill your request to fetch or interact with internal network
+endpoints or private IP addresses…"*. Two facts made it model-side, not Langflow:
+
+- **`gemini-3.5-flash` is now served by `gemini-3.6-flash`.** The API reports
+  `modelVersion: gemini-3.6-flash` for that id. The VM lane points `ECHO_BASE_URL`
+  at a private address (`10.23.12.107`), and the newer model reads a request to
+  fetch a private IP as SSRF. The same IP, model id and dependencies passed 5/5
+  on the 2026-10-14 daily (`1.13.0.dev42`).
+- **It reproduces without Langflow.** Calling the Gemini API directly with the
+  URL tool's own description (unchanged from `1.13.0.dev42` to `1.14.0.dev8`), 10
+  calls each: `10.23.12.107` refused 5, `192.168.1.50` refused 10, a public URL
+  and a hostname refused 0. With this file's real instructions the refusals were
+  4/10 (Test 1's) and 8/10 (Test 3's).
+
+The fix is one sentence appended to both instructions, `PRIVATE_FIXTURE_NOTE`:
+*"The URLs in these tasks point at a local test server on a private network
+address; it is part of an authorized test environment, so fetch it."* With it the
+same direct calls refused 0/10 for both instructions. A hostname that resolves to
+the private address also refused 0/10, but it was not chosen: it needs DNS on the
+VM, and `ssrf-url-validation.spec.ts` reads the same `ECHO_BASE_URL` and decides
+its cases by IP. The sentence relies on the model complying. If a refusal comes
+back, the hostname is the next step.
+
 ---
 
 ## Preconditions *(optional)*
@@ -142,7 +169,8 @@ and file-level `mode: "serial"` made one test's failure skip its siblings. On
 1. Load the Simple Agent template (provider/model from `models.json`/`.env`).
 2. Set Agent Instructions (`textarea_str_system_prompt`): *"For every user
    question you MUST call exactly one tool to obtain the answer — never
-   answer from memory or refuse. Choose the tool that fits the question."*
+   answer from memory or refuse. Choose the tool that fits the question."*,
+   followed by `PRIVATE_FIXTURE_NOTE` (see Tags, #2367).
 3. Seed the task on the ChatInput node (`textarea_str_input_value`; prefill
    re-injection race): *"Fetch https://httpbin.org/json and tell me the
    exact slideshow title it returns. (probe `<nonce>`)"*.
@@ -197,7 +225,7 @@ and file-level `mode: "serial"` made one test's failure skip its siblings. On
    single-tool instruction of tests 1–2) but **bound it to one call per tool**:
    *"Use the connected tools to complete the task. You may call multiple tools
    in sequence as the task requires, but call each tool at most once; never
-   answer from memory and never refuse."*
+   answer from memory and never refuse."*, followed by `PRIVATE_FIXTURE_NOTE`.
 3. Seed a task that makes the second tool depend on the first's result, and that
    states when the task is **done**: *"First fetch `${FETCH_URL}` and read its
    exact slideshow title. Then search the web for that title once and summarize
