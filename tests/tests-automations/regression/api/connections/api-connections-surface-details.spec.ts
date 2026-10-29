@@ -271,7 +271,7 @@ test.describe("Connections — the small reachable surface details", () => {
 
   test(
     "the deployment snapshot names each connection the project's flows need, with the union of their scopes",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["GET /api/v1/projects/{project_id}/deployment-snapshot"]);
       const project = await createProjectViaApi(request, owner.headers, { namePrefix: "e2e-snapshot" });
