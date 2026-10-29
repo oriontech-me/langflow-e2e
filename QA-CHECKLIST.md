@@ -1710,7 +1710,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 797 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 798 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1766,6 +1766,7 @@
 - [x] the provider filter lists that provider's rows and no other → `api-connections-surface-details.spec.ts`
 - [x] revoke reports what happened at the provider: nothing to revoke, or a revocation that failed → `api-connections-surface-details.spec.ts`
 - [x] the page says the provider revocation failed when Slack refuses the token → `api-connections-surface-details.spec.ts`
+- [x] the deployment snapshot names each connection the project's flows need, with the union of their scopes → `api-connections-surface-details.spec.ts`
 - [x] the KB connector catalog names a provider and its scopes for every connector that needs a credential → `api-connections-surface-details.spec.ts`
 - [x] creating, revoking and deleting a connection writes no global variable → `api-connections-surface-details.spec.ts`
 - [x] on this lane's deployment context no capability is filtered, and none could be → `api-connections-surface-details.spec.ts`
