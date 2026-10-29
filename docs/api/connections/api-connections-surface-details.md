@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-connections-surface-details.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev9`)
 
 Owning issue: #2305 (Dedicated Integrations, batch 2). Seven behaviours that are shipped and reachable but too small
 for a spec of their own. Each one either gets an assertion here, is already asserted elsewhere (and this doc says
@@ -91,12 +91,20 @@ List Events*, answers `200` with `Cache-Control: no-store` and:
 A project with no flows answers `422 {"detail": "project has no flows to package"}` with
 `x-langflow-error-code: snapshot_empty`.
 
-**Premise refuted: the snapshot has no `schema_version`.** Its body is exactly ten keys: `project`, `flows`,
-`dependencies`, `required_variables`, `required_connections`, `required_providers`, `required_models`,
-`unresolved_model_fields`, `required_mcp_variables`, `required_mcp_projects`. The `schema_version` that moves to `4`
-when a project needs a connection (`6` for MCP requirements, `5` for model providers, `3` for dependencies, `1`
-otherwise) belongs to the **artifact manifest** built by `build_project_artifact`, and no OSS route calls that
-function on `release-1.14.0`. So it is not black-box reachable, and the test asserts the exact key set instead.
+**The snapshot has carried its own `schema_version` since `1.14.0.dev9`** (upstream #15892, which added it together
+with `required_variable_declarations`; #2372). Its body is exactly twelve keys: `project`, `flows`, `dependencies`,
+`required_variables`, `required_variable_declarations`, `schema_version`, `required_connections`,
+`required_providers`, `required_models`, `unresolved_model_fields`, `required_mcp_variables`, `required_mcp_projects`.
+Up to `1.14.0.dev8` it had ten, without those two.
+
+The snapshot's `schema_version` is **not** the artifact manifest's, and reading one for the other gets this test's
+expected value wrong. The snapshot claims `7` when its flows declare any variable and `1` otherwise: connections, model
+providers, MCP requirements and dependencies do not raise it. The manifest built by `build_project_artifact` still
+claims `4` for a project that needs a connection (`7` for variable declarations, `6` for MCP requirements, `5` for model
+providers, `3` for dependencies, `1` otherwise), and no OSS route calls that function on `release-1.14.0`, so the
+manifest is not black-box reachable. This project's flow binds a connection and references no global variable, so its
+snapshot answers `schema_version: 1` and `required_variable_declarations: []`. Both are asserted, with the exact key
+set. The `7` path (a flow that declares a variable) is not covered here.
 
 **Recorded, not asserted:** the snapshot is owner-scoped even for the superuser. The superuser reading the throwaway
 user's project gets `404`, unlike connections, where a superuser sees every row.
@@ -178,8 +186,9 @@ browser test in the file.)*
 1. The owner creates a project. Its snapshot answers `422` `snapshot_empty`.
 2. A flow with Gmail Send and Drive List bound to one handle and Calendar List unbound goes into the project. The
    expected scopes are read from the live catalog.
-3. The snapshot answers `200`, `Cache-Control: no-store`, the exact ten-key body, one flow, and exactly one
-   `required_connections` entry: the handle with the sorted union of the two nodes' scopes.
+3. The snapshot answers `200`, `Cache-Control: no-store`, the exact twelve-key body, `schema_version: 1`, no variable
+   declaration, one flow, and exactly one `required_connections` entry: the handle with the sorted union of the two
+   nodes' scopes.
 
 **Test 5 — the KB connector catalog names a provider and scopes for each credentialed connector.**
 1. Each entry carries the exact seven-key set. `folder` is uncredentialed: `provider_key: null`, no scopes.
@@ -208,7 +217,7 @@ All tests pass three consecutive times at `--retries=0 --workers=1`, and once at
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login (the superuser), with user
+- A running Langflow **1.14** instance (`1.14.0.dev9` or later: test 4 asserts the twelve-key snapshot) at `PLAYWRIGHT_BASE_URL`, auto-login (the superuser), with user
   self-registration through `POST /api/v1/users/`.
 - No provider key and no OAuth registration. One outbound call per revoke of an `xapp-` row (tests 2 and 3): revoking the `xapp-` row makes the backend call Slack's
   `auth.revoke` with a fake token. The outcome is `failed` whether Slack answers or the call cannot leave the instance.
@@ -217,8 +226,9 @@ All tests pass three consecutive times at `--retries=0 --workers=1`, and once at
 - `src/backend/base/langflow/services/connection/oauth/broker.py` — the `provider_revocation` decision.
 - `src/backend/base/langflow/services/connection/oauth/providers.py` — Slack's `auth.revoke` and its errors.
 - `src/backend/base/langflow/api/v1/projects.py` — the deployment-snapshot route.
-- `src/backend/base/langflow/services/deployment_artifacts/builder.py` — `_collect_required_connections` and the
-  artifact manifest's `schema_version`.
+- `src/backend/base/langflow/api/v1/schemas/deployment_snapshot.py` — the snapshot's twelve keys.
+- `src/backend/base/langflow/services/deployment_artifacts/builder.py` — `_collect_required_connections`, the
+  snapshot's `schema_version` and the artifact manifest's.
 - `src/backend/base/langflow/api/v1/knowledge_bases.py` — the connector catalog.
 - `src/backend/base/langflow/api/v1/integrations.py` — `deployment_context` and the capabilities' `deployment_contexts`.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/index.tsx` — the revoke toast chosen from

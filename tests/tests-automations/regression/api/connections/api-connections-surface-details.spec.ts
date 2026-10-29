@@ -31,7 +31,11 @@ const GMAIL_SEND = "ext:google:GmailSendComponent@official";
 const DRIVE_LIST = "ext:google:GoogleDriveListComponent@official";
 const CALENDAR_LIST = "ext:google:GoogleCalendarListComponent@official";
 
-/** `DeploymentSnapshot`'s top-level keys. There is no `schema_version`: that is the artifact manifest's. */
+/**
+ * `DeploymentSnapshot`'s top-level keys. `required_variable_declarations` and `schema_version` arrived in
+ * 1.14.0.dev9 (upstream #15892). The snapshot's `schema_version` is its own, not the artifact manifest's:
+ * only a variable declaration raises it (to 7), so a connection alone leaves it at 1.
+ */
 const SNAPSHOT_KEYS = [
   "dependencies",
   "flows",
@@ -41,7 +45,9 @@ const SNAPSHOT_KEYS = [
   "required_mcp_variables",
   "required_models",
   "required_providers",
+  "required_variable_declarations",
   "required_variables",
+  "schema_version",
   "unresolved_model_fields",
 ];
 /** `ConnectorCatalogEntry`'s keys. */
@@ -271,7 +277,7 @@ test.describe("Connections — the small reachable surface details", () => {
 
   test(
     "the deployment snapshot names each connection the project's flows need, with the union of their scopes",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["GET /api/v1/projects/{project_id}/deployment-snapshot"]);
       const project = await createProjectViaApi(request, owner.headers, { namePrefix: "e2e-snapshot" });
@@ -318,12 +324,15 @@ test.describe("Connections — the small reachable surface details", () => {
         flows.push(flowId);
       });
 
-      await test.step("the snapshot lists the handle once, with both nodes' scopes, and no schema_version", async () => {
+      await test.step("the snapshot lists the handle once, with both nodes' scopes, at schema_version 1", async () => {
         const res = await request.get(SNAPSHOT(project.projectId), { headers: owner.headers });
         expect(res.status(), await res.text()).toBe(200);
         expect(res.headers()["cache-control"]).toBe("no-store");
         const body = await res.json();
         expect(Object.keys(body).sort(), "the snapshot's top-level keys").toEqual(SNAPSHOT_KEYS);
+        // A connection does not raise the snapshot's version; only a variable declaration does.
+        expect(body.schema_version, "the snapshot's schema_version").toBe(1);
+        expect(body.required_variable_declarations).toEqual([]);
         expect(body.project.id).toBe(project.projectId);
         expect(body.flows.map((flow: { id: string }) => flow.id)).toEqual([flowId]);
         expect(body.required_connections).toEqual([{ provider: "google", name: handle, scopes: expectedScopes }]);
