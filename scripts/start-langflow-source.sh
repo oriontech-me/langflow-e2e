@@ -349,7 +349,9 @@ echo "Starting Langflow on ${BIND_HOST}:${PORT} (logs: ${LOG_FILE})..."
 #                                scripts/run-e2e.sh sets it, which is the file whose job is
 #                                to mirror that workflow (#1714).
 #   LANGFLOW_A2A_ENABLED         product default is OFF, and a disabled server passes every A2A spec while testing nothing (#1240, #1195)
-#   LANGFLOW_SSRF_ALLOWED_HOSTS  private ranges only, loopback deliberately OUT (security/ssrf-url-validation.spec.ts asserts the refusal)
+#   LANGFLOW_SSRF_ALLOWED_HOSTS  private ranges, loopback deliberately OUT (security/ssrf-url-validation.spec.ts asserts the refusal),
+#                                plus lf-self.localhost: the loopback alias mcp-server.spec.ts registers Langflow under as its
+#                                own MCP server, admitted by name since 1.13.1 refuses loopback MCP destinations (#16041)
 #   LANGFLOW_KB_ALLOWED_FOLDER_ROOTS  the `folder` connector's allow-list (empty refuses every walk), set to THIS
 #                                instance's config directory — the LANGFLOW_CONFIG_DIR below — because that is where
 #                                flow-scoped uploads land and memory-base-ingestion.spec.ts ingests a folder it owns
@@ -376,7 +378,7 @@ LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}" \
 LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
 LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS="${LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS:-$DEFAULT_OAUTH_REGISTRATIONS}" \
-LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
+LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost}" \
 LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-${STATE_DIR}/data}" \
 LANGFLOW_CONFIG_DIR="${STATE_DIR}/data" \
 LANGFLOW_DATABASE_URL="${LANGFLOW_DATABASE_URL:-sqlite:///${STATE_DIR}/data/langflow.db}" \
