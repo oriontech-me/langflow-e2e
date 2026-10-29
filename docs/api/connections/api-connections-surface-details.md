@@ -13,7 +13,9 @@ where), or is recorded with the reason it cannot be asserted.
 ## What this test validates *(required)*
 
 Measured on `1.13.0.dev47`. Upstream code read on `release-1.14.0` (`ad4e00b7a4`), where `connections.py`,
-`integrations.py`, `knowledge_bases.py` and the deployment-artifact builder are identical to `release-1.13.0`.
+`integrations.py`, `knowledge_bases.py` and the deployment-artifact builder are identical to `release-1.13.0`. Item 4
+was re-measured on `1.14.0.dev9` and re-read at `v1.14.0.dev9`, after upstream #15892 changed the snapshot schema and
+the builder (#2372).
 
 ### 1. `GET /api/v1/connections?provider=` returns that provider's rows only
 
@@ -98,13 +100,19 @@ with `required_variable_declarations`; #2372). Its body is exactly twelve keys: 
 Up to `1.14.0.dev8` it had ten, without those two.
 
 The snapshot's `schema_version` is **not** the artifact manifest's, and reading one for the other gets this test's
-expected value wrong. The snapshot claims `7` when its flows declare any variable and `1` otherwise: connections, model
-providers, MCP requirements and dependencies do not raise it. The manifest built by `build_project_artifact` still
+expected value wrong. The snapshot claims `7` when it carries any variable declaration and `1` otherwise: connections,
+model providers, MCP requirements and dependencies do not raise it. **Declarations are emitted only when
+`LANGFLOW_DEPLOYMENT_TYPED_VARIABLES_ENABLED` is on**, an instance-global setting that defaults to off (upstream: *enable
+only after deployment readers enforce the declared kind*) and that no lane sets. With it off, `_export_variable_metadata`
+returns no kinds and `_variable_declarations` returns nothing, so every snapshot answers `[]` and `1`, whatever its
+flows reference. The manifest built by `build_project_artifact` still
 claims `4` for a project that needs a connection (`7` for variable declarations, `6` for MCP requirements, `5` for model
 providers, `3` for dependencies, `1` otherwise), and no OSS route calls that function on `release-1.14.0`, so the
-manifest is not black-box reachable. This project's flow binds a connection and references no global variable, so its
-snapshot answers `schema_version: 1` and `required_variable_declarations: []`. Both are asserted, with the exact key
-set. The `7` path (a flow that declares a variable) is not covered here.
+manifest is not black-box reachable. The test asserts `schema_version: 1` and `required_variable_declarations: []`
+with the exact key set. What that catches is the flag's default turning on, or the snapshot picking up the manifest's
+ladder (which would read `4` for this connection-bound project). It does **not** show that a connection leaves the
+version at `1`: with the flag off, nothing the project contains can change either value. The `7` path is not reachable
+on any lane without that setting, so it is not covered here.
 
 **Recorded, not asserted:** the snapshot is owner-scoped even for the superuser. The superuser reading the throwaway
 user's project gets `404`, unlike connections, where a superuser sees every row.

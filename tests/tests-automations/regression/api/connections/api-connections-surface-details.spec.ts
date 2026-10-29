@@ -34,7 +34,8 @@ const CALENDAR_LIST = "ext:google:GoogleCalendarListComponent@official";
 /**
  * `DeploymentSnapshot`'s top-level keys. `required_variable_declarations` and `schema_version` arrived in
  * 1.14.0.dev9 (upstream #15892). The snapshot's `schema_version` is its own, not the artifact manifest's:
- * only a variable declaration raises it (to 7), so a connection alone leaves it at 1.
+ * only a variable declaration raises it (to 7), and declarations are emitted only under
+ * LANGFLOW_DEPLOYMENT_TYPED_VARIABLES_ENABLED, which defaults off and no lane sets.
  */
 const SNAPSHOT_KEYS = [
   "dependencies",
@@ -330,7 +331,8 @@ test.describe("Connections — the small reachable surface details", () => {
         expect(res.headers()["cache-control"]).toBe("no-store");
         const body = await res.json();
         expect(Object.keys(body).sort(), "the snapshot's top-level keys").toEqual(SNAPSHOT_KEYS);
-        // A connection does not raise the snapshot's version; only a variable declaration does.
+        // With typed variables off (the default), no declaration is emitted and the version stays 1. The manifest's
+        // ladder would read 4 here, so this catches that leaking in, or the default turning on.
         expect(body.schema_version, "the snapshot's schema_version").toBe(1);
         expect(body.required_variable_declarations).toEqual([]);
         expect(body.project.id).toBe(project.projectId);
