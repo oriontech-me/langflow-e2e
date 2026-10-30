@@ -32,7 +32,7 @@ compared against (`.github/workflows/daily-stable.yml`) is expressed in UTC.
 
 ## Machine prerequisites
 
-What the machine must have before the units are worth installing. Neither of these can
+What the machine must have before the units are worth installing. None of these can
 live in this repository as a file, so they are listed here, with how to check each on
 the machine.
 
@@ -40,6 +40,7 @@ the machine.
 |---|---|---|
 | `uv` in `~/.local/bin` (the installer and the starter need it; systemd does not load that directory, which is why the wrapper puts it on `PATH`) | `~/.local/bin/uv --version` | the preflight **stops** the run and says so |
 | `localhost` resolving to **both** `127.0.0.1` and `::1`. Ubuntu's default `/etc/hosts` maps `::1` to `ip6-localhost ip6-loopback` only, so add `localhost` to that line: `::1 localhost ip6-localhost ip6-loopback` (#1998) | `python3 -c 'import socket; print({a[4][0] for a in socket.getaddrinfo("localhost", None)})'` shows both | the preflight **warns** and writes `logs/target-localhost.log`, and `model-provider-base-url-ssrf` fails on the environment, not the product |
+| `lf-self.localhost` resolving to `127.0.0.1`. `mcp-server.spec.ts` registers Langflow as its own MCP server under that name, which every starter allow-lists, because from 1.13.1 a loopback MCP destination is admitted only by an explicit `LANGFLOW_SSRF_ALLOWED_HOSTS` entry and the suite cannot list `localhost` (`tests/helpers/mcp/self-mcp-url.ts`, upstream #16041). `*.localhost` needs no file where nsswitch has `myhostname` or `resolve`; this VM's has `files mymachines dns`, so add the name to the loopback line: `127.0.0.1 localhost lf-self.localhost` | `python3 -c 'import socket; print({a[4][0] for a in socket.getaddrinfo("lf-self.localhost", None)})'` shows `127.0.0.1` | the preflight **warns** and writes `logs/target-self-mcp-host.log`, and the two self-registration tests in `mcp-server.spec.ts` fail with `Connection failed: … unhandled errors in a TaskGroup` |
 
 The asymmetry is deliberate. A missing `uv` cannot produce a run at all, so the preflight
 refuses one. A missing `::1` produces a run with one false red, and a refusal would trade

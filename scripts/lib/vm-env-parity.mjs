@@ -299,7 +299,7 @@ export const CLASSIFICATION = {
     carrier: "starter",
     sameValue: false,
     reason:
-      "the CIDRs match; the workflow's extra `ollama` entry is a DOCKER SERVICE NAME that resolves only inside the Actions job network. On the VM the Ollama starter reports an RFC-1918 address and the run targets it by IP, which the shared CIDRs already authorise — so mirroring the literal string would add a hostname that resolves to nothing. Loopback stays out of both, because security/ssrf-url-validation.spec.ts asserts the refusal",
+      "the CIDRs match; the workflow's extra `ollama` entry is a DOCKER SERVICE NAME that resolves only inside the Actions job network. On the VM the Ollama starter reports an RFC-1918 address and the run targets it by IP, which the shared CIDRs already authorise — so mirroring the literal string would add a hostname that resolves to nothing. Loopback stays out of both, because security/ssrf-url-validation.spec.ts asserts the refusal — except `lf-self.localhost`, a loopback NAME both carry so mcp-server.spec.ts can register Langflow as its own MCP server past the 1.13.1 MCP destination policy (#16041), which no refusal spec uses",
   },
 };
 

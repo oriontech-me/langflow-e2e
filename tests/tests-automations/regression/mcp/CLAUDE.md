@@ -106,6 +106,16 @@ carry the `x-api-key` header. Without it, `GET
 `rejected the request with HTTP 403: the configured credential was refused`;
 with it, `toolsCount` is a number (measured).
 
+**Build that URL with `selfMcpUrl()`** (`tests/helpers/mcp/self-mcp-url.ts`), never
+from `PLAYWRIGHT_BASE_URL` directly. From 1.13.1 (upstream #16041) Langflow refuses
+an MCP HTTP/SSE destination on loopback unless its host is in
+`LANGFLOW_SSRF_ALLOWED_HOSTS`, and the lanes cannot list `localhost` / `127.0.0.1` —
+the SSRF specs need those refused. The helper swaps a loopback host for
+`lf-self.localhost`, which every lane and start script allow-lists. Measured on
+`1.13.1rc1` with the lanes' list plus that name: `lf-self.localhost` connects,
+`localhost` and `127.0.0.1` are still refused; on `1.13.1rc0`, which predates the
+policy, the name connects too (and so does `localhost`).
+
 ---
 
 ## References

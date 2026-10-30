@@ -79,6 +79,24 @@ export function toolsCountOf(body: unknown, serverName: string): number | null {
 }
 
 /**
+ * The `error` Langflow reports for `serverName`, or `null` when it reports none.
+ *
+ * A server that never reports a count usually says why here — an SSRF refusal of
+ * its URL, a refused credential, a dead subprocess — and a wait that drops it
+ * sends the reader to the run's backend log for a sentence the endpoint already
+ * returned.
+ */
+export function serverErrorOf(body: unknown, serverName: string): string | null {
+  if (!Array.isArray(body)) return null;
+  const entry = (body as Array<{ name?: string; error?: unknown }>).find(
+    (s) => s?.name === serverName,
+  );
+  return typeof entry?.error === "string" && entry.error.trim() !== ""
+    ? entry.error
+    : null;
+}
+
+/**
  * Names why the wait gave up.
  *
  * The split that matters is whether the probes themselves failed. "Every probe
@@ -93,7 +111,11 @@ export function missingMcpToolsCountMessage(d: {
   probes: number;
   failedProbes: number;
   lastProbeError: string | null;
+  lastServerError?: string | null;
 }): string {
+  const reported = d.lastServerError
+    ? ` The server's last reported error: "${d.lastServerError}".`
+    : "";
   const head =
     `[waitForMcpToolsCount] MCP server "${d.serverName}" was not ready within ` +
     `${d.waitedMs}ms, across ${d.probes} probe(s) of ` +
@@ -114,7 +136,7 @@ export function missingMcpToolsCountMessage(d: {
       `${head} The server answered but never reported a tool count, and ` +
       `${d.failedProbes} of ${d.probes} probes also failed outright, the last ` +
       `with "${d.lastProbeError}". Both layers were unhealthy — decide which ` +
-      `before changing either.`
+      `before changing either.${reported}`
     );
   }
 
@@ -123,7 +145,7 @@ export function missingMcpToolsCountMessage(d: {
     `tool count, so no probe budget can help: it was registered but never ` +
     `served a tool list — the stdio subprocess died, or the configured URL is ` +
     `unreachable or refused the stored credential. Langflow does not retry this ` +
-    `by itself.`
+    `by itself.${reported}`
   );
 }
 
@@ -154,6 +176,7 @@ export async function waitForMcpToolsCount(
   // spent its whole budget on timeouts ends up reporting "the server never
   // served a tool list".
   let lastProbeError: string | null = null;
+  let lastServerError: string | null = null;
 
   for (;;) {
     probes += 1;
@@ -165,8 +188,10 @@ export async function waitForMcpToolsCount(
         failedProbes += 1;
         lastProbeError = `HTTP ${resp.status()} — ${await resp.text()}`;
       } else {
-        const count = toolsCountOf(await resp.json(), serverName);
+        const body = await resp.json();
+        const count = toolsCountOf(body, serverName);
         if (count !== null) return count;
+        lastServerError = serverErrorOf(body, serverName) ?? lastServerError;
       }
     } catch (e) {
       failedProbes += 1;
@@ -184,6 +209,7 @@ export async function waitForMcpToolsCount(
       probes,
       failedProbes,
       lastProbeError,
+      lastServerError,
     }),
   );
 }

@@ -204,11 +204,18 @@ test("the SSRF allow-list matches the CI lanes, and keeps loopback OUT", () => {
   // agent-tool-error-handling.spec.ts uses an SSRF-blocked loopback fetch as its
   // deterministic error generator and ssrf-url-validation.spec.ts asserts that
   // refusal — allow-listing 127.0.0.1 here would silently disarm both.
+  //
+  // Checked per ENTRY, not as a substring: `lf-self.localhost` is a loopback NAME
+  // only mcp-server.spec.ts uses, to register this instance as its own MCP server
+  // past 1.13.1's MCP destination policy (#16041), and allow-listing it admits that
+  // name alone — `localhost` and `127.0.0.1` stay refused (measured on 1.13.1rc1).
   const r = runScript();
   const runCall = r.calls.find((c) => c.startsWith("run "));
-  assert.match(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=172\.16\.0\.0\/12,10\.0\.0\.0\/8,192\.168\.0\.0\/16/);
-  assert.doesNotMatch(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=[^ ]*127\.0\.0\.1/);
-  assert.doesNotMatch(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=[^ ]*localhost/);
+  const entries = runCall.match(/LANGFLOW_SSRF_ALLOWED_HOSTS=(\S+)/)?.[1].split(",");
+  assert.deepEqual(entries, ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16", "lf-self.localhost"]);
+  for (const loopback of ["localhost", "127.0.0.1", "::1", "[::1]", "127.0.0.0/8"]) {
+    assert.ok(!entries.includes(loopback), `${loopback} must not be allow-listed`);
+  }
 });
 
 test("the SSRF allow-list is a default, so another configuration is reproducible", () => {

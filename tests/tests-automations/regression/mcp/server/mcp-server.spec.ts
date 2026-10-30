@@ -16,6 +16,7 @@ import {
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { selfMcpUrl } from "../../../../helpers/mcp/self-mcp-url";
 import { waitForMcpToolOption } from "../../../../helpers/mcp/wait-for-mcp-tool-option";
 import {
   waitForMcpCredentialRefused,
@@ -1222,13 +1223,9 @@ test("Streamable HTTP MCP server with server-everything should load tools correc
       : (projectsRaw.folders ?? []);
     expect(projects.length).toBeGreaterThan(0);
     const projectId = projects[0].id;
-    // Derive base from PLAYWRIGHT_BASE_URL so the test works against any Langflow instance,
-    // not only the default localhost:7860.
-    const baseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:7860/";
-    const server = new URL(
-      `/api/v1/mcp/project/${projectId}/streamable`,
-      baseUrl,
-    ).toString();
+    // Langflow fetches this URL itself, so a loopback base becomes the dedicated
+    // allowlisted host the 1.13.1 MCP destination policy admits (selfMcpUrl).
+    const server = selfMcpUrl(projectId);
 
     await page.waitForSelector('[data-testid="blank-flow"]', {
       timeout: 30000,
@@ -1725,8 +1722,8 @@ test("an untouched edit keeps the stored MCP credential — Langflow still authe
     );
     createdApiKeyIds.push(apiKey.id);
 
-    // The first project's own transport, derived from PLAYWRIGHT_BASE_URL so the
-    // URL Langflow calls is the one the suite reaches (test 6's derivation).
+    // The first project's own transport, derived from PLAYWRIGHT_BASE_URL with a
+    // loopback host swapped for the allowlisted self host (selfMcpUrl).
     const projectsResp = await page.request.get("/api/v1/projects/", { headers });
     expect(projectsResp.status(), "listing projects must succeed").toBe(200);
     const projectsRaw = await projectsResp.json();
@@ -1734,10 +1731,7 @@ test("an untouched edit keeps the stored MCP credential — Langflow still authe
       ? projectsRaw
       : (projectsRaw.folders ?? []);
     expect(projects.length, "the instance must have a project to expose").toBeGreaterThan(0);
-    const url = new URL(
-      `/api/v1/mcp/project/${projects[0].id}/streamable`,
-      process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:7860/",
-    ).toString();
+    const url = selfMcpUrl(projects[0].id);
 
     await test.step("Pre-clean: drop anything a crashed retry left under this name", async () => {
       await page.request.delete(path, { headers });
