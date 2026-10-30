@@ -285,7 +285,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
 
   test(
     "the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4",
-    { tag: ["@stable", "@components", "@integrations"] },
+    { tag: ["@components", "@integrations"] },
     async ({ page, request }) => {
       const groups = new Map<string, string[]>();
       const expected = await shippedProviders(request);

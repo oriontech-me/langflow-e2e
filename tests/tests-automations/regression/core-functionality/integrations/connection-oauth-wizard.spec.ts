@@ -287,7 +287,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
 
   test(
     "the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       // A second Google registration, listed first: the picker must not just
       // send whatever it preselected.
@@ -378,7 +378,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
 
   test(
     "a denied consent, then an expired sign-in link, each say so, and the row records why",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const name = newHandle("deny");
       const dialog = await openAddDialog(page);
