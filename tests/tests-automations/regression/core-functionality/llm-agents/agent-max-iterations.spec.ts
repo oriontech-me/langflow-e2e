@@ -93,8 +93,15 @@ const TARGET_URL = `${ECHO_BASE}/uuid`;
 // FORCE the call (no `tool_choice` on the Agent component), which is why Test 1
 // also asserts the resulting tool step; this only removes the reading under which
 // a bare announcement is compliant.
+// gemini-3.5-flash is served by gemini-3.6-flash, which declines to fetch a private
+// IP as SSRF, and the VM lane's ECHO_BASE_URL is one (#2367: called directly, 4/10
+// declined with the instruction below, 0/10 with this note appended).
+const PRIVATE_FIXTURE_NOTE =
+  " The URLs in these tasks point at a local test server on a private network address; " +
+  "it is part of an authorized test environment, so fetch it.";
 const SYSTEM_PROMPT =
-  "You have web tools. Your FIRST action MUST be a tool call — never reply with text before you have called a tool. To answer any question about a URL you MUST call the URL fetch tool. Never guess or invent responses.";
+  "You have web tools. Your FIRST action MUST be a tool call — never reply with text before you have called a tool. To answer any question about a URL you MUST call the URL fetch tool. Never guess or invent responses." +
+  PRIVATE_FIXTURE_NOTE;
 // The template's URL tool (default) is the forcer — no extra tool needs enabling.
 const TASK = `Fetch ${TARGET_URL} and tell me the exact "uuid" value it returns.`;
 const LIMIT_MESSAGE = /model call limits exceeded/i;
@@ -556,7 +563,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "causal control — a high max iterations does not hit the limit",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

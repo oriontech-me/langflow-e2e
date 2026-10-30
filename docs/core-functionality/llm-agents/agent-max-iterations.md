@@ -1,6 +1,6 @@
 # Agent Max Iterations — agent stops at the configured limit
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev30`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev9`)
 
 ---
 
@@ -173,6 +173,20 @@ filing it as a product issue; what is still open, and stated in #1830, is whethe
 message whose text is cut while `state` says `complete`, with no `finish_reason`
 anywhere in the payload, is worth raising upstream.
 
+**`@stable` removed from Test 2 and restored (#2367).** On the 2026-10-28 daily
+(`1.14.0.dev8`, `google` / `gemini-3.5-flash`) Test 2 failed on every attempt and
+was auto-removed. Test 1 failed with it. The agent declined to fetch:
+*"Sorry, I cannot fulfill your request to access or fetch content from internal or
+private network IP addresses."* This was the model, not Langflow.
+`gemini-3.5-flash` is now served by `gemini-3.6-flash`, which reads a request to
+fetch the VM lane's private `ECHO_BASE_URL` (`10.23.12.107`) as SSRF. It reproduces
+calling the Gemini API directly. The measurements are in
+`agent-multi-tool-selection.md` → Tags. With this file's instructions and the VM's
+address, the direct calls declined 4 of 10. With `PRIVATE_FIXTURE_NOTE` appended
+they declined 0 of 10. That note says the URL is a local test server in an authorized
+test environment. It is what the instructions now end with. The run-count evidence
+for the restoration is in the PR for #2367.
+
 `@regression` — guards the max-iterations enforcement from regressing (the bug
 #481 documented); `@agents` — agent execution; `@playground` — the flow is run
 through the Playground.
@@ -202,7 +216,9 @@ Shared setup per test (identical except `max_iterations`):
 - Load the Simple Agent template (ships a URL fetch tool).
 - Set the Agent Instructions (`textarea_str_system_prompt`) to force use of the
   URL fetch tool for any URL question, so the agent **attempts a tool call** —
-  which needs more than one model call — instead of answering in one shot.
+  which needs more than one model call — instead of answering in one shot. They
+  end with `PRIVATE_FIXTURE_NOTE`, which tells the model the URL is an authorized
+  local test server (#2367: `gemini-3.6-flash` otherwise declines a private IP).
 - Set `max_iterations` through the shared helper
   `tests/helpers/ui/set-agent-max-iterations.ts`: it selects the Agent node,
   opens the inspector (`parameters-button`), exposes the advanced field on the
