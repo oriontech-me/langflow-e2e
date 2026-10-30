@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-29",
+ "refreshed": "2026-10-30",
  "refreshWindow": {
-  "testHealthSince": "2026-09-14",
+  "testHealthSince": "2026-09-15",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,7 +40,7 @@
   "cappedByProduct": 2,
   "bullets": 826,
   "bulletsAutomatedUnwatched": 128,
-  "residualRiskTotal": 100.8
+  "residualRiskTotal": 99.8
  },
  "areas": [
   {
@@ -107,11 +107,11 @@
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 2,
-   "residualRisk": 7,
+   "residualRisk": 6.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.72,
+   "mitigation": 0.73,
    "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
@@ -135,9 +135,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 37,
-    "penalty": 0.01
+    "penalty": 0
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -151,7 +151,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": -0.4,
+    "residualRisk": -0.6,
     "rank": 2,
     "direction": "improved"
    },
@@ -260,67 +260,9 @@
    "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
   },
   {
-   "key": "security",
-   "label": "NEW security",
-   "rank": 5,
-   "residualRisk": 6.2,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.59,
-   "mitigationBulletDerived": 0.69,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
-   },
-   "bullets": {
-    "total": 30,
-    "validated": 26,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 4
-   },
-   "specs": {
-    "specs": 7,
-    "stable": 7
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 2,
-    "stableSpecs": 7,
-    "penalty": 0.099
-   },
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 1,
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0
-   },
-   "delta": {
-    "residualRisk": -8.8,
-    "rank": -4,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "SSRF/secret exposure; not a checklist area at all"
-  },
-  {
    "key": "graph-engine",
    "label": "12.6 Build / graph engine",
-   "rank": 6,
+   "rank": 5,
    "residualRisk": 5.6,
    "inherentRisk": 20,
    "probability": 4,
@@ -363,7 +305,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 1,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -373,6 +315,64 @@
     2836
    ],
    "rationale": "If a run fails nothing else in the product matters; async graph execution"
+  },
+  {
+   "key": "security",
+   "label": "NEW security",
+   "rank": 6,
+   "residualRisk": 5.4,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.64,
+   "mitigationBulletDerived": 0.69,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "bullets": {
+    "total": 30,
+    "validated": 26,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 4
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 1,
+    "stableSpecs": 7,
+    "penalty": 0.049
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 1,
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -9.6,
+    "rank": -5,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "SSRF/secret exposure; not a checklist area at all"
   },
   {
    "key": "a2a",

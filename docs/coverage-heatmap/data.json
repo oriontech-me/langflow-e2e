@@ -132,7 +132,7 @@
   },
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 7,
+   "residualRisk": 6.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -147,11 +147,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 37,
-    "penalty": 0.01
+    "penalty": 0
    },
-   "mitigation": 0.72,
+   "mitigation": 0.73,
    "checklistBullets": 47,
    "bulletStates": {
     "x": 42,
@@ -254,51 +254,6 @@
    }
   },
   {
-   "area": "NEW security",
-   "residualRisk": 6.2,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
-   },
-   "mitigationBulletDerived": 0.69,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 2,
-    "stableSpecs": 7,
-    "penalty": 0.099
-   },
-   "mitigation": 0.59,
-   "checklistBullets": 30,
-   "bulletStates": {
-    "x": 26,
-    " ": 4
-   },
-   "previous": {
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0,
-    "checklistBullets": 11
-   },
-   "judgementRationale": "SSRF/secret exposure; not a checklist area at all",
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
-   },
-   "upstreamBugCount": 10,
-   "specCounts": {
-    "specs": 7,
-    "stable": 7
-   }
-  },
-  {
    "area": "12.6 Build / graph engine",
    "residualRisk": 5.6,
    "inherentRisk": 20,
@@ -340,6 +295,51 @@
    },
    "upstreamBugCount": 31,
    "specCounts": null
+  },
+  {
+   "area": "NEW security",
+   "residualRisk": 5.4,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "mitigationBulletDerived": 0.69,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 1,
+    "stableSpecs": 7,
+    "penalty": 0.049
+   },
+   "mitigation": 0.64,
+   "checklistBullets": 30,
+   "bulletStates": {
+    "x": 26,
+    " ": 4
+   },
+   "previous": {
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0,
+    "checklistBullets": 11
+   },
+   "judgementRationale": "SSRF/secret exposure; not a checklist area at all",
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "upstreamBugCount": 10,
+   "specCounts": {
+    "specs": 7,
+    "stable": 7
+   }
   },
   {
    "area": "16 A2A",
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-29",
+ "refreshed": "2026-10-30",
  "refreshWindow": {
-  "testHealthSince": "2026-09-14",
+  "testHealthSince": "2026-09-15",
   "days": 45
  }
 }
