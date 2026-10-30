@@ -886,6 +886,9 @@
 - [-] A second save by the other session while the dialog is open refuses *Update* with `409` and *"Someone saved again while you were choosing…"*, refreshes the dialog with the newer change, and keeps that save on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [-] *Cancel* closes the dialog, keeps the banner and changes nothing on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [-] When the archive `POST /versions/` fails, *Load Latest* discards nothing: *"Your changes could not be saved to version history, so nothing was discarded."*, the dialog and banner stay, the server is unchanged and the history is empty → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] A component changed on both sides is a conflict: its row asks for a version (*"Action required"*), *Update Current Flow* stays disabled with *"Resolve 1 conflict before updating this flow."*, and *Keep my version* resolves it so the server and canvas hold the viewer's value → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
+- [-] *Keep <name>'s version* saves the other side's value whole, even when the dialog shows it in part (*"Shown in part. Open the component to see the whole value."*) → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
+- [-] Two conflicts resolved opposite ways plus a checked uncontested change save exactly the chosen values; the hint counts down from *"Resolve 2 conflicts…"* → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
 
 ---
 
