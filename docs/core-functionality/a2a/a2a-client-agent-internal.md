@@ -1,6 +1,6 @@
 # A2A Client — the `A2AAgent` component in Internal mode: calling a locally published agent
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`; first measured on `1.12.0.dev18`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev10`; first measured on `1.12.0.dev18`)
 
 **Issue:** #1354 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C1**) ·
 **Depends on:** #1240 · **Jira:** epic `LE-1588`
@@ -141,7 +141,11 @@ running instance, none invented.
 - **The `message` input's template name is `input_value`**, so the testid is
   `textarea_str_input_value` — not `textarea_str_message`, which is what the
   component's Python input name would suggest.
-- **The option testid embeds the agent name**: `{agent name}-{index}-option`.
+- **The option testid embeds the agent name and its index**: `{agent name}-{index}-option`.
+  The index is not fixed: the list is ordered by `updated_at` descending across the
+  project, which every worker shares, so an agent another spec publishes after A sits
+  above it. The test matches the name at any index. The as-tool sibling hard-coded
+  index 0 and flaked on exactly that (#2378), and this spec had the same locator.
 - **`options_metadata` carries the flow id** alongside each option
   (`{id, updated_at}`), because names are not unique;
   `_selected_agent_flow_id()` resolves the pick through it.
