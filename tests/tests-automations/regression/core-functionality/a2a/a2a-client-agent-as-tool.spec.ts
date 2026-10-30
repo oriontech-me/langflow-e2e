@@ -281,8 +281,11 @@ for (const { label, options, skipReason } of targets) {
     // on the published 1.13.0.dev30 dist in a fresh venv (langchain-core 1.6.6), the VM
     // lane's deployment shape: 5/5 at --retries=0, openai / gpt-4o-mini, no `Input should be
     // callable` in the backend log.
-    test("an approved send_to_agent call resumes the run and executes the published agent",
-      { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a", "@agents"] },
+    // Quarantined at triage of e2e-qa#24: recurrent flake (2026-10-26, 2026-10-30), the
+    // target option never shows in the picker. Lifting it (drop `test.fixme`, restore
+    // `@stable`) is #2378's deliverable.
+    test.fixme("an approved send_to_agent call resumes the run and executes the published agent",
+      { tag: ["@regression", "@components", "@workspace", "@a2a", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
