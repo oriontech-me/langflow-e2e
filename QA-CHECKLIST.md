@@ -1713,7 +1713,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 794 `test()` calls carrying the `@stable` tag, distributed across 295 spec
+> 795 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2062,6 +2062,7 @@
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/a2a/
+- [x] an approved send_to_agent call resumes the run and executes the published agent → `a2a-client-agent-as-tool.spec.ts`
 - [x] External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires → `a2a-client-agent-external.spec.ts`
 - [x] the Internal dropdown lists a locally published agent and calling it runs that flow → `a2a-client-agent-internal.spec.ts`
 - [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
