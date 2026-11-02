@@ -84,7 +84,7 @@ test.describe("Models API — the selection write surface", () => {
 
   test(
     "validating a provider answers 200 with the verdict in the body",
-    { tag: ["@stable", "@api", "@model-provider"] },
+    { tag: ["@api", "@model-provider"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["POST /api/v1/models/validate-provider"]);
 
