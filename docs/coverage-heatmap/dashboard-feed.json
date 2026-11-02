@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-30",
+ "refreshed": "2026-11-02",
  "refreshWindow": {
-  "testHealthSince": "2026-09-15",
+  "testHealthSince": "2026-09-18",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,7 +40,7 @@
   "cappedByProduct": 2,
   "bullets": 826,
   "bulletsAutomatedUnwatched": 128,
-  "residualRiskTotal": 99.8
+  "residualRiskTotal": 99.2
  },
  "areas": [
   {
@@ -375,73 +375,14 @@
    "rationale": "SSRF/secret exposure; not a checklist area at all"
   },
   {
-   "key": "a2a",
-   "label": "16 A2A",
-   "rank": 7,
-   "residualRisk": 5.3,
-   "inherentRisk": 12,
-   "probability": 3,
-   "impact": 4,
-   "mitigation": 0.56,
-   "mitigationBulletDerived": 0.59,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 2,
-    "fragility": 4,
-    "weightedBugs": 5,
-    "weightedChurn": 0.29
-   },
-   "bullets": {
-    "total": 18,
-    "validated": 13,
-    "automatedUnwatched": 0,
-    "partial": 1,
-    "flaky": 0,
-    "empty": 4
-   },
-   "specs": {
-    "specs": 11,
-    "stable": 11
-   },
-   "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 11,
-    "penalty": 0.027
-   },
-   "upstreamBugsByYear": {
-    "2026": 4
-   },
-   "previous": {
-    "rank": 6,
-    "residualRisk": 6.3,
-    "inherentRisk": 8,
-    "mitigation": 0.21
-   },
-   "delta": {
-    "residualRisk": -1,
-    "rank": -1,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": true,
-   "instrumentCaveat": null,
-   "platformItems": [
-    2837,
-    2838
-   ],
-   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
-  },
-  {
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
-   "rank": 8,
-   "residualRisk": 5.2,
+   "rank": 7,
+   "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
-   "mitigation": 0.74,
+   "mitigation": 0.75,
    "mitigationBulletDerived": 0.75,
    "mitigationOverride": null,
    "axes": {
@@ -465,9 +406,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 27,
-    "penalty": 0.014
+    "penalty": 0
    },
    "upstreamBugsByYear": {
     "2023": 4,
@@ -482,15 +423,74 @@
     "mitigation": 0.75
    },
    "delta": {
-    "residualRisk": 0.1,
-    "rank": 2,
-    "direction": "worsened"
+    "residualRisk": -0.1,
+    "rank": 3,
+    "direction": "improved"
    },
    "isNew": false,
    "cappedByProduct": false,
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
+  },
+  {
+   "key": "a2a",
+   "label": "16 A2A",
+   "rank": 8,
+   "residualRisk": 4.9,
+   "inherentRisk": 12,
+   "probability": 3,
+   "impact": 4,
+   "mitigation": 0.59,
+   "mitigationBulletDerived": 0.59,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 4,
+    "weightedBugs": 5,
+    "weightedChurn": 0.29
+   },
+   "bullets": {
+    "total": 18,
+    "validated": 13,
+    "automatedUnwatched": 0,
+    "partial": 1,
+    "flaky": 0,
+    "empty": 4
+   },
+   "specs": {
+    "specs": 11,
+    "stable": 11
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2026": 4
+   },
+   "previous": {
+    "rank": 6,
+    "residualRisk": 6.3,
+    "inherentRisk": 8,
+    "mitigation": 0.21
+   },
+   "delta": {
+    "residualRisk": -1.4,
+    "rank": -2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": true,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2837,
+    2838
+   ],
+   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
   },
   {
    "key": "memory-base",
@@ -638,7 +638,7 @@
     "empty": 0
    },
    "specs": {
-    "specs": 40,
+    "specs": 41,
     "stable": 38
    },
    "testHealth": {

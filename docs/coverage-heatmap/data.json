@@ -342,52 +342,8 @@
    }
   },
   {
-   "area": "16 A2A",
-   "residualRisk": 5.3,
-   "inherentRisk": 12,
-   "probability": 3,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 2,
-    "fragility": 4,
-    "weightedBugs": 5,
-    "weightedChurn": 0.29
-   },
-   "mitigationBulletDerived": 0.59,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 11,
-    "penalty": 0.027
-   },
-   "mitigation": 0.56,
-   "checklistBullets": 18,
-   "bulletStates": {
-    "x": 13,
-    "~": 1,
-    " ": 4
-   },
-   "previous": {
-    "residualRisk": 6.3,
-    "inherentRisk": 8,
-    "mitigation": 0.21,
-    "checklistBullets": 18
-   },
-   "judgementRationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network",
-   "upstreamBugsByYear": {
-    "2026": 4
-   },
-   "upstreamBugCount": 4,
-   "specCounts": {
-    "specs": 11,
-    "stable": 11
-   }
-  },
-  {
    "area": "15 Canvas / UI",
-   "residualRisk": 5.2,
+   "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
@@ -402,11 +358,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 27,
-    "penalty": 0.014
+    "penalty": 0
    },
-   "mitigation": 0.74,
+   "mitigation": 0.75,
    "checklistBullets": 59,
    "bulletStates": {
     "x": 54,
@@ -429,6 +385,50 @@
    "specCounts": {
     "specs": 27,
     "stable": 27
+   }
+  },
+  {
+   "area": "16 A2A",
+   "residualRisk": 4.9,
+   "inherentRisk": 12,
+   "probability": 3,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 4,
+    "weightedBugs": 5,
+    "weightedChurn": 0.29
+   },
+   "mitigationBulletDerived": 0.59,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0
+   },
+   "mitigation": 0.59,
+   "checklistBullets": 18,
+   "bulletStates": {
+    "x": 13,
+    "~": 1,
+    " ": 4
+   },
+   "previous": {
+    "residualRisk": 6.3,
+    "inherentRisk": 8,
+    "mitigation": 0.21,
+    "checklistBullets": 18
+   },
+   "judgementRationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network",
+   "upstreamBugsByYear": {
+    "2026": 4
+   },
+   "upstreamBugCount": 4,
+   "specCounts": {
+    "specs": 11,
+    "stable": 11
    }
   },
   {
@@ -562,7 +562,7 @@
    },
    "upstreamBugCount": 74,
    "specCounts": {
-    "specs": 40,
+    "specs": 41,
     "stable": 38
    }
   },
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-30",
+ "refreshed": "2026-11-02",
  "refreshWindow": {
-  "testHealthSince": "2026-09-15",
+  "testHealthSince": "2026-09-18",
   "days": 45
  }
 }
