@@ -88,20 +88,20 @@ import {
  * tag is the correct state and never debt. Excluded by construction, and pinned
  * by a test, so a later edit cannot widen this population onto Enterprise.
  *
- * Deliberately NOT `stable-tests.ts`'s `LANE_TAGS` (3 tags -- `@destructive` /
- * `@enterprise` / `@serving`), and never merged into it, even though the two
+ * Deliberately NOT `stable-tests.ts`'s `LANE_TAGS` (4 tags -- `@destructive` /
+ * `@enterprise` / `@serving` / `@instance-migration`), and never merged into it, even though the two
  * lists overlap. They answer different questions over the same vocabulary:
  * `LANE_TAGS` feeds the #1746 reconciler's "was `@stable` REMOVED without an
  * owner", which walks git history -- a test that never carried the tag is not
  * a removal, so that list only needs to name what an OWNED removal could look
  * like. This module asks "never had it at all", which needs every lane a test
  * could legitimately have no `@stable` for, `@authz` / `@sso` / `@governance`
- * included. Widening `LANE_TAGS` to 6 would change the reconciler's behaviour
+ * included. Widening `LANE_TAGS` to 7 would change the reconciler's behaviour
  * for a question that belongs to this module, not to it -- so the two lists
  * stay separate, in their own modules, on purpose.
  */
 export const LANE_SELECTORS = [
-  "@destructive", "@enterprise", "@authz", "@sso", "@serving", "@governance",
+  "@destructive", "@enterprise", "@authz", "@sso", "@serving", "@governance", "@instance-migration",
 ] as const;
 
 export interface SpecFacts { hasMirroredDoc: boolean; hasIdScopedCleanup: boolean }

@@ -1,7 +1,8 @@
 /**
- * Mutually exclusive run lanes (`@destructive`, `@enterprise`, `@serving`).
+ * Mutually exclusive run lanes (`@destructive`, `@enterprise`, `@serving`,
+ * `@instance-migration`).
  *
- * Three tags in this suite are LANE SELECTORS, not severities: a test carrying
+ * Four tags in this suite are LANE SELECTORS, not severities: a test carrying
  * one of them must not run in a normal invocation, because the environment it
  * needs is not the environment a normal run has.
  *
@@ -18,15 +19,25 @@
  *    A spec that gated on the settings and skipped would skip everywhere, which
  *    is the green all-skip #1010 exists to prevent. Start the variant with
  *    `scripts/start-langflow-serving-identity.sh`.
+ *  - `@instance-migration` targets a SOURCE Langflow with instance migration
+ *    (Settings > Migration) turned on, plus the two destinations it copies into
+ *    — PostgreSQL with pgvector, and an S3-compatible bucket (#2347). The routes
+ *    are mounted only when `LANGFLOW_FEATURE_INSTANCE_MIGRATION=true` at process
+ *    start, and nothing else in the suite starts those destinations. Start it with
+ *    `scripts/start-langflow-instance-migration.sh`.
  *
  * The exclusion uses `grepInvert` for the reason the destructive lane already
  * documents: a CLI `--grep` overrides `config.grep` but leaves `config.grepInvert`
  * in place, so no caller can widen the lane by passing a filter of its own.
  *
- * Two of the three run serially, for different reasons: `@destructive` because
+ * Three of the four run serially, for different reasons: `@destructive` because
  * two account wipers would erase each other, `@enterprise` because the instance
- * rate-limits login and every worker has to authenticate. Same knob, different
- * cause — stated here so neither is "cleaned up" as redundant.
+ * rate-limits login and every worker has to authenticate, `@instance-migration`
+ * because the migration is ONE record per instance and its pause is
+ * instance-global — while it is on, every write outside the migration routes
+ * answers 503, so a second worker's test fails mid-flight, and two tests walking
+ * the steps would overwrite each other's record. Same knob, three causes — stated
+ * here so none is "cleaned up" as redundant.
  *
  * `@serving` runs PARALLEL, and that is a decision rather than an omission:
  * neither cause above applies. The variant keeps `auto_login`, so there is no
@@ -54,6 +65,7 @@ export interface LaneEnv {
   PW_DESTRUCTIVE?: string;
   PW_ENTERPRISE?: string;
   PW_SERVING_IDENTITY?: string;
+  PW_INSTANCE_MIGRATION?: string;
 }
 
 const DESTRUCTIVE_HINT =
@@ -62,6 +74,8 @@ const ENTERPRISE_HINT =
   "[lane] @enterprise tests are excluded from this run — point PLAYWRIGHT_BASE_URL at an Enterprise instance and run: PW_ENTERPRISE=1 npx playwright test --grep @enterprise";
 const SERVING_HINT =
   "[lane] @serving tests are excluded from this run — start the variant with ./scripts/start-langflow-serving-identity.sh, then: PW_SERVING_IDENTITY=1 npx playwright test --grep @serving";
+const INSTANCE_MIGRATION_HINT =
+  "[lane] @instance-migration tests are excluded from this run — start the lane with ./scripts/start-langflow-instance-migration.sh, then: PW_INSTANCE_MIGRATION=1 npx playwright test --grep @instance-migration";
 
 /**
  * Resolve the lane from the environment.
@@ -69,17 +83,21 @@ const SERVING_HINT =
  * More than one flag set is not an error the config can usefully refuse — the
  * lanes need different instances — so one wins by a FIXED precedence and the
  * caller is told, rather than silently getting one of them. The order is
- * `@enterprise` > `@serving` > `@destructive`, by how specialised an instance
- * each demands: Enterprise needs a separate build, serving-identity needs the
- * same image under different configuration, destructive needs only isolation.
+ * `@enterprise` > `@instance-migration` > `@serving` > `@destructive`, by how
+ * specialised an instance each demands: Enterprise needs a separate build,
+ * instance migration needs the image plus one package and two companion services
+ * (a database and a bucket), serving-identity needs the same image under
+ * different configuration, destructive needs only isolation.
  */
 export function resolveLane(env: LaneEnv = process.env as LaneEnv): LaneResolution {
   const enterprise = !!env.PW_ENTERPRISE;
   const destructive = !!env.PW_DESTRUCTIVE;
   const serving = !!env.PW_SERVING_IDENTITY;
+  const instanceMigration = !!env.PW_INSTANCE_MIGRATION;
 
   const requested = [
     enterprise ? "PW_ENTERPRISE" : null,
+    instanceMigration ? "PW_INSTANCE_MIGRATION" : null,
     serving ? "PW_SERVING_IDENTITY" : null,
     destructive ? "PW_DESTRUCTIVE" : null,
   ].filter((flag): flag is string => flag !== null);
@@ -89,7 +107,7 @@ export function resolveLane(env: LaneEnv = process.env as LaneEnv): LaneResoluti
     requested.length > 1
       ? [
           `[lane] ${requested.join(" and ")} are both set; the ${
-            enterprise ? "enterprise" : "serving-identity"
+            enterprise ? "enterprise" : instanceMigration ? "instance-migration" : "serving-identity"
           } lane wins and the others stay excluded.`,
         ]
       : [];
@@ -101,8 +119,21 @@ export function resolveLane(env: LaneEnv = process.env as LaneEnv): LaneResoluti
     // per IP. Parallel workers exhaust that budget, which is how the first run
     // of this lane reported product assertions as 429s.
     return {
-      grepInvert: /@destructive|@serving/,
-      notices: ambiguity.length ? ambiguity : [DESTRUCTIVE_HINT, SERVING_HINT],
+      grepInvert: /@destructive|@serving|@instance-migration/,
+      notices: ambiguity.length
+        ? ambiguity
+        : [DESTRUCTIVE_HINT, SERVING_HINT, INSTANCE_MIGRATION_HINT],
+      serial: true,
+    };
+  }
+
+  if (instanceMigration) {
+    // Serial for the record and the pause — see the header. Pinned by `lane.test.ts`.
+    return {
+      grepInvert: /@destructive|@enterprise|@serving/,
+      notices: ambiguity.length
+        ? ambiguity
+        : [DESTRUCTIVE_HINT, ENTERPRISE_HINT, SERVING_HINT],
       serial: true,
     };
   }
@@ -110,23 +141,25 @@ export function resolveLane(env: LaneEnv = process.env as LaneEnv): LaneResoluti
   if (serving) {
     // PARALLEL on purpose — see the header. Pinned by `lane.test.ts`.
     return {
-      grepInvert: /@destructive|@enterprise/,
-      notices: ambiguity.length ? ambiguity : [DESTRUCTIVE_HINT, ENTERPRISE_HINT],
+      grepInvert: /@destructive|@enterprise|@instance-migration/,
+      notices: ambiguity.length
+        ? ambiguity
+        : [DESTRUCTIVE_HINT, ENTERPRISE_HINT, INSTANCE_MIGRATION_HINT],
       serial: false,
     };
   }
 
   if (destructive) {
     return {
-      grepInvert: /@enterprise|@serving/,
-      notices: [ENTERPRISE_HINT, SERVING_HINT],
+      grepInvert: /@enterprise|@serving|@instance-migration/,
+      notices: [ENTERPRISE_HINT, SERVING_HINT, INSTANCE_MIGRATION_HINT],
       serial: true,
     };
   }
 
   return {
-    grepInvert: /@destructive|@enterprise|@serving/,
-    notices: [DESTRUCTIVE_HINT, ENTERPRISE_HINT, SERVING_HINT],
+    grepInvert: /@destructive|@enterprise|@serving|@instance-migration/,
+    notices: [DESTRUCTIVE_HINT, ENTERPRISE_HINT, SERVING_HINT, INSTANCE_MIGRATION_HINT],
     serial: false,
   };
 }

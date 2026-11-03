@@ -8,11 +8,11 @@
 // The specs built on it FAIL, not skip, against an instance without them, so a lane
 // that loses the variable goes red instead of passing while testing nothing (#1010).
 //
-// One value, seven copies. The canonical one is scripts/lib/fake-oauth-registrations.json.
+// One value, eight copies. The canonical one is scripts/lib/fake-oauth-registrations.json.
 // The three workflows carry it in their Langflow service env, which starts before any
-// checkout and so cannot read a file; the four starters carry it inlined, because the
+// checkout and so cannot read a file; the five starters carry it inlined, because the
 // VM lane pipes a starter to `bash -s` on the target, where no file of this repo
-// exists. A copy that drifted would configure a different instance per lane, so every
+// exists (the instance-migration starter is never piped, and inlines it for parity). A copy that drifted would configure a different instance per lane, so every
 // copy is pinned here byte for byte. That the inlined copies ARRIVE whole is proven by
 // executing the starters (start-langflow-docker.test.mjs, start-langflow-source.test.mjs)
 // and, for the VM lane's comparison with the daily, by scripts/check-vm-env-parity.mjs.
@@ -43,6 +43,7 @@ const LANES = ["daily-stable.yml", "manual.yml", "pr-validation.yml"];
 const STARTERS = {
   "scripts/start-langflow-docker.sh": "docker",
   "scripts/start-langflow-serving-identity.sh": "docker",
+  "scripts/start-langflow-instance-migration.sh": "docker",
   "scripts/start-langflow-pip.sh": "prefix",
   "scripts/start-langflow-source.sh": "prefix",
 };

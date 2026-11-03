@@ -376,7 +376,7 @@ DECLARED_MODEL_ID="${DECLARED_MODEL_ID:-}"
 # aimed at what a change touched: a PR on the MCP server runs @stable's MCP tests. The
 # filter is composed by scripts/build-grep-filter.mjs, as the Actions lane composes its
 # own (#1275): an alternation spliced in by hand narrowed a release run unnoticed. The
-# lane tags (@destructive, @enterprise, @serving) need an environment of their own and
+# lane tags (@destructive, @enterprise, @serving, @instance-migration) need an environment of their own and
 # are refused here; @stable is the base, not an area.
 STABLE_AREAS="${STABLE_AREAS:-}"
 # Composed in phase_prep from STABLE_AREAS; @stable alone until then, so a shard never
@@ -871,7 +871,7 @@ check_stable_areas() {
     [[ "$tag" =~ ^@[a-z0-9][a-z0-9-]{0,39}$ ]] || die "STABLE_AREAS has a tag that is not one: '$tag'."
     case "$tag" in
       @stable) die "STABLE_AREAS names @stable: it is the base every run keeps, not an area." ;;
-      @destructive | @enterprise | @serving) die "STABLE_AREAS names $tag, a lane tag: its tests need an environment of their own and this lane excludes them." ;;
+      @destructive | @enterprise | @serving | @instance-migration) die "STABLE_AREAS names $tag, a lane tag: its tests need an environment of their own and this lane excludes them." ;;
     esac
   done
   [ "$n" -le 25 ] || die "STABLE_AREAS names $n tags; at most 25."

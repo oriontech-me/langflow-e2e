@@ -160,7 +160,7 @@ export function renderSummary({
     // them here would rot silently.
     lines.push(
       "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Before merging, dispatch `manual.yml` on this branch with `test_tag=@stable` — the largest selection this lane finishes inside its timeout.",
-      "  It does NOT cover the lane-gated specs (`@destructive` / `@enterprise` / `@serving` — they need their own lanes and cannot run here at all) or the specs still outside `@stable`. See `CLAUDE.md` → **What `manual.yml` can actually run**.",
+      "  It does NOT cover the lane-gated specs (`@destructive` / `@enterprise` / `@serving` / `@instance-migration` — they need their own lanes and cannot run here at all) or the specs still outside `@stable`. See `CLAUDE.md` → **What `manual.yml` can actually run**.",
     );
   }
 
