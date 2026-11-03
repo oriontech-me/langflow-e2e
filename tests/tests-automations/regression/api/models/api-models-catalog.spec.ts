@@ -16,16 +16,19 @@ test.describe("Models API — the catalog read surface", () => {
     is_configured: boolean;
     is_enabled: boolean;
     num_models: number;
-    models: Array<{ model_name: string; metadata: Record<string, unknown> }>;
+    mapping?: { model_class?: string; model_param?: string };
+    max_tokens_field_name?: string;
+    models: Array<{ model_name: string; metadata: { model_type?: string } & Record<string, unknown> }>;
   };
   type Descriptor = { provider_id: string; display_name: string; provider: string };
 
-  // Measured on 1.13.0.dev0. Asserted as the keys every row MUST carry — the
-  // resolvers read `is_configured`, `models` and `num_models` by name — and
-  // deliberately not as an exact set: the rows are NOT uniform. Provider-specific
-  // extras exist (`aliases` on ibm-watsonx, `display_name` on openai-compatible and
-  // vllm, `base_url` on openrouter), so an exact-equality assertion fails on a
-  // healthy catalog while a superset one still catches a removed field.
+  // Measured on 1.13.0.dev0, re-measured on 1.14.0.dev14. Asserted as the keys every
+  // row MUST carry — the resolvers read `is_configured`, `models` and `num_models` by
+  // name — and deliberately not as an exact set: the rows are NOT uniform.
+  // Provider-specific extras exist (`aliases` on ibm-watsonx, `display_name` on
+  // openai-compatible and vllm, `base_url` on openrouter), so an exact-equality
+  // assertion fails on a healthy catalog while a superset one still catches a removed
+  // field.
   const CATALOG_ROW_KEYS = [
     "api_docs_url",
     "icon",
@@ -33,13 +36,46 @@ test.describe("Models API — the catalog read surface", () => {
     "is_enabled",
     "live_discovery",
     "mapping",
-    "max_tokens_field_name",
     "models",
     "num_models",
     "provider",
     "provider_id",
     "variables",
   ];
+
+  // `max_tokens_field_name` is NOT universal since 1.14.0.dev8 (#2366): upstream
+  // langflow#15861 added DECISION providers (perplexity, typesafe) whose row has
+  // `mapping: {}` and no such field. That is correct — the field only tells the
+  // chat-model instantiation which keyword carries the token cap, and every reader
+  // of it defaults it to "max_tokens". So the contract is two-sided: a row naming a
+  // chat `model_class` must carry the field (dropping it would silently send Google
+  // `max_tokens`), and a row with no chat class is accepted only as decision-only —
+  // which still fails a chat provider that lost its class and its field together,
+  // since its models are `llm`. Returns every violation of `row`, so a failure names
+  // ALL offending rows: the first version stopped at the first one, and the triage
+  // could not see that typesafe was missing the field too.
+  const rowContractViolations = (row: ProviderRow): string[] => {
+    const id = row.provider_id;
+    const violations: string[] = [];
+    const missing = CATALOG_ROW_KEYS.filter((key) => !(key in row));
+    if (missing.length > 0) violations.push(`${id}: missing ${missing.join(", ")}`);
+
+    const chatClass = row.mapping?.model_class;
+    if (chatClass) {
+      if (typeof row.max_tokens_field_name !== "string" || row.max_tokens_field_name === "") {
+        violations.push(`${id}: names chat model_class ${chatClass} but no max_tokens_field_name`);
+      }
+    } else {
+      const types = (row.models ?? []).map((model) => model.metadata?.model_type);
+      if (types.length === 0 || types.some((type) => type !== "decision")) {
+        violations.push(
+          `${id}: no chat model_class, so it must be a decision-only provider — ` +
+            `model types [${[...new Set(types)].join(", ")}]`,
+        );
+      }
+    }
+    return violations;
+  };
 
   test.beforeAll(async ({ request }) => {
     headers = { Authorization: await getAuthToken(request) };
@@ -53,7 +89,7 @@ test.describe("Models API — the catalog read surface", () => {
 
   test(
     "the three provider lists are a strict hierarchy, not three views of one list",
-    { tag: ["@api", "@model-provider"] },
+    { tag: ["@stable", "@api", "@model-provider"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "GET /api/v1/models",
@@ -72,12 +108,10 @@ test.describe("Models API — the catalog read surface", () => {
       await test.step("each list has its own shape", async () => {
         expect(Array.isArray(catalog)).toBe(true);
         expect(catalog.length).toBeGreaterThan(0);
-        for (const row of catalog) {
-          expect(
-            Object.keys(row).sort(),
-            `GET /api/v1/models row "${row.provider_id}" is missing a required field`,
-          ).toEqual(expect.arrayContaining(CATALOG_ROW_KEYS));
-        }
+        expect(
+          catalog.flatMap(rowContractViolations),
+          "GET /api/v1/models rows that break the row contract",
+        ).toEqual([]);
 
         expect(names.every((n) => typeof n === "string" && n.length > 0)).toBe(true);
 
