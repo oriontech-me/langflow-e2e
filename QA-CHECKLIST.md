@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-02
+> **Last updated:** 2026-11-03
 
 ---
 
@@ -1713,7 +1713,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 794 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 796 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2106,6 +2106,8 @@
 #### core-functionality/integrations/
 - [x] the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in → `connection-oauth-wizard.spec.ts`
 - [x] with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL → `connection-oauth-wizard.spec.ts`
+- [x] the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection → `connection-oauth-wizard.spec.ts`
+- [x] a denied consent, then an expired sign-in link, each say so, and the row records why → `connection-oauth-wizard.spec.ts`
 - [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
 - [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
 - [x] the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need → `connection-oauth-wizard.spec.ts`
