@@ -476,6 +476,51 @@
    }
   },
   {
+   "area": "9 Playground / chat",
+   "residualRisk": 4.6,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 2,
+    "stableSpecs": 24,
+    "penalty": 0.033
+   },
+   "mitigation": 0.77,
+   "checklistBullets": 70,
+   "bulletStates": {
+    "x": 70
+   },
+   "previous": {
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77,
+    "checklistBullets": 66
+   },
+   "judgementRationale": "The user's main verification loop; SSE streaming",
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "upstreamBugCount": 104,
+   "specCounts": {
+    "specs": 24,
+    "stable": 24
+   }
+  },
+  {
    "area": "2 Component config",
    "residualRisk": 4.4,
    "inherentRisk": 20,
@@ -564,51 +609,6 @@
    "specCounts": {
     "specs": 41,
     "stable": 38
-   }
-  },
-  {
-   "area": "9 Playground / chat",
-   "residualRisk": 4.4,
-   "inherentRisk": 20,
-   "probability": 5,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 5,
-    "churnQuintile": 5,
-    "fragility": 4,
-    "weightedBugs": 60.9,
-    "weightedChurn": 2.88
-   },
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 1,
-    "stableSpecs": 24,
-    "penalty": 0.017
-   },
-   "mitigation": 0.78,
-   "checklistBullets": 70,
-   "bulletStates": {
-    "x": 70
-   },
-   "previous": {
-    "residualRisk": 4.7,
-    "inherentRisk": 20,
-    "mitigation": 0.77,
-    "checklistBullets": 66
-   },
-   "judgementRationale": "The user's main verification loop; SSE streaming",
-   "upstreamBugsByYear": {
-    "2023": 2,
-    "2024": 40,
-    "2025": 49,
-    "2026": 13
-   },
-   "upstreamBugCount": 104,
-   "specCounts": {
-    "specs": 24,
-    "stable": 24
    }
   },
   {
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-11-02",
+ "refreshed": "2026-11-03",
  "refreshWindow": {
-  "testHealthSince": "2026-09-18",
+  "testHealthSince": "2026-09-19",
   "days": 45
  }
 }

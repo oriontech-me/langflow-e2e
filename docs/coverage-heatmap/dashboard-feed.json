@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-11-02",
+ "refreshed": "2026-11-03",
  "refreshWindow": {
-  "testHealthSince": "2026-09-18",
+  "testHealthSince": "2026-09-19",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,7 +40,7 @@
   "cappedByProduct": 2,
   "bullets": 826,
   "bulletsAutomatedUnwatched": 128,
-  "residualRiskTotal": 99.2
+  "residualRiskTotal": 99.4
  },
  "areas": [
   {
@@ -553,9 +553,68 @@
    "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
   },
   {
+   "key": "playground",
+   "label": "9 Playground / chat",
+   "rank": 10,
+   "residualRisk": 4.6,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "mitigation": 0.77,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "bullets": {
+    "total": 70,
+    "validated": 70,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 24,
+    "stable": 24
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 2,
+    "stableSpecs": 24,
+    "penalty": 0.033
+   },
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "previous": {
+    "rank": 12,
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": -0.1,
+    "rank": 2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "The user's main verification loop; SSE streaming"
+  },
+  {
    "key": "component-config",
    "label": "2 Component config",
-   "rank": 10,
+   "rank": 11,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
@@ -602,7 +661,7 @@
    },
    "delta": {
     "residualRisk": -0.2,
-    "rank": 3,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -614,7 +673,7 @@
   {
    "key": "flow-lifecycle",
    "label": "12 Flow lifecycle",
-   "rank": 11,
+   "rank": 12,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 4,
@@ -661,7 +720,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 0,
+    "rank": -1,
     "direction": "improved"
    },
    "isNew": false,
@@ -669,65 +728,6 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "Cannot create/save/import a flow = product unusable"
-  },
-  {
-   "key": "playground",
-   "label": "9 Playground / chat",
-   "rank": 12,
-   "residualRisk": 4.4,
-   "inherentRisk": 20,
-   "probability": 5,
-   "impact": 4,
-   "mitigation": 0.78,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 5,
-    "churnQuintile": 5,
-    "fragility": 4,
-    "weightedBugs": 60.9,
-    "weightedChurn": 2.88
-   },
-   "bullets": {
-    "total": 70,
-    "validated": 70,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 24,
-    "stable": 24
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 1,
-    "stableSpecs": 24,
-    "penalty": 0.017
-   },
-   "upstreamBugsByYear": {
-    "2023": 2,
-    "2024": 40,
-    "2025": 49,
-    "2026": 13
-   },
-   "previous": {
-    "rank": 12,
-    "residualRisk": 4.7,
-    "inherentRisk": 20,
-    "mitigation": 0.77
-   },
-   "delta": {
-    "residualRisk": -0.3,
-    "rank": 0,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "The user's main verification loop; SSE streaming"
   },
   {
    "key": "model-providers",
