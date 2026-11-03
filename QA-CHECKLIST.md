@@ -1713,7 +1713,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 797 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 798 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1886,6 +1886,7 @@
 #### api/models/
 - [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
 - [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
+- [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
 - [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
 - [x] the enabled_models write stores a DISABLED set, and it is per user → `api-models-selection.spec.ts`
 
