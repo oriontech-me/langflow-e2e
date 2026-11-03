@@ -208,3 +208,60 @@ export async function absorbStartRateLimit(page: Page, wait: RateLimitWaitOption
     await route.fulfill({ response: result });
   });
 }
+
+/**
+ * The two reads the dialog sends on its own: the connection list it polls and the
+ * registration list it loads per provider. Both count against ONE bucket, the
+ * server's `connections-read` scope, 60/minute per user (`api/v1/connections.py`,
+ * measured on `1.14.0.dev14`), and a UI under auto-login is always the superuser.
+ */
+export function isConnectionRead(url: URL): boolean {
+  return url.pathname === "/api/v1/connections" || url.pathname === "/api/v1/connections/oauth/registrations";
+}
+
+/**
+ * `route.fetch()`, sent again while the server answers `429`, once its window
+ * resets. A refused read changes nothing and does not extend the window, so the
+ * read that finally answers is the one the server would have given. For a route
+ * that stands in for part of the answer (a mocked registration list) and must
+ * not start from a refusal.
+ */
+export async function fetchAbsorbingReadLimit(route: Route, wait: RateLimitWaitOptions = {}) {
+  const { result } = await untilNotRateLimited(
+    `GET ${new URL(route.request().url()).pathname} from the page`,
+    () => route.fetch(),
+    (response) => response.status(),
+    wait,
+  );
+  return result;
+}
+
+/**
+ * Resends a connection or registration list read the server refused with `429`
+ * (#2376).
+ *
+ * The wizard spec spends the bucket on purpose: each dialog polls the list every
+ * 2 s while consent is pending, and from `1.14.0.dev10` every row the dialog
+ * creates or discards (langflow#15952) refetches both lists. Measured on
+ * `1.14.0.dev14`: 63 reads in the file's first 37 s, so the last test's dialog
+ * was refused its registration list and could not offer consent. A refused read
+ * costs a wait here, not a red test, the trade `absorbStartRateLimit` makes for
+ * starts. Anything that is not a `429` passes through untouched.
+ *
+ * Registered on the CONTEXT, so `holdConnectionList` (a context route added
+ * later) still takes precedence while it holds. A page route that answers these
+ * paths itself wins over this one and must call `fetchAbsorbingReadLimit`.
+ */
+export async function absorbReadRateLimit(context: BrowserContext, wait: RateLimitWaitOptions = {}): Promise<void> {
+  await context.route(isConnectionRead, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    let response: Awaited<ReturnType<Route["fetch"]>>;
+    try {
+      response = await fetchAbsorbingReadLimit(route, wait);
+    } catch {
+      // The page closed while the read waited: nothing is left to answer.
+      return route.abort().catch(() => undefined);
+    }
+    await route.fulfill({ response }).catch(() => undefined);
+  });
+}
