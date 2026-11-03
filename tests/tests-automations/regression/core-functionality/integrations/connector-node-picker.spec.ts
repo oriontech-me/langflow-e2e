@@ -29,7 +29,7 @@ import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 // run seeded. Every assertion keys on this file's own handles; no count is read.
 //
 // Rows are planted through a throwaway owner (#2295), whose rows the superuser's
-// picker lists. Only test 7 spends superuser writes (2 rows, 4 writes): a trigger
+// picker lists. Only test 8 spends superuser writes (2 rows, 4 writes): a trigger
 // accepting its flow owner's own row needs a row the superuser owns.
 test.describe("Connector components — the palette, the canvas and the connection picker", () => {
   /** The connection field's id on every connector node; always scoped by its node. */
@@ -57,13 +57,15 @@ test.describe("Connector components — the palette, the canvas and the connecti
    * provider's display_name (the manifest says "Google Workspace"), so it is declared
    * here, and test 1 asserts the manifest names exactly these providers on the served
    * version: a new one fails there by name (#2360). GitHub arrived with upstream
-   * #15957, first in 1.14.0.dev7.
+   * #15957, first in 1.14.0.dev7; Jira with upstream #15952, first in 1.14.0.dev10
+   * (#2377).
    */
   const PROVIDERS: ReadonlyArray<{ id: string; label: string; group: string; since?: string }> = [
     { id: "google", label: "Google", group: "disclosure-bundles-google" },
     { id: "microsoft", label: "Microsoft 365", group: "disclosure-bundles-microsoft 365" },
     { id: "slack", label: "Slack", group: "disclosure-bundles-slack" },
     { id: "github", label: "GitHub", group: "disclosure-bundles-github", since: "1.14.0.dev7" },
+    { id: "jira", label: "Jira", group: "disclosure-bundles-jira", since: "1.14.0.dev10" },
   ];
 
   interface Capability {
@@ -285,7 +287,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
 
   test(
     "the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4",
-    { tag: ["@components", "@integrations"] },
+    { tag: ["@stable", "@components", "@integrations"] },
     async ({ page, request }) => {
       const groups = new Map<string, string[]>();
       const expected = await shippedProviders(request);
@@ -498,7 +500,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
       rows.push(instance);
       const other = await plant(request, "other", { grantedScopes: [GMAIL_READONLY] });
 
-      // Triggers are not in the palette: a flow saved over the API is the only way in.
+      // A flow saved over the API: on the 1.13 line triggers are not in the palette.
       await openCatalogFlow(page, request, "trigger", [
         { id: "gmailtrigger", type: connector("GoogleOnGmailTriggerComponent").key },
       ]);
