@@ -17,10 +17,25 @@
  * `localhost` and `127.0.0.1` stay refused, and on 1.13.1rc0, which predates the
  * policy, it connects too. A non-loopback base URL (a remote target, an RFC-1918
  * bind) is left alone — it is not what the policy refuses.
+ *
+ * `LANGFLOW_SELF_MCP_HOST` overrides only the URL half: every lane and start
+ * script hardcodes `lf-self.localhost` in `LANGFLOW_SSRF_ALLOWED_HOSTS`, so an
+ * override also needs a matching allowlist entry on the instance, or the SSRF
+ * refusal comes back.
  */
 export const DEFAULT_SELF_MCP_HOST = "lf-self.localhost";
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// The WHATWG parser already canonicalises IPv4 forms (`0x7f.1` → `127.0.0.1`)
+// and IPv6 (`[0:0:0:0:0:0:0:1]` → `[::1]`), so the spellings left are these.
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
 
 export function selfMcpUrl(
   projectId: string,
@@ -28,6 +43,6 @@ export function selfMcpUrl(
   selfHost: string = process.env.LANGFLOW_SELF_MCP_HOST || DEFAULT_SELF_MCP_HOST,
 ): string {
   const url = new URL(`/api/v1/mcp/project/${projectId}/streamable`, baseUrl);
-  if (LOOPBACK_HOSTS.has(url.hostname)) url.hostname = selfHost;
+  if (isLoopbackHost(url.hostname)) url.hostname = selfHost;
   return url.toString();
 }

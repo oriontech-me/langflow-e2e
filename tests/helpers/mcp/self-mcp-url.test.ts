@@ -7,10 +7,28 @@ import { DEFAULT_SELF_MCP_HOST, selfMcpUrl } from "./self-mcp-url";
 const PROJECT = "adc69bb8-a537-498e-91c9-616f05149189";
 
 test("every loopback spelling becomes the dedicated host, keeping port and path", () => {
-  for (const base of ["http://localhost:7860/", "http://127.0.0.1:7860", "http://[::1]:7860/"]) {
+  for (const base of [
+    "http://localhost:7860/",
+    "http://127.0.0.1:7860",
+    "http://[::1]:7860/",
+    "http://127.0.0.2:7860/",
+    "http://0.0.0.0:7860/",
+    "http://localhost.:7860/",
+    "http://LOCALHOST:7860/",
+  ]) {
     assert.equal(
       selfMcpUrl(PROJECT, base, DEFAULT_SELF_MCP_HOST),
       `http://lf-self.localhost:7860/api/v1/mcp/project/${PROJECT}/streamable`,
+      base,
+    );
+  }
+});
+
+test("a name that merely starts like loopback is not rewritten", () => {
+  for (const base of ["http://localhost.example.com:7860/", "http://127.example.com:7860/"]) {
+    assert.equal(
+      new URL(selfMcpUrl(PROJECT, base, DEFAULT_SELF_MCP_HOST)).hostname,
+      new URL(base).hostname,
       base,
     );
   }

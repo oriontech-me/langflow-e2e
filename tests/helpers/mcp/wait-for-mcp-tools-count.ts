@@ -114,7 +114,7 @@ export function missingMcpToolsCountMessage(d: {
   lastServerError?: string | null;
 }): string {
   const reported = d.lastServerError
-    ? ` The server's last reported error: "${d.lastServerError}".`
+    ? ` The server's last non-empty reported error: "${d.lastServerError}".`
     : "";
   const head =
     `[waitForMcpToolsCount] MCP server "${d.serverName}" was not ready within ` +
@@ -191,6 +191,8 @@ export async function waitForMcpToolsCount(
         const body = await resp.json();
         const count = toolsCountOf(body, serverName);
         if (count !== null) return count;
+        // Sticky like lastProbeError: a later probe with no error does not
+        // erase the one that explains the wait.
         lastServerError = serverErrorOf(body, serverName) ?? lastServerError;
       }
     } catch (e) {
