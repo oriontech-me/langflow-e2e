@@ -23,6 +23,7 @@ import {
   MCP_TOOLS_COUNT_PROBE_TIMEOUT_MS,
   credentialVerdictOf,
   missingMcpToolsCountMessage,
+  serverErrorOf,
   toolsCountOf,
   waitForMcpCredentialRefused,
   waitForMcpToolsCount,
@@ -123,6 +124,35 @@ test("the wait still goes red when the count never arrives", async () => {
     () => waitForMcpToolsCount(page, "srv", { timeout: 30, intervalMs: 10 }),
     /never reported a tool count/i,
   );
+});
+
+test("a red wait quotes the error the server reported, not only that it had none", async () => {
+  // The 1.13.1 shape: the server is listed with no count and says exactly why.
+  // Dropping that sentence left the run reading "the configured URL is
+  // unreachable" with the SSRF refusal one log away.
+  const ssrf =
+    "Configuration error: SSRF Protection: Hostname localhost resolves to blocked IP address(es): 127.0.0.1.";
+  const { page } = fakePage([
+    { status: 200, body: [{ name: "srv", mode: null, toolsCount: null, error: ssrf }] },
+  ]);
+
+  await assert.rejects(
+    () => waitForMcpToolsCount(page, "srv", { timeout: 30, intervalMs: 10 }),
+    (e: Error) => e.message.includes(ssrf) && /never reported a tool count/i.test(e.message),
+  );
+});
+
+test("serverErrorOf reads only the named server's non-empty error", () => {
+  const body = [
+    { name: "lf-starter_project", error: "Connection closed" },
+    { name: "srv", toolsCount: null, error: "" },
+    { name: "other", toolsCount: null, error: "SSRF Protection: blocked" },
+  ];
+  assert.equal(serverErrorOf(body, "other"), "SSRF Protection: blocked");
+  assert.equal(serverErrorOf(body, "srv"), null, "an empty error says nothing");
+  assert.equal(serverErrorOf(body, "absent"), null);
+  assert.equal(serverErrorOf({ detail: "Not authenticated" }, "srv"), null);
+  assert.equal(serverErrorOf([{ name: "srv", error: 403 }], "srv"), null, "only a string is an error message");
 });
 
 test("toolsCountOf reads only the named server, and only a real count", () => {

@@ -894,7 +894,7 @@ jobs:
           # — so ECHO_BASE_URL is a raw container IP and the RFC-1918 ranges are
           # authorized by CIDR rather than by a fixed address the Docker network
           # assigns per run. Same set as daily-stable.yml (#462).
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s

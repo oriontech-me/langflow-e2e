@@ -4,7 +4,8 @@
 `1.12.0.dev20`; tests 1 and 6 re-validated on `1.12.0.dev39` under #1266; test 5's
 auto-binding assertion and the node-scoped `openAddMcpServerModal` on `1.13.0.dev30`
 under #1447; tests 3, 4, 8 and 9 rewritten to the masked read-back contract, and test 10
-added, on `1.13.0.dev35` under #2215)
+added, on `1.13.0.dev35` under #2215; tests 6 and 10 moved to the `lf-self.localhost`
+self-registration host on `1.13.1rc0` / `1.13.1rc1`)
 
 ---
 
@@ -107,6 +108,19 @@ read-back/update tests; test 10 is `@regression` `@mcp` `@settings` `@stable`)
   `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`, on purpose. Test 6 is the one that needs it: it registers Langflow's **own**
   transport endpoint, so the stored server config must carry the header for
   Langflow to connect to itself.
+- **The self-registration host is admitted by the SSRF allow-list.** Tests 6 and 10
+  hand Langflow a URL it fetches itself, through its SSRF layer, and from 1.13.1
+  (upstream #16041) an MCP HTTP/SSE destination on loopback is refused unless its
+  host is in `LANGFLOW_SSRF_ALLOWED_HOSTS` — the connector loopback exemption no
+  longer applies. The specs cannot allow-list `localhost` or `127.0.0.1`: three
+  security specs use those names as destinations that must be refused. So
+  `selfMcpUrl()` (`tests/helpers/mcp/self-mcp-url.ts`) swaps a loopback base for
+  `lf-self.localhost` (override: `LANGFLOW_SELF_MCP_HOST`), a name every lane and
+  start script allow-lists and nothing else uses. `*.localhost` resolves to loopback
+  with no `/etc/hosts` entry (RFC 6761). Measured with the lanes' list plus that
+  name: on `1.13.1rc1` the name connects while `localhost` and `127.0.0.1` stay
+  refused; on `1.13.1rc0`, which predates the policy, the name connects too. A
+  non-loopback base is left as it is.
 - **Network egress to the npm registry** — the stdio tests run real MCP servers
   via `npx`. A cold container downloads the package on first use; see the
   timeout budgets below. **Tests 8 and 9 are exempt**: registration is
@@ -242,7 +256,8 @@ When the dialog does not open, the helper re-clicks the dropdown (at most
 ### 6 — `Streamable HTTP MCP server with server-everything should load tools correctly`
 
 Unchanged by #1091 (no stdio surface). Derives the project's own
-`/api/v1/mcp/project/{id}/streamable` URL, registers it via the HTTP tab **with an
+`/api/v1/mcp/project/{id}/streamable` URL through `selfMcpUrl()` (see
+*Preconditions*), registers it via the HTTP tab **with an
 `x-api-key` header** (`http-headers-key-0` / `popover-anchor-http-headers-value-0`),
 waits for `toolsCount` through the same `waitForMcpToolsCount` probe as test 1
 (#1266), and asserts ≥1 tool option; cleans up the server and the key via the API.
@@ -322,7 +337,8 @@ No subprocess, no npm registry, no LLM: the registered server is the instance's
 only MCP server this suite can reach whose answer depends on the stored header.
 
 1. Mint an API key (`createApiKey`) and derive the first project's
-   `/api/v1/mcp/project/{id}/streamable` URL from `PLAYWRIGHT_BASE_URL`.
+   `/api/v1/mcp/project/{id}/streamable` URL from `PLAYWRIGHT_BASE_URL` through
+   `selfMcpUrl()` (see *Preconditions*).
 2. `POST /api/v2/mcp/servers/{name}` with that `url` and
    `headers: {"x-api-key": <key>}`; assert 2xx.
 3. `GET /api/v2/mcp/servers/{name}`: assert the body is exactly
@@ -491,6 +507,14 @@ only MCP server this suite can reach whose answer depends on the stored header.
 
 ## External dependencies *(required)*
 
+- **Langflow's MCP HTTP destination policy** — `src/lfx/src/lfx/base/mcp/util.py`
+  (`MCPSessionManager`, `update_tools`) since upstream `b02358d2f2` (PR `#16041`,
+  `release-1.13.1`, first in `1.13.1rc1`). A loopback MCP URL needs an explicit
+  `LANGFLOW_SSRF_ALLOWED_HOSTS` entry; tests 6 and 10 depend on `lf-self.localhost`
+  being one. Without it `?action_count=true` reports `toolsCount: null` with
+  `SSRF Protection: Hostname … resolves to blocked IP address(es)`, which
+  `waitForMcpToolsCount` now quotes in its failure.
+
 - **Langflow's stdio security policy** —
   `src/lfx/src/lfx/base/mcp/security.py` → `validate_mcp_stdio_config()`.
   Since upstream `f4d6ac4` (PR `#14073`, 2026-07-15, forward-porting the
@@ -560,6 +584,10 @@ only MCP server this suite can reach whose answer depends on the stored header.
 ---
 
 ## When to review this test *(optional)*
+
+- If tests 6 and 10 fail with an `SSRF Protection` error naming
+  `lf-self.localhost`: the lane did not allow-list it, or the target host does not
+  resolve `*.localhost` (check `getent hosts lf-self.localhost` where Langflow runs).
 
 - If `validate_mcp_stdio_config()` changes which command shapes are accepted, or
   the rejection message stops matching `/single executable name or path/`.

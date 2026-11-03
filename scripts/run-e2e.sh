@@ -1446,6 +1446,47 @@ check_target_localhost() {
   return 0
 }
 
+# What `lf-self.localhost` resolves to on the target, the same way. mcp-server.spec.ts
+# registers Langflow as its own MCP server under that name (tests/helpers/mcp/
+# self-mcp-url.ts), because from 1.13.1 a loopback MCP destination is admitted only by an
+# explicit LANGFLOW_SSRF_ALLOWED_HOSTS entry (#16041) and the suite cannot list
+# `localhost` or `127.0.0.1`. `*.localhost` resolves with no file on a host whose nsswitch
+# has `myhostname` or `resolve` (macOS, the nightly image); the QA VM's has neither
+# (`files mymachines dns`), so the name must be in its /etc/hosts. Missing, the two specs
+# fail with "Connection failed: … unhandled errors in a TaskGroup", which names no cause.
+self_mcp_host_verdict() {
+  local addrs
+  addrs=" $(printf '%s\n' "$1" | awk 'NF { print $1 }' | sort -u | tr '\n' ' ')"
+  if [ "$addrs" = " " ]; then
+    echo "UNKNOWN: the target's python3 answered nothing for lf-self.localhost, so whether mcp-server.spec.ts's self-registration host resolves is not known."
+  elif [ "$addrs" = " UNRESOLVED " ]; then
+    echo "MISSING: lf-self.localhost does not resolve on the target. mcp-server.spec.ts's two self-registration tests will fail on the environment, not the product: add lf-self.localhost to the target's \`127.0.0.1 localhost\` line in /etc/hosts (ops/systemd/README.md)."
+  elif [[ "$addrs" != *" 127.0.0.1 "* ]]; then
+    echo "WRONG: lf-self.localhost resolves to${addrs% } on the target, not 127.0.0.1, where Langflow listens. Map it to 127.0.0.1 in the target's /etc/hosts (ops/systemd/README.md)."
+  else
+    echo "ok: lf-self.localhost resolves to 127.0.0.1 on the target"
+  fi
+}
+
+# UNRESOLVED on a resolver error, so "the name is missing" and "the target could not be
+# asked" (no output at all) stay two verdicts.
+SELF_MCP_HOST_PROBE='python3 -c "
+import socket
+try: print(chr(10).join(sorted({a[4][0] for a in socket.getaddrinfo(\"lf-self.localhost\", None)})))
+except socket.gaierror: print(\"UNRESOLVED\")"'
+check_target_self_mcp_host() {
+  local out line
+  out="$(target_ssh "$SELF_MCP_HOST_PROBE" 2> /dev/null)" || out=""
+  line="$(self_mcp_host_verdict "$out")"
+  printf '%s\n' "$line" > "$RUN_DIR/logs/target-self-mcp-host.log" \
+    || warn "could not write $RUN_DIR/logs/target-self-mcp-host.log"
+  case "$line" in
+    ok:*) info "$line" ;;
+    *)    warn "$line" ;;
+  esac
+  return 0
+}
+
 # Which of the given ports have no local listener. `ssh -L` opens its listener as soon
 # as it connects, so this is answerable before anything else starts.
 #
@@ -1764,6 +1805,8 @@ phase_preflight() {
   # dying here would trade a day of data for it. Written into the run directory so the
   # triage of a red ssrf spec finds the cause in the run's own evidence.
   check_target_localhost
+  # The same kind of prerequisite, for the name the MCP self-registration specs use.
+  check_target_self_mcp_host
 
   # The credential the umbrella needs, asked before the run spends anything. Expiry is
   # the rare silent failure that comes with a DATE, so it can be caught rather than
