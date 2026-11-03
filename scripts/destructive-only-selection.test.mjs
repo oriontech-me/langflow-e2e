@@ -6,6 +6,7 @@ import {
   isDestructiveOnlySource,
   isEnterpriseOnlySource,
   isServingOnlySource,
+  isInstanceMigrationOnlySource,
 } from "./destructive-only-selection.mjs";
 
 const DESTRUCTIVE_SPEC = `
@@ -24,6 +25,10 @@ const ENTERPRISE_SPEC = `
 
 const SERVING_SPEC = `
   test("another end user cannot stop a job", { tag: ["@api", "@regression", "@serving"] }, async () => {});
+`;
+
+const INSTANCE_MIGRATION_SPEC = `
+  test("check the copy names a deleted row", { tag: ["@instance-migration", "@settings", "@database"] }, async () => {});
 `;
 
 const NORMAL_SPEC = `
@@ -181,6 +186,8 @@ describe("pr-validation.yml wiring", () => {
     // Same reason for @serving (#2047): no serving-identity container on the
     // runner, so nothing here executes those specs either.
     assert.match(workflow, /::warning::@serving specs in this PR are NOT executed by CI/);
+    // And for @instance-migration (#2347): nothing here starts its lane.
+    assert.match(workflow, /::warning::@instance-migration specs in this PR are NOT executed by CI/);
   });
 
   it("the normal run still fails on an empty match it did not predict", () => {
@@ -283,5 +290,42 @@ describe("the @serving lane (#2047)", () => {
     ]) {
       assert.equal(isServingOnlySource(readFileSync(spec, "utf8")), true, spec);
     }
+  });
+});
+
+describe("the @instance-migration lane (#2347)", () => {
+  it("is excluded from the normal run, and not conflated with the other three selectors", () => {
+    assert.equal(isInstanceMigrationOnlySource(INSTANCE_MIGRATION_SPEC), true);
+    assert.equal(isInstanceMigrationOnlySource(NORMAL_SPEC), false);
+    assert.equal(isInstanceMigrationOnlySource(SERVING_SPEC), false);
+    assert.equal(isInstanceMigrationOnlySource(ENTERPRISE_SPEC), false);
+    assert.equal(isInstanceMigrationOnlySource(DESTRUCTIVE_SPEC), false);
+    assert.equal(isServingOnlySource(INSTANCE_MIGRATION_SPEC), false);
+    assert.equal(isDestructiveOnlySource(INSTANCE_MIGRATION_SPEC), false);
+    assert.equal(isEnterpriseOnlySource(INSTANCE_MIGRATION_SPEC), false);
+  });
+
+  it("an instance-migration-only selection skips the normal lane and is reported as executed by nobody", () => {
+    // The #2169 red, prevented before the lane's first spec exists: without this
+    // the selection reaches `npx playwright test`, the normal lane's grepInvert
+    // removes every test, and the job fails on `Error: No tests found.`
+    const verdict = classifySelection(
+      ["m.spec.ts"],
+      sources({ "m.spec.ts": INSTANCE_MIGRATION_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, true, "the normal run would match nothing");
+    assert.equal(verdict.destructiveOnly, false, "the destructive step does not run @instance-migration specs");
+    assert.deepEqual(verdict.instanceMigration, ["m.spec.ts"]);
+    assert.deepEqual(verdict.serving, []);
+    assert.deepEqual(verdict.runnable, []);
+  });
+
+  it("one runnable spec keeps the normal lane running", () => {
+    const verdict = classifySelection(
+      ["m.spec.ts", "n.spec.ts"],
+      sources({ "m.spec.ts": INSTANCE_MIGRATION_SPEC, "n.spec.ts": NORMAL_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, false);
+    assert.deepEqual(verdict.runnable, ["n.spec.ts"]);
   });
 });
