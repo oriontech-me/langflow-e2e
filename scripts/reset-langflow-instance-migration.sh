@@ -50,6 +50,17 @@ done
 
 START_NS="$(date +%s%N 2>/dev/null || true)"
 
+# 0. The new instance a spec started on the copy (#2354). It holds connections to the
+#    database this script is about to drop, it serves a copy that is about to stop
+#    existing, and a test that died with it up would leave its name and port taken for the
+#    next one. Removed only when it is there: `docker rm -f` exits 0 for a container that
+#    is not (#2090), so the inspect is what tells the two apart. Stopping a Langflow takes
+#    seconds idle and measured ~90 s on a loaded machine.
+if docker container inspect "${IM_TARGET_CONTAINER}" > /dev/null 2>&1; then
+  docker rm -f "${IM_TARGET_CONTAINER}" > /dev/null \
+    || fail "could not remove the new instance ${IM_TARGET_CONTAINER}."
+fi
+
 # 1. Stop any run still going. A run's child would otherwise keep writing to the target
 #    this script is about to empty, and its reader would write the run's files back into
 #    a folder this script is about to remove. The server itself is `langflow run`; only a

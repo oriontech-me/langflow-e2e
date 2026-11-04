@@ -16,9 +16,15 @@ import type { InstanceMigrationLane } from "./instance-migration-lane";
  */
 
 const MIGRATION = "/api/v1/migration";
-/** Measured ~16–22 s per check; a run's first event comes after ~10–12 s of process start. */
-const CHECK_TIMEOUT_MS = 120_000;
-const RUN_TIMEOUT_MS = 300_000;
+/**
+ * Measured ~16–22 s per check idle; a run's first event comes after ~10–12 s of process
+ * start. On a loaded machine the same check measured 95 s, and once ran past 120 s (#2354),
+ * so the budget is generous: it only costs time on a check that has truly hung.
+ */
+const CHECK_TIMEOUT_MS = 300_000;
+// The database copy takes ~8 s idle, and measured ~6.5 min on a loaded machine (#2354),
+// where a 5-minute budget failed a copy that was still working.
+const RUN_TIMEOUT_MS = 600_000;
 
 export type StepId =
   | "check_source"

@@ -219,6 +219,7 @@ test("a start removes only the lane's own containers, never the shared runner", 
     "langflow-instance-migration",
     "langflow-instance-migration-pg",
     "langflow-instance-migration-s3",
+    "langflow-instance-migration-target",
   ]);
   assert.match(r.out, /other Langflow containers are already running/);
 });
@@ -259,9 +260,22 @@ test("a reset stops a live run before it removes the record and empties the targ
   const drop = idx((c) => c.includes("DROP DATABASE IF EXISTS langflow_target WITH (FORCE)"));
   const ext = idx((c) => c.includes("-d langflow_target") && c.includes("CREATE EXTENSION IF NOT EXISTS vector"));
   const bucket = idx((c) => c.startsWith("exec -i langflow-instance-migration-s3 weed shell"));
-  for (const [name, i] of Object.entries({ kill, rm, drop, ext, bucket })) assert.ok(i >= 0, `${name} never ran`);
-  assert.ok(kill < rm && rm < drop && drop < ext && ext < bucket, `order: ${[kill, rm, drop, ext, bucket]}`);
+  // The new instance a spec started on the copy goes first: it holds connections to the
+  // database the reset drops (#2354).
+  const target = idx((c) => c === "rm -f langflow-instance-migration-target");
+  for (const [name, i] of Object.entries({ target, kill, rm, drop, ext, bucket })) assert.ok(i >= 0, `${name} never ran`);
+  assert.ok(
+    target < kill && kill < rm && rm < drop && drop < ext && ext < bucket,
+    `order: ${[target, kill, rm, drop, ext, bucket]}`,
+  );
   assert.match(r.out, /Reset the instance migration lane/);
+});
+
+test("a reset with no new instance left running removes nothing but the migration's own state", () => {
+  const r = run(RESET, { env: { FAKE_ABSENT: "langflow-instance-migration-target" } });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.calls.includes("container inspect langflow-instance-migration-target"), "never looked for the new instance");
+  assert.deepEqual(r.calls.filter((c) => c.startsWith("rm ")), []);
 });
 
 test("a reset refuses a lane that is not running, and touches nothing", () => {
@@ -285,11 +299,15 @@ test("a reset that left anything behind fails, naming what", () => {
   }
 });
 
-test("a stop removes the lane's three containers and its network, and says which were not there", () => {
+test("a stop removes the lane's containers, a left-over new instance and the network, and says which were not there", () => {
   const r = run(STOP, { env: { FAKE_ABSENT: "langflow-instance-migration-s3", FAKE_NETWORK: "present" } });
   assert.equal(r.status, 0, r.out);
   const removed = r.calls.filter((c) => c.startsWith("rm ")).map((c) => c.split(/\s+/).pop());
-  assert.deepEqual(removed.sort(), ["langflow-instance-migration", "langflow-instance-migration-pg"]);
+  assert.deepEqual(removed.sort(), [
+    "langflow-instance-migration",
+    "langflow-instance-migration-pg",
+    "langflow-instance-migration-target",
+  ]);
   assert.match(r.out, /langflow-instance-migration-s3: no such container/);
   assert.ok(r.calls.includes("network rm langflow-instance-migration-net"));
   assert.ok(!r.calls.some((c) => c.includes("langflow-e2e-runner")));

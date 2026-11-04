@@ -19,7 +19,7 @@
 // not a transport error — an assertion failure above all.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { retryOnDroppedConnection } from "./retry-on-dropped-connection";
+import { createWithoutLeak, retryOnDroppedConnection } from "./retry-on-dropped-connection";
 
 /** A call that throws `messages[i]` on attempt i, then returns `value`. */
 function throwingTimes(messages: string[], value = "ok") {
@@ -96,4 +96,53 @@ test("a successful call is made exactly once", async () => {
     return "fine";
   });
   assert.equal(attempts, 1);
+});
+
+// createWithoutLeak (#2354): a creating request re-dialled once, asking first whether
+// the dropped attempt landed, so a retry never makes a second copy.
+
+test("createWithoutLeak answers what the dropped attempt created, and does not create again", async () => {
+  const { call, attempts } = throwingTimes(["apiRequestContext.post: socket hang up"], "second");
+  let looked = 0;
+  const result = await createWithoutLeak(call, async () => {
+    looked += 1;
+    return "landed";
+  });
+  assert.equal(result, "landed");
+  assert.equal(attempts(), 1, "it created again although the first attempt had landed");
+  assert.equal(looked, 1);
+});
+
+test("createWithoutLeak creates again when the dropped attempt left nothing usable", async () => {
+  const { call, attempts } = throwingTimes(["read ECONNRESET"], "second");
+  assert.equal(await createWithoutLeak(call, async () => undefined), "second");
+  assert.equal(attempts(), 2);
+});
+
+test("createWithoutLeak never retries or looks on an error that is not a drop", async () => {
+  const { call, attempts } = throwingTimes(["POST /api/v1/flows/ failed: 422"]);
+  let looked = 0;
+  await assert.rejects(
+    createWithoutLeak(call, async () => {
+      looked += 1;
+      return "x";
+    }),
+    /422/,
+  );
+  assert.equal(attempts(), 1);
+  assert.equal(looked, 0, "it looked for a resource after an error the server answered");
+});
+
+test("createWithoutLeak makes a successful request exactly once and never looks", async () => {
+  const { call, attempts } = throwingTimes([], "first");
+  let looked = 0;
+  assert.equal(
+    await createWithoutLeak(call, async () => {
+      looked += 1;
+      return "x";
+    }),
+    "first",
+  );
+  assert.equal(attempts(), 1);
+  assert.equal(looked, 0);
 });

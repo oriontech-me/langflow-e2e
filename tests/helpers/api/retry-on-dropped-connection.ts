@@ -36,11 +36,41 @@ export async function retryOnDroppedConnection<T>(call: () => Promise<T>): Promi
   try {
     return await call();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|socket disconnected/i.test(message)) {
-      throw error;
-    }
+    if (!isDroppedConnection(error)) throw error;
     await new Promise((resolve) => setTimeout(resolve, 500));
     return await call();
+  }
+}
+
+/** True when a request THREW at the transport layer — the family this file re-dials. */
+export function isDroppedConnection(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|socket disconnected/i.test(message);
+}
+
+/**
+ * A request that CREATES something, re-dialled once when the connection drops —
+ * without leaking a second copy (#2354).
+ *
+ * `retryOnDroppedConnection` must never wrap such a request: the drop can happen after
+ * the server took the request, and a blind retry then creates the resource twice. This
+ * asks first. `landed` looks for what the first attempt would have created and answers
+ * it when found, and then nothing is retried. When what landed cannot be used — an API
+ * key whose secret only the lost response carried — `landed` removes it and answers
+ * `undefined`, and the request is made again. Measured on the @instance-migration lane:
+ * a `POST /api/v1/flows/` threw `socket hang up` in 1 of 5 runs of the same setup.
+ */
+export async function createWithoutLeak<T>(
+  create: () => Promise<T>,
+  landed: () => Promise<T | undefined>,
+): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (!isDroppedConnection(error)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const found = await retryOnDroppedConnection(landed);
+    if (found !== undefined) return found;
+    return await create();
   }
 }

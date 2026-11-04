@@ -27,6 +27,9 @@ export const LANE_DEFAULTS = {
   IM_PORT: "7895",
   IM_PG_HOST_PORT: "55895",
   IM_S3_HOST_PORT: "58895",
+  IM_TARGET_CONTAINER: "langflow-instance-migration-target",
+  IM_TARGET_PORT: "7896",
+  IM_DERIVED_IMAGE: "langflow-instance-migration:local",
   IM_PG_IMAGE: "pgvector/pgvector:0.8.6-pg16",
   IM_S3_IMAGE: "chrislusf/seaweedfs:4.47",
   IM_PG_DATABASE: "langflow_target",
@@ -50,6 +53,21 @@ export interface InstanceMigrationLane {
   sourceUrl: string;
   /** Container names, for the rare spec that must look inside one. */
   containers: { source: string; database: string; bucket: string };
+  /**
+   * The new instance a spec starts on the copy (#2354): not started by the start script,
+   * but named here so the reset, start and stop scripts can remove one a test left behind.
+   */
+  newInstance: {
+    container: string;
+    /** As this host reaches it. */
+    url: string;
+    /** The port it listens on inside the container and is published on, on loopback. */
+    port: string;
+    /** The source's image: the nightly plus the pgvector package. */
+    image: string;
+    /** The network the source, the database and the bucket share. */
+    network: string;
+  };
   /**
    * The destinations as the SOURCE reaches them — what a spec types into the page.
    * Container names on the lane's network, never `localhost`: inside the source
@@ -102,6 +120,13 @@ export function instanceMigrationLane(env: NodeJS.ProcessEnv = process.env): Ins
   return {
     sourceUrl: `http://127.0.0.1:${v("IM_PORT")}`,
     containers: { source: v("IM_SOURCE_CONTAINER"), database: v("IM_PG_CONTAINER"), bucket: v("IM_S3_CONTAINER") },
+    newInstance: {
+      container: v("IM_TARGET_CONTAINER"),
+      url: `http://127.0.0.1:${v("IM_TARGET_PORT")}`,
+      port: v("IM_TARGET_PORT"),
+      image: v("IM_DERIVED_IMAGE"),
+      network: v("IM_NETWORK"),
+    },
     target: {
       databaseUrl: `postgresql://${user}:${password}@${v("IM_PG_CONTAINER")}:5432/${database}`,
       bucket: v("IM_S3_BUCKET"),

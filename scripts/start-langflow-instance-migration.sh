@@ -50,7 +50,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${HERE}/lib/instance-migration-lane.sh"
 
 BASE_IMAGE="${LANGFLOW_IMAGE:-langflowai/langflow-nightly:latest}"
-DERIVED_IMAGE="${IM_DERIVED_IMAGE:-langflow-instance-migration:local}"
+# The name lives in the lane file: the new instance a spec starts on the copy runs it too.
+DERIVED_IMAGE="${IM_DERIVED_IMAGE}"
 # The pgvector package the knowledge base copy needs. The docs install it as
 # `langflow[pgvector]` (pgvector>=0.4.2); pinned to the version measured here.
 PGVECTOR_PACKAGE="${IM_PGVECTOR_PACKAGE:-pgvector==0.5.1}"
@@ -107,14 +108,16 @@ printf 'ARG BASE\nFROM ${BASE}\nRUN python -m pip install --no-cache-dir "%s"\n'
   | docker build -q --build-arg "BASE=${BASE_IMAGE}" -t "${DERIVED_IMAGE}" - > /dev/null
 
 # ONLY this lane's containers. Never the shared `langflow-e2e-runner`, which
-# start-langflow-docker.sh removes by default whatever port it is given.
-for name in "${IM_SOURCE_CONTAINER}" "${IM_PG_CONTAINER}" "${IM_S3_CONTAINER}"; do
+# start-langflow-docker.sh removes by default whatever port it is given. The new instance
+# a test started on the copy goes too: it would sit on a database this start replaces.
+for name in "${IM_TARGET_CONTAINER}" "${IM_SOURCE_CONTAINER}" "${IM_PG_CONTAINER}" "${IM_S3_CONTAINER}"; do
   docker rm -f "${name}" > /dev/null 2>&1 || true
 done
 docker network inspect "${IM_NETWORK}" > /dev/null 2>&1 || docker network create "${IM_NETWORK}" > /dev/null
 
 SIBLINGS="$(docker ps --filter 'name=langflow-' --format '{{.Names}}' \
-  | grep -v -e "^${IM_SOURCE_CONTAINER}$" -e "^${IM_PG_CONTAINER}$" -e "^${IM_S3_CONTAINER}$" || true)"
+  | grep -v -e "^${IM_SOURCE_CONTAINER}$" -e "^${IM_PG_CONTAINER}$" -e "^${IM_S3_CONTAINER}$" \
+    -e "^${IM_TARGET_CONTAINER}$" || true)"
 if [ -n "${SIBLINGS}" ]; then
   echo "NOTE: other Langflow containers are already running:"
   echo "${SIBLINGS}" | sed 's/^/  /'

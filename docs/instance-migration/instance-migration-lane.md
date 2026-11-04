@@ -100,7 +100,7 @@ The issue offered two options. Both were measured on this machine:
 | a fresh source container per spec file | **44.9 s** to healthy, plus the re-seed | the seed, which dies with the container's SQLite database |
 | (for reference) `docker restart` of the source | 36.4 s | nothing, but it is still ~10× the reset |
 
-`./scripts/reset-langflow-instance-migration.sh` (called from specs as `resetInstanceMigration()`) does four things, then **verifies** each one and exits non-zero naming what did not reset:
+`./scripts/reset-langflow-instance-migration.sh` (called from specs as `resetInstanceMigration()`) does four things, then **verifies** each one and exits non-zero naming what did not reset. Since #2354 a step comes first: it removes the new instance a spec started on the copy (`langflow-instance-migration-target`), if one is left. That instance holds connections to the database the reset drops, and a test that died with it up would leave its name and port taken. Removing it took ~90 s on a loaded machine.
 
 1. it stops any run still going — the `python -m langflow <command>` children of the server, found through `/proc` because the image has no `ps`;
 2. it removes `LANGFLOW_CONFIG_DIR/migrations/`: the record, the runs and their locks. The pause is a field of that record, and a missing record reads as "not paused" *(code, and measured: writes answer `201` again)*;
@@ -131,10 +131,10 @@ Measured against a copy that was still running: the child was gone, the record w
 ## What this does not cover *(and why)*
 
 - **The specs.** #2349–#2353, and #2348 on the normal lane. The split has the same mechanical reason as #1582/#1583: `tests/fixtures/**` is suite-wide for `impacted-specs-by-import.mjs`, so this change resolves to every spec. Specs bundled into it would have their validation buried inside a full-suite run.
-- **The target instance.** Starting a second Langflow on the copied database is #2354's decision (a spec or a VM routine cell). This lane provides the database and the bucket that instance would start on.
+- **Starting the target instance.** #2354 decided on a spec (`docs/instance-migration/instance-migration-target-acceptance.md`): each test starts its own new instance from the printed settings and removes it. The lane only names that instance in `scripts/lib/instance-migration-lane.sh` (`IM_TARGET_CONTAINER`, `IM_TARGET_PORT` `7896`, and `IM_DERIVED_IMAGE`, the image both instances run). The reset, start and stop scripts remove one a test left behind.
 - **A PostgreSQL source.** That path skips the database copy and needs `PGVECTOR_CONNECTION_STRING` on the source *(code)*. It is a different container shape and nothing in the batch asks for it.
 - **OpenSearch as the vector destination.** The API accepts only `kind: "pgvector"` today *(code: `VectorsDestination`)*.
-- **The QA VMs.** They have no container runtime, and this lane is three containers. A native path is possible, but nothing schedules this lane yet, so it would have no caller.
+- **The QA VMs.** The first version of this line said they have no container runtime. That was wrong: the `e2e-routine-migration` routine runs Docker containers there (`ops/vm/run-migration.sh`, its `docker` cells), as #2354 found. What still keeps this lane off the VM is that nothing schedules it.
 - **A scheduled lane.** Like `@enterprise` and `@serving`, nothing runs `@instance-migration` on a cron, so its specs cannot be `@stable` (#1010).
 
 ---
