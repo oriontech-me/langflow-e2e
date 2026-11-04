@@ -1,6 +1,6 @@
 # Agent tool inspection — Playground names the tool used and captures its input/output
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev15`, #2367)
 
 ---
 
@@ -148,16 +148,23 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
 
 **`PRIVATE_FIXTURE_NOTE` appended to the instructions (#2367).** On an on-demand
 run of `@agents` on 2026-11-04 (`1.14.0.dev15`, `google` / `gemini-3.5-flash`,
-`--retries=0`), with the fix #2367 already applied to `agent-multi-tool-selection`
-and `agent-max-iterations`, this test failed with *"The tool named in the
-Playground step must be fetch_content"*: the agent called no URL tool. It had
-flaked the same way on the 2026-10-14 and 2026-10-21 dailies (*"Either the agent
-invoked no tool at all…"*), and the daily's retries absorbed it. The task is the
-same fetch of `${ECHO_BASE_URL}/json`, a private address on the VM lane, which
-`gemini-3.5-flash` declines as SSRF (measurements in
-`agent-multi-tool-selection.md` → Tags). The same note is appended here: it says
-the address is an authorized local test server and names no tool, so the
-assertion on which tool ran stays meaningful.
+`--retries=0`), with the fix for #2367 already in `agent-multi-tool-selection` and
+`agent-max-iterations`, this test failed at the second assertion: *"The tool named
+in the Playground step must be fetch_content"*. A tool step completed, but it was
+not the URL tool. The task is the same fetch of `${ECHO_BASE_URL}/json` as
+multi-tool Test 1, with the same instructions. On the VM lane that is a private
+address, which `gemini-3.5-flash` declines to fetch (measurements in
+`agent-multi-tool-selection.md` → Tags). So the same note is appended here. It says
+the address is an authorized local test server and names no tool, which keeps the
+assertions on which tool ran, and with what input and output, meaningful.
+
+With the note, the same `@agents` run at `--retries=0` on `1.14.0.dev15` passed this
+test on google (`gemini-3.5-flash`), openai (`gpt-4o-mini`) and anthropic
+(`claude-haiku-4-5`), one run each.
+
+The earlier flakes on the 2026-10-14 and 2026-10-21 dailies failed at the first
+assertion (*"Either the agent invoked no tool at all…"*). Their cause was not
+established, and they are not counted as this one.
 
 ---
 

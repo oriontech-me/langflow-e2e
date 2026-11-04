@@ -70,8 +70,8 @@ const URL_TOOL = "fetch_content";
 // spelling both satisfy this, and neither is hardcoded away from URL_TOOL.
 const TOOL_STEP_LABEL = new RegExp(URL_TOOL.replace(/_/g, "[\\s_]"), "i");
 const EXPECTED_TITLE = /Sample Slide Show/i;
-// gemini-3.5-flash (served as gemini-3.6-flash since 2026-10-28) declines to fetch a
-// private IP as SSRF, and the VM lane's ECHO_BASE_URL is one (#2367). Same note as
+// gemini-3.5-flash (now served as gemini-3.6-flash) declines to fetch a private IP
+// as SSRF, and the VM lane's ECHO_BASE_URL is one (#2367). Same note as
 // agent-multi-tool-selection and agent-max-iterations: it tells the model the
 // address is ours, without naming a tool.
 const PRIVATE_FIXTURE_NOTE =
