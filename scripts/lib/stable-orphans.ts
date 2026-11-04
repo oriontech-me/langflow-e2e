@@ -545,7 +545,7 @@ export function renderReport(v: Verdict, opts: RenderOptions): string {
   lines.push("");
   lines.push(
     `Scanned ${v.counts.declared} declared test(s): ${v.counts.stable} carry \`@stable\`, ` +
-      `${v.counts.laneGated} are lane-gated (\`@destructive\` / \`@enterprise\` / \`@serving\`, ` +
+      `${v.counts.laneGated} are lane-gated (\`@destructive\` / \`@enterprise\` / \`@serving\` / \`@instance-migration\`, ` +
       "never combined with `@stable` — #1010), " +
       `${v.counts.neverStable} never carried the tag in the walked history.`,
   );

@@ -690,6 +690,7 @@ jobs:
           DESTRUCTIVE_ONLY=false
           ENTERPRISE_SPECS=""
           SERVING_SPECS=""
+          INSTANCE_MIGRATION_SPECS=""
           if [ "$HAS_SPECS" = "true" ]; then
             VERDICT=$(node scripts/destructive-only-selection.mjs --specs "$SPECS" --format=json) \
               || { echo "::error::lane classification failed — a spec in the selection could not be read"; exit 1; }
@@ -697,6 +698,7 @@ jobs:
             DESTRUCTIVE_ONLY=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["destructiveOnly"]).lower())')
             ENTERPRISE_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enterprise"]))')
             SERVING_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["serving"]))')
+            INSTANCE_MIGRATION_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["instanceMigration"]))')
           fi
           if [ "$DESTRUCTIVE_ONLY" = "true" ]; then
             echo "::warning::Every impacted spec is @destructive, so the normal lane is skipped for this PR — the destructive lane below is what runs them (workers=1). Read its result, not the normal run's absence (#1010)."
@@ -728,6 +730,11 @@ jobs:
           # the serving-identity container variant, which this runner never starts.
           if [ -n "$SERVING_SPECS" ]; then
             echo "::warning::@serving specs in this PR are NOT executed by CI (no serving-identity container on the runner): $SERVING_SPECS — run them locally against ./scripts/start-langflow-serving-identity.sh with PW_SERVING_IDENTITY=1, and record the result in the PR."
+          fi
+          # `@instance-migration` (#2347): the same case again — those specs need a
+          # source with the feature on plus a PostgreSQL and a bucket to copy into.
+          if [ -n "$INSTANCE_MIGRATION_SPECS" ]; then
+            echo "::warning::@instance-migration specs in this PR are NOT executed by CI (no instance-migration lane on the runner): $INSTANCE_MIGRATION_SPECS — run them locally against ./scripts/start-langflow-instance-migration.sh with PW_INSTANCE_MIGRATION=1, and record the result in the PR."
           fi
 
           {
@@ -894,7 +901,7 @@ jobs:
           # — so ECHO_BASE_URL is a raw container IP and the RFC-1918 ranges are
           # authorized by CIDR rather than by a fixed address the Docker network
           # assigns per run. Same set as daily-stable.yml (#462).
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s

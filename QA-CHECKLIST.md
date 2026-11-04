@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-29
+> **Last updated:** 2026-11-04
 
 ---
 
@@ -207,7 +207,7 @@
 
 > Fifth family of the API coverage gauge (#1709, after `files` § 1.10, `flows` § 1.11, `monitor` § 1.12 and `projects` § 1.13): `/api/v1/models` (**11 operations**) plus `/api/v1/model_options` (**2**), **all 13 hidden from `/openapi.json`** — the surface this suite's own infrastructure reads (`scripts/collect-models.*`, every provider resolver) and which nothing asserted. Three findings drive the design: the three provider lists are a **strict hierarchy** (`/models` ⊂ `/providers` ⊂ `/provider-descriptors`, measured 9 ⊂ 11 ⊂ 14 — asserted as subset relations, never as counts, #1040); the state these endpoints write is **per user**, not instance-global, so the write spec acts as a **throwaway user** it creates and deletes rather than being `@destructive`; and `POST /models/validate-provider` answers **`200` with the verdict in the body**, so a status-only assertion would certify a dead credential. Spec docs under `docs/api/models/`; `npm run api:coverage` reads `/api/v1/models 11/11` and `/api/v1/model_options 2/2`.
 
-- [x] The three provider lists are a strict hierarchy and each has its own shape: `/models` rows carry the twelve fields the resolvers read (a **required superset** — `ibm-watsonx` adds `aliases`, `openrouter` a `base_url`), `/providers` is display-name strings, `/provider-descriptors` is exactly `{provider_id, display_name, provider}`; `openai` is in all three and its `num_models` equals its `models` length → `api/models/api-models-catalog.spec.ts`
+- [x] The three provider lists are a strict hierarchy and each has its own shape: `/models` rows carry the eleven universal fields the resolvers read (a **required superset** — `ibm-watsonx` adds `aliases`, `openrouter` a `base_url`) under a two-sided row contract — a row naming a chat `model_class` must carry `max_tokens_field_name`, and a row without one is accepted only as a decision-only provider (`perplexity`, `typesafe` since 1.14.0.dev8, #2366) — with every violating row named in one failure, `/providers` is display-name strings, `/provider-descriptors` is exactly `{provider_id, display_name, provider}`; `openai` is in all three and its `num_models` equals its `models` length → `api/models/api-models-catalog.spec.ts`
 - [x] `provider-variable-mapping` is keyed by **display name** and names the variable each provider's key is stored under (`OpenAI` → `OPENAI_API_KEY`, `required`, `is_secret`) → `api/models/api-models-catalog.spec.ts`
 - [x] `enabled_providers.provider_status` is keyed by the same names `/providers` returns (set equality, not a count) and every value is a boolean; `enabled_models` is `{provider: {model_id: boolean}}`; `default_model` answers one envelope per `model_type` (`null`, or a `{model_name, provider, model_type}` triple); `model_options/{language,embedding}` answer a list of option rows — **empty only when nothing is configured**, so the shape is asserted and the emptiness is not (asserting `[]` reddened the PR lane, which configures providers) → `api/models/api-models-catalog.spec.ts`
 - [x] `POST /models/validate-provider` with a wrong key is **`200 {"valid": false, "error": …}`** — the verdict in the body; an unknown provider is `404 "Model provider not found"`; `provider: ""` and a missing `variables` are `422` on their own field → `api/models/api-models-selection.spec.ts`
@@ -886,6 +886,9 @@
 - [-] A second save by the other session while the dialog is open refuses *Update* with `409` and *"Someone saved again while you were choosing…"*, refreshes the dialog with the newer change, and keeps that save on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [-] *Cancel* closes the dialog, keeps the banner and changes nothing on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [-] When the archive `POST /versions/` fails, *Load Latest* discards nothing: *"Your changes could not be saved to version history, so nothing was discarded."*, the dialog and banner stay, the server is unchanged and the history is empty → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
+- [-] A component changed on both sides is a conflict: its row asks for a version (*"Action required"*), *Update Current Flow* stays disabled with *"Resolve 1 conflict before updating this flow."*, and *Keep my version* resolves it so the server and canvas hold the viewer's value → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
+- [-] *Keep <name>'s version* saves the other side's value whole, even when the dialog shows it in part (*"Shown in part. Open the component to see the whole value."*) → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
+- [-] Two conflicts resolved opposite ways plus a checked uncontested change save exactly the chosen values; the hint counts down from *"Resolve 2 conflicts…"* → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
 
 ---
 
@@ -1593,7 +1596,7 @@
 - [x] The `Mine` / `Instance` / `Other users` tabs each hold only their own ownership kind — a `user`-owned connection, an `instance`-owned one, and another user's private one, which must stay out of a superuser's `Mine` (the defect langflow#15182 fixed) and whose Owner reads *Other user* (*Shared* until langflow#15263) → core-functionality/integrations/connections-page.spec.ts
 - [x] Search keeps the row its name, handle or account matches and drops a second seeded one, asserted as *"the other row is gone"* rather than as a total → core-functionality/integrations/connections-page.spec.ts
 - [x] The status badge per state reachable from outside — `Ready`, `Pending` with *Authorize*, `Expired` and `Revoked` with *Reconnect*; `Error` is reached only through a failed OAuth callback, which the wizard spec covers (bullet below) → core-functionality/integrations/connections-page.spec.ts
-- [x] The Add / Reconnect wizard, walked up to consent with the test playing the provider (a context route redirects the popup to the real callback): every scope a Google action needs is listed with that action's risk, Slack offers *Sign in with Slack* / *Paste a token*, the registration picked (from two) is the one `oauth/start` names, and the dialog reports a denial, an expired sign-in link and a closed sign-in window in their exact copy while the row records `oauth-denied` / `oauth-expired`; a lost sign-in window still learns the provider's later denial (langflow#15816); *Cancel* deletes an unfinished Add, and an abandoned *Reconnect* writes nothing and leaves a `ready` row as it was, while a Microsoft *Reconnect* asks for `offline_access` without marking it *Granted* (langflow#15780). *Handle* and *Display name* explain themselves, each OAuth provider links its own *Setup guide* (langflow#15796), and a Microsoft scope that only some inputs need is marked *For some inputs* (langflow#15810). With no registration (mocked list) the setup help names `LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS` and copies `<origin>/api/v1/connections/oauth/<provider>/callback` → core-functionality/integrations/connection-oauth-wizard.spec.ts
+- [x] The Add / Reconnect wizard, walked up to consent with the test playing the provider (a context route redirects the popup to the real callback): every scope a Google action needs is listed with that action's risk, Slack offers *Sign in with Slack* / *Paste a token*, the registration picked (from two) is the one `oauth/start` names, and the dialog reports a denial, an expired sign-in link and a closed sign-in window in their exact copy while the row records `oauth-denied` / `oauth-expired`; a lost sign-in window still learns the provider's later denial (langflow#15816); an unfinished Add leaves nothing behind (*Cancel* deletes it; from `1.14.0.dev10` a failed one is deleted at once and *Try again* creates it anew, langflow#15952, asserted by served version), and an abandoned *Reconnect* writes nothing and leaves a `ready` row as it was, while a Microsoft *Reconnect* asks for `offline_access` without marking it *Granted* (langflow#15780). *Handle* and *Display name* explain themselves, each OAuth provider links its own *Setup guide* (langflow#15796), and a Microsoft scope that only some inputs need is marked *For some inputs* (langflow#15810). With no registration (mocked list) the setup help names `LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS` and copies `<origin>/api/v1/connections/oauth/<provider>/callback` → core-functionality/integrations/connection-oauth-wizard.spec.ts
 - [x] The `Error` badge: a `pending` row authorized from the page (`authorize-<name>`) and denied by the provider shows `Error` with *"The provider denied authorization."* under it, and a Reconnect's *Cancel* keeps the row → core-functionality/integrations/connection-oauth-wizard.spec.ts
 
 #### 24.5 Row actions and the non-interactive opt-in (#1970)
@@ -1609,8 +1612,8 @@
 
 #### 24.6 Saved-flow contract and node surfaces
 
-- [x] The manifest names exactly the providers the served version ships — Google, Microsoft 365 and Slack, plus GitHub from `1.14.0.dev7` (upstream #15957, #2360) — so a new provider fails by name. Every action the manifest names is in its own provider's group under **Bundles** (`disclosure-bundles-google` / `…-microsoft 365` / `…-slack` / `…-github`). Triggers, split by the catalog's `metadata.trigger_kind`: from `1.14.0.dev4`, where `ENABLE_TRIGGERS` is on, each one is in its own provider's group; before, while the palette filters on that marker, none is in any group. The served version decides which is asserted (#2336). A group is asserted to *contain* its actions, never to equal them (Google also lists four components the manifest does not own). Every Slack action's name ends in *"(as user)"* or *"(as app)"* matching its capability's identity — the "runs as" label that tells `slack.user.send` from `slack.bot.post` (A4) → core-functionality/integrations/connector-node-picker.spec.ts
-- [x] Every manifest action, read at run time (5 Google, 8 Microsoft 365, 7 Slack on `1.13.0.dev47`; plus 8 GitHub from `1.14.0.dev7`, skipped before it), lands on the canvas from the sidebar search with its connection field unbound, reading *"Select a <provider> connection"* → core-functionality/integrations/connector-node-picker.spec.ts
+- [x] The manifest names exactly the providers the served version ships — Google, Microsoft 365 and Slack, plus GitHub from `1.14.0.dev7` (upstream #15957, #2360) and Jira from `1.14.0.dev10` (upstream #15952, #2377) — so a new provider fails by name. Every action the manifest names is in its own provider's group under **Bundles** (`disclosure-bundles-google` / `…-microsoft 365` / `…-slack` / `…-github` / `…-jira`). Triggers, split by the catalog's `metadata.trigger_kind`: from `1.14.0.dev4`, where `ENABLE_TRIGGERS` is on, each one is in its own provider's group; before, while the palette filters on that marker, none is in any group. The served version decides which is asserted (#2336). A group is asserted to *contain* its actions, never to equal them (Google also lists four components the manifest does not own). Every Slack action's name ends in *"(as user)"* or *"(as app)"* matching its capability's identity — the "runs as" label that tells `slack.user.send` from `slack.bot.post` (A4) → core-functionality/integrations/connector-node-picker.spec.ts
+- [x] Every manifest action, read at run time (5 Google, 8 Microsoft 365, 7 Slack on `1.13.0.dev47`; plus 8 GitHub from `1.14.0.dev7` and 5 Jira from `1.14.0.dev10`, each skipped before it), lands on the canvas from the sidebar search with its connection field unbound, reading *"Select a <provider> connection"* → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] The node-level picker (B5) requests its field's provider (`?provider=`) and lists every connection of it: a usable row with no badge, the unusable ones with their reason — *"Missing gmail.send"*, *"Runs as the instance, not a user"*, *"Pending"*, *"Revoked"*, and on a trigger *"Not owned by the flow owner"* for an instance row and another user's while the flow owner's own row is usable — and no other provider's handle. `instanceRequired` and `instanceOwnedRequired` are not black-box reachable; the spec doc records why → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] The requirement line follows the node's inputs (the client half of langflow#15810): *SharePoint/OneDrive: List Items* reads `Files.Read`, adds `Sites.Read.All` with a site and `Files.Read.All` with a drive, and drops `Sites.Read.All` when the site is cleared; a field with no required scope reads *"No scope required"* → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] An empty list says how to get a connection, the list stays cached until **Refresh**, and a failed list says *"Could not load connections."* once react-query's retries run out (~31 s). Both lists are mocked: the superuser lists every user's rows, so neither state is reachable on a shared instance → core-functionality/integrations/connector-node-picker.spec.ts
@@ -1658,6 +1661,31 @@
 
 ---
 
+## instance-migration/ — Instance Migration (1.13)
+
+> **New area (2026-11-03).** *Settings > Migration* moves a whole instance — users,
+> flows, files, knowledge bases — to a new one, SQLite → PostgreSQL + pgvector + S3
+> (`langflow-ai/langflow` #15327–#15815). It is **not** the schema/upgrade migration
+> the `e2e-routine-migration` VM routine covers (#2193). It is behind
+> `LANGFLOW_FEATURE_INSTANCE_MIGRATION=true`, its pause refuses every write on the
+> instance, and it needs empty destinations, so it runs only on the
+> `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
+> #2347). Tracker: #2357.
+
+> **None of these can be `@stable`** — nothing runs `@instance-migration` on a cron
+> (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`.
+
+#### 25.1 Backup, copies, *Check the copy*, start and record (#2353)
+
+- [-] *Download the database* hands out a SQLite copy of this instance; *I've backed up everything* is refused (`409 database_not_downloaded`) before it and without a location (`422`), and the confirmation records location, user and time → `instance-migration/instance-migration-copy.spec.ts`
+- [-] A database copy stopped mid-way leaves no rows and runs again into the same database with no reset; repeated within one pause it duplicates nothing (target `flow` count = source) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] After changes are turned back on and a source row is deleted, the out-of-date copy step says it needs a new, empty database before anything runs, and *Copy again* into the old one fails `count_mismatch` leaving the target unchanged (langflow#15814) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] Knowledge base and file test runs write nothing (no pgvector table, no bucket key); the copies land the seed's 3 vectors and both the uploaded file and the chat attachment at their sizes; an unreadable knowledge base is reported, blocks the step until *Leave it behind*, and the decision is recorded (langflow#15777) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] *Check the copy* matches a clean copy and names `credentials` once a credential row is deleted from the copy; the start settings show placeholders and no planted secret; *The new instance is running* closes the move (`409 new_instance_started` on every further run); the downloaded `langflow-migration-YYYYMMDD.json` holds the steps and decisions and no planted secret → `instance-migration/instance-migration-copy.spec.ts`
+- [ ] A `flow` row deleted from the PostgreSQL copy is **not** caught by *Check the copy* (measured on 1.14.0.dev14: *"Everything matches."*, start unlocked) — candidate finding, recorded in `docs/instance-migration/instance-migration-copy.md`, not asserted
+
+---
+
 
 ---
 
@@ -1682,7 +1710,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
-| `flow-functionality/` | 47 | 34 | 10 | 2 | 1 |
+| `flow-functionality/` | 50 | 34 | 13 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1694,7 +1722,8 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **802** | **699 (87%)** | **51 (6%)** | **14 (2%)** | **38 (5%)** |
+| `instance-migration/` — Instance Migration | 6 | 0 | 5 | 0 | 1 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **811** | **699 (86%)** | **59 (7%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1710,7 +1739,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 797 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 798 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1766,6 +1795,7 @@
 - [x] the provider filter lists that provider's rows and no other → `api-connections-surface-details.spec.ts`
 - [x] revoke reports what happened at the provider: nothing to revoke, or a revocation that failed → `api-connections-surface-details.spec.ts`
 - [x] the page says the provider revocation failed when Slack refuses the token → `api-connections-surface-details.spec.ts`
+- [x] the deployment snapshot names each connection the project's flows need, with the union of their scopes → `api-connections-surface-details.spec.ts`
 - [x] the KB connector catalog names a provider and its scopes for every connector that needs a credential → `api-connections-surface-details.spec.ts`
 - [x] creating, revoking and deleting a connection writes no global variable → `api-connections-surface-details.spec.ts`
 - [x] on this lane's deployment context no capability is filtered, and none could be → `api-connections-surface-details.spec.ts`
@@ -1880,6 +1910,7 @@
 - [x] schema-derived ctx survives while the value does not → `api-validation-redaction.spec.ts`
 
 #### api/models/
+- [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
 - [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
 - [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
 - [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
@@ -2160,7 +2191,6 @@
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
-- [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
 - [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
@@ -2596,7 +2626,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 10 | 1 |
+| `flow-functionality/` | 13 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 9 |
 | `ui-ux/` — Settings | 0 | 0 |

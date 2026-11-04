@@ -2369,6 +2369,36 @@
 
 ---
 
+### 24.12 Multi-edit — a component changed on both sides blocks the update until resolved `[-]`
+
+**File:** `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts` (spec doc: `docs/flow-functionality/multi-edit/multi-edit-field-conflict.md`, issue #2344)
+
+**Objective:** Verify that a component both people changed cannot be saved until a version is chosen for it, and that the saved flow holds exactly the versions chosen.
+
+**Preconditions:**
+- A flow built over the API with three *Chat Input* nodes (*First Input*, *Second Input*, *Third Input*) and a *Chat Output*.
+- Open the flow. The other session (an API `PATCH`) changes the inputs' text. Type into the same inputs; the autosave answers `409`. Click *Review changes*.
+
+**Step by step:**
+1. **Keep my version.** Both sides changed *First Input*.
+   - Verify that its row (`conflict-resolve-node:<id>`) shows *"— Changes made by multiple people."*, *"Select which version to keep."* and *"Action required"*.
+   - Verify that *Update Current Flow* is disabled and `conflict-blocked-hint` reads *"Resolve 1 conflict before updating this flow."*
+   - Open the row (`conflict-toggle-node:<id>`) and choose *Keep my version*. Verify *"Keeping my version"*, the checked *"First Input is resolved and included"*, no hint, and *Update* enabled.
+   - Click *Update*. Verify `POST /overwrite` → `200`, and that the server and the canvas hold the viewer's text.
+2. **Keep the other person's version, long value.** The other session saved more than 800 characters into *Second Input*.
+   - Verify that both options read *"Input Text updated."*, and that *Show changes* shows *"Shown in part. Open the component to see the whole value."*
+   - Choose *Keep langflow's version* and update. Verify that the server holds the whole value.
+3. **Mixed.** Both sides changed *First Input* and *Second Input*; only the other session changed *Third Input*.
+   - Verify the hint *"Resolve 2 conflicts before updating this flow."*, then *"Resolve 1 conflict…"* after keeping mine on *First Input*.
+   - Keep theirs on *Second Input*. Check *Third Input* under *Available changes*; it starts unchecked.
+   - Update. Verify that the server and the canvas hold exactly `my one`, `their two` and `their three`, on the same four nodes.
+
+**Validation:** No conflicted component is saved without a choice, and every choice lands on the server exactly as made.
+
+**Note:** the unresolved row's badge reads *"Action required"*; the locale's *"Conflict"* badge is not rendered on it.
+
+---
+
 ## 25. MCP — Client and Server
 
 ---

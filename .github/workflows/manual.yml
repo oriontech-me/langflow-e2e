@@ -206,7 +206,7 @@ jobs:
           # (private address) — see ollama-provider.spec.ts / its spec doc.
           # The CIDRs cover the go-httpbin service below, reached by raw container
           # IP because validators.url() rejects a single-label host (#462/#1128).
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s

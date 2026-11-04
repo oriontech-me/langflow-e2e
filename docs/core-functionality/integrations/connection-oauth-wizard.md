@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connection-oauth-wizard.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev7`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev14`; the pre-`1.14.0.dev10` side on `1.14.0.dev9`)
 
 Owning issue: #2307 (Dedicated Integrations, batch 2; upstream surfaces A10, B2 and B3). It depends on #2301's fake
 OAuth registrations (`docs/api/connections/oauth-fake-registrations.md`). The callback's controls are asserted
@@ -20,6 +20,10 @@ Where each one is covered:
 | langflow#15822 | Reconnect preserves the saved credential | test 5 (the reachable half; see *Recorded, not asserted*) |
 | langflow#15780 | Microsoft reconnect requests offline access | test 5 |
 | langflow#15825 | The page's third-party account description | `connections-page.spec.ts` (the page subtitle; this dialog shows no such copy) |
+
+#2376 later followed langflow#15952 (*"feat(jira): add Cloud issue actions and polling triggers"*, first in
+`1.14.0.dev10`), which changed what a failed *Add* leaves behind for every provider, not only Jira. Tests 3 and 4
+assert each side by served version (see *A failed Add, before and after `1.14.0.dev10`*).
 
 ---
 
@@ -50,13 +54,45 @@ Measured on `1.14.0.dev2`, and again on `1.14.0.dev7`:
 | Picks Microsoft 365 | The scope a component needs only for some inputs marks each such action *"For some inputs"* after its risk: `Files.Read.All` and `Sites.Read.All`, which the SharePoint/OneDrive actions and trigger need only when given a drive or a site (the manifest's `conditional_scopes`). The same actions list `Files.Read` without the mark, because they always need it. `offline_access` names no action. | — |
 | Picks *Paste a token* | A *Token* field (`connection-token`) in place of the scope list, and the *Setup guide* points to the Slack bundle's page | — |
 | Continue | *"Waiting for consent in the provider's window…"* and a popup on the provider's authorization URL | `pending` (`oauth/start` does not touch the row) |
-| The provider denies | `role=alert` *"The provider denied authorization."*, *Try again*, *Cancel* | `error` / `oauth-denied` |
-| *Try again*, and the provider returns neither `code` nor `error` | *"The sign-in link expired. Start again to get a new one."* | `error` / `oauth-expired` |
+| The provider denies | `role=alert` *"The provider denied authorization."*, *Try again*, *Cancel* | `error` / `oauth-denied`. From `1.14.0.dev10` the dialog then **deletes** the row it created (see below) |
+| *Try again*, and the provider returns neither `code` nor `error` | *"The sign-in link expired. Start again to get a new one."* | `error` / `oauth-expired`. From `1.14.0.dev10` *Try again* first **creates a new row** with the same handle, and the dialog deletes that one too |
 | Closes the popup unanswered | `role=status` *"Langflow can no longer track the sign-in window. If the provider shows an error, ask your administrator to check the OAuth registration before trying again."*, the provider's *Setup guide*, and *Try again* | unchanged |
-| …and the provider's answer reaches the callback anyway | the dialog **still** learns it (langflow#15816: losing the window is not a cancellation, so polling goes on): the denial alert replaces the untracked status and the setup help. Measured 0.8 s after the callback. | `error` / `oauth-denied` |
-| *Cancel* on an Add | the dialog closes | **deleted** (`DELETE` → `204`): an unfinished Add leaves nothing behind |
+| …and the provider's answer reaches the callback anyway | the dialog **still** learns it (langflow#15816: losing the window is not a cancellation, so polling goes on): the denial alert replaces the untracked status and the setup help. Measured 0.8 s after the callback. | `error` / `oauth-denied`, then deleted from `1.14.0.dev10` |
+| *Cancel* on an Add | the dialog closes | **deleted** (`DELETE` → `204`): an unfinished Add leaves nothing behind. From `1.14.0.dev10`, after a failure there is nothing left to delete, and *Cancel* sends no write |
 | *Reconnect* on a `ready` row, *Authorize*, then *Cancel* | dialog titled *"Reconnect <display name>"*, the held scopes checked and marked *Granted*, every other scope unchecked. On **Microsoft**, `offline_access` is checked too but **not** marked *Granted* (langflow#15780: Entra leaves it out of the reported grants, and without it a reconnect would lose the refresh token), and it is requested: in `oauth/start` and in the authorization URL's `scope` | **unchanged**: no write is sent, `ready`, credential kept, badge `Ready` |
 | *Authorize* on a `pending` row (`authorize-<name>`), denied, *Cancel* | On Google, *Authorize* stays disabled until a scope is checked (a pending row holds none, and nothing is added to it), and the start asks for exactly the scopes checked | `error` / `oauth-denied`, and the page shows the badge `Error` with *"The provider denied authorization."* under it |
+
+### A failed Add, before and after `1.14.0.dev10`
+
+langflow#15952 added `discardFailedNewConnection` to the dialog. When a connection the dialog **created** fails
+(any `oauth-*` reason, any other failed outcome, or a refused `oauth/start`), the dialog deletes it at once, rather
+than when the user presses *Cancel*. *Try again* then has no row to retry with, so it creates a new one with the same
+handle and starts consent again. A *Reconnect* never discards (its row existed before the dialog), which is why test 6
+is the same on both sides. The upstream unit tests pin the new behaviour (*"deletes the new row, and recreates it on
+retry"*), so this is an intended contract change, not a regression. Neither `release-1.13.0` nor `release-1.13.1`
+carries it.
+
+Measured on `1.14.0.dev14`, test 4's path, in the order the browser sent it:
+
+| Request | Answer | What the list read next |
+|---|---|---|
+| `POST /api/v1/connections` | `201` | the row `pending` |
+| `POST …/{id}/oauth/start`, the provider denies | `200` | `error` / `oauth-denied` |
+| `DELETE …/{id}`, sent by the dialog on that read | `204` | no row |
+| *Try again*: `POST /api/v1/connections`, same handle | `201`, a **new** id | `pending` |
+| `POST …/{new id}/oauth/start`, neither `code` nor `error` | `200` | `error` / `oauth-expired` |
+| `DELETE …/{new id}` | `204` | no row |
+| *Cancel* | no request | no row |
+
+So on `1.14.0.dev10` and later, the row is gone before the test can read it, and reading the list after the alert
+finds nothing (#2376: both tests failed there, `received: undefined`). What the server recorded is still observable:
+it is the **list read the dialog itself polled**, the one that taught it the outcome. The tests capture that response
+and assert the row in it (`error`, the reason, `has_credentials: false`), then assert the `DELETE` of that row's id
+answered `204` and that the list no longer carries the handle. Before `1.14.0.dev10` the same captured read is
+asserted, the row is still there when the test reads it, and *Cancel* deletes it.
+
+Which side applies comes from the version the instance declares (`servedVersionAtLeast`, the rule #2336 set), never
+from whether a row happens to survive: asking the behaviour would pass a build that lost the delete by accident.
 
 Two states need the registration list mocked, because the lanes serve one registration per provider and profile:
 
@@ -85,6 +121,13 @@ Two states need the registration list mocked, because the lanes serve one regist
   `1.14.0.dev2` by delaying the list, and seen once in this PR's CI, where it was the first attempt of test 4. A user
   rarely beats the request, so the spec waits for the list before it touches the dialog, and the race is recorded here
   instead of asserted.
+  **The race reopens on every provider pick, not only on the first open**, because the list is fetched per provider
+  (`?provider=<id>`): the list the dialog loads first is the preselected provider's, GitHub since `1.14.0.dev7`, and
+  Google's is fetched only after the test picks Google. Waiting for the first list therefore no longer covered the
+  pick, and test 4 lost the race: measured on `1.14.0.dev14`, `oauth/start` answered `400` with *"OAuth registration
+  ID is not configured."*, the popup never reached the provider, and the test timed out waiting for the callback
+  (`browserContext.waitForEvent`), the signature of test 4's one-off failure on `1.14.0.dev9` (#2376). The spec now
+  waits for the list of the provider it picks.
 - **The 10-minute client timeout**, which also shows the *expired* copy, is not waited out. The server-side
   `oauth-expired` reaches the same copy. langflow#15816 made it hold while the window is untracked too; that is
   the same timer, and it is not asserted either.
@@ -96,12 +139,15 @@ Two states need the registration list mocked, because the lanes serve one regist
 - **GitHub** (langflow#15957, new in `1.14.0.dev7`) is offered first, and its dialog is token-only: *Token*, *Token
   expiration*, *Allow background runs*, no scopes, and a *Setup guide* pointing to the bundle's README on GitHub.
   It is a new provider rather than a wizard fix, so it is not covered here.
+- **The required-scope checks langflow#15952 added** (a registration's `required_scopes`, forced into the request
+  and marked in the list, and *"The provider did not return a refresh token…"* for `oauth-refresh-token-missing`)
+  are not asserted: the fake registrations declare no required scope, and the reason needs a real token exchange.
 
 ### Budgets, and why the helpers wait
 
 Two limits bind this file, and both are shared with something else.
 - **`oauth/start`**: 5/minute **per user**. This file runs as the superuser, because a UI under auto-login cannot
-  switch users. It spends exactly 5 starts per run, which is why #15780 is asserted on test 5's one start instead
+  switch users. It spends exactly 5 starts per run (on both sides of `1.14.0.dev10`: *Try again* recreates a row, not a start), which is why #15780 is asserted on test 5's one start instead
   of a test of its own.
 - **The callback**: 5/minute **per client IP**, so shared with the API spec, which also exhausts it on purpose. This
   file spends 4.
@@ -110,7 +156,16 @@ A refused start or callback consumes nothing, so the helpers wait out the window
 and log that they did:
 - a start the browser sends goes through a page route that resends it after a `429`;
 - a popup whose callback answered `429` is reloaded once the window resets;
-- the callback test 3 delivers after its popup is gone is resent once the window resets.
+- the callback test 3 delivers after its popup is gone is resent once the window resets;
+- a connection list or registration list read, by the page or by the test, is resent once the window resets (see
+  below, the third limit).
+
+Every wait the tests arm on something those helpers may hold (the start's answer, the next callback, a list read)
+therefore allows the helpers' cap rather than the default 20–30 s, and so does every assertion on what the page shows
+only after a fresh list read: the dialog's outcome alert, and test 6's row turning `Error` (a held read kept that row
+on `Pending` for 23 s, measured on `1.14.0.dev14`). Measured on `1.14.0.dev14`: a second run started
+within a minute of the first had its first start refused, and the test, waiting 20 s for the start's answer, went red
+while the helper was still waiting the window out.
 
 So a validation burst or a CI retry costs time, not a red test. Measured: a popup reloaded after the reset delivered
 the callback, and the dialog showed the denial.
@@ -121,7 +176,8 @@ the new window on purpose, so the callback was still refused after 80 s. A wait 
 into a red test.
 
 A third limit follows from that wait. A waiting dialog reads the connection list every 2 s, and list reads are
-limited to 60/minute per user. Measured at `--workers=2`: two tests waiting out the callback window side by side
+limited to 60/minute per user. **The registration list counts against the same bucket**: both routes check the
+`connections-read` scope (`api/v1/connections.py`), so every *Add* and every provider pick spends it too. Measured at `--workers=2`: two tests waiting out the callback window side by side
 read the superuser's list into `429` four times. The tests stayed green, but each `429` is a `🚨 Backend Error` line
 in the log. So the file runs its tests **in order, in one worker** (`describe.configure({ mode: "default" })`, which
 does not skip the rest after a failure), and one waiting dialog stays at about half the read bucket.
@@ -142,6 +198,18 @@ before the helper returns, so the read that teaches the dialog the outcome is a 
 callback and every popup callback that `nextCallback` waits out (tests 4 and 6). This is the only other place the
 file stands in for Langflow, after the two mocked registration lists.
 
+From `1.14.0.dev10` the hold is not enough. Every row the dialog creates or discards (langflow#15952) refetches both
+lists, and test 4 now creates and discards two. Measured on `1.14.0.dev14`, counting every read of the bucket: the
+file sent **63 reads in its first 37 s** (test 3: 15, test 4: 23), so the 61st, test 7's registration list, was
+refused, and the dialog could not offer consent. The same arithmetic explains the `429` on test 4's first attempt on
+the QA VM (#2376): its reads came right after three attempts of test 3. Reordering cannot help, since every read lands
+in the same window. So a refused read is resent once the window resets, like a refused start: `absorbReadRateLimit`
+for the page (a context route, so the hold, added later, still wins while it holds; test 3's mocked registration list
+fetches through `fetchAbsorbingReadLimit` itself), and the test's own list reads through the same wait. A run that
+reaches the limit pays about half a minute, logged as `[oauth] GET … was rate-limited; answered after Ns of
+waiting`, and stays green. The refused reads are no longer `🚨 Backend Error` lines, which is the point: they are this
+file's own budget, not the product's.
+
 ---
 
 ## Tags *(required)*
@@ -159,8 +227,9 @@ The page is `/settings/connections`, opened directly. Rows are found by their un
 `connection-menu-<name>`, `authorize-<name>`). Each test records the handles it creates, and `afterEach` deletes
 whatever is left through the API. The fake provider is a context route on `https://accounts.google.com/**` (and,
 for test 5, `https://login.microsoftonline.com/**`), with the outcome set per step. *Add connection* is opened only
-once its registration list has arrived, and then the provider the test needs is picked: the first provider listed
-is preselected, and on `1.14.0.dev7` that is GitHub. The tests run in order in one worker (see *Budgets* above).
+once its registration list has arrived, and then the provider the test needs is picked, waiting again for **that**
+provider's list: the list is fetched per provider, the first provider listed is preselected, and on `1.14.0.dev7` that
+is GitHub (see *Recorded, not asserted* for the race this avoids). The tests run in order in one worker (see *Budgets* above).
 
 **Test 1 — the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a
 token instead of a sign-in.**
@@ -197,16 +266,25 @@ provider's answer, and Cancel discards the half-made connection.**
    authorization URL the popup opened, to the instance's real callback, through the browser context's own request
    client. That client carries the binding cookie `oauth/start` set, as the popup would have; it is path-scoped to
    the OAuth routes, so `context.cookies(<origin>)` does not list it. The callback answers `400` (the fixed failure
-   page). The dialog shows the denial alert, and the untracked status and the setup help are gone. The row reads
+   page). The dialog shows the denial alert, and the untracked status and the setup help are gone. The list read the
+   dialog polled carries the row as `error` / `oauth-denied` with no credential. From `1.14.0.dev10`, the dialog's
+   `DELETE` of that row answers `204` and the list no longer carries it; before, the row still reads
    `error` / `oauth-denied`.
-5. *Cancel*: a `DELETE` of the new row answers `204`, and the list no longer carries it.
+5. *Cancel*: the dialog closes. From `1.14.0.dev10` it sends no write; before, its `DELETE` of the row answers
+   `204`. Either way the list no longer carries the handle.
 
 **Test 4 — a denied consent, then an expired sign-in link, each say so, and the row records why.**
-1. The provider will deny. Open *Add connection*, pick Google, fill the form and press *Continue*. The dialog shows *"The provider denied
-   authorization."* as an alert. The API row reads `status: error`, `status_reason: oauth-denied`.
+1. The provider will deny. Open *Add connection*, pick Google, fill the form and press *Continue*. The dialog shows
+   *"The provider denied authorization."* as an alert. The list read the dialog polled carries the row as
+   `status: error`, `status_reason: oauth-denied`, with no credential. From `1.14.0.dev10` the dialog's `DELETE` of
+   that row answers `204` and the list no longer carries it; before, the API row still reads `error` / `oauth-denied`.
 2. The provider will return neither `code` nor `error`. *Try again*: the same popup receives the new attempt, and
-   the dialog shows *"The sign-in link expired. Start again to get a new one."*. The row reads `oauth-expired`.
-3. *Cancel*: the row is deleted.
+   the dialog shows *"The sign-in link expired. Start again to get a new one."*. The polled read carries the row as
+   `oauth-expired`. From `1.14.0.dev10` that row was created by *Try again* (`POST` → `201`, an id other than the
+   first one) and the dialog deletes it as well; before, it is the same row, and it still reads `oauth-expired`. Both
+   attempts reached the provider.
+3. *Cancel*: the dialog closes and the list no longer carries the handle. From `1.14.0.dev10` *Cancel* sends no
+   write.
 
 **Test 5 — an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access
 it never reports as granted.**
@@ -248,9 +326,10 @@ only some inputs need.**
 
 ## Validation criterion *(required)*
 
-All seven tests pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev7`, and once at
-`--workers=2` together with the API spec. Every outcome is asserted twice: in the dialog's exact copy and on the
-row through the API. After the run, `GET /api/v1/connections` carries no row with this spec's handles.
+All seven tests pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev14`, and once at
+`--workers=2` together with the API spec. Tests 3 and 4 also pass once against `1.14.0.dev9`, the side before
+langflow#15952. Every outcome is asserted twice: in the dialog's exact copy and on the row the server answered with,
+through the API. After the run, `GET /api/v1/connections` carries no row with this spec's handles.
 
 Each test also has a force-fail mutation executed against it.
 
@@ -263,7 +342,10 @@ Each test also has a force-fail mutation executed against it.
 - Chromium with clipboard permissions (granted by `playwright.config.ts`).
 - No provider tenant and no network egress: the provider's URL is answered by a context route.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/AddConnectionDialog.tsx` — the steps, the
-  popup handling, the polling and the copy chosen per `status_reason`, and *Cancel* deleting an unfinished Add.
+  popup handling, the polling and the copy chosen per `status_reason`, *Cancel* deleting an unfinished Add, and,
+  from `1.14.0.dev10`, `discardFailedNewConnection` deleting a failed one and *Try again* recreating it.
+- `src/frontend/src/controllers/API/queries/connections/use-connections.ts` — the registration list, fetched per
+  provider (`useOAuthRegistrationsQuery`).
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/AuthorizeStatus.tsx` — the waiting, untracked
   and failed states.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/ConnectionSetupHelp.tsx` and

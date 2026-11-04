@@ -1,4 +1,4 @@
-import type { APIRequestContext, Locator, Page, Request } from "@playwright/test";
+import type { APIRequestContext, Locator, Page, Request, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
@@ -9,11 +9,14 @@ import {
 import { deleteConnection } from "../../../../helpers/integrations/delete-connection";
 import {
   type FakeOAuthProvider,
+  absorbReadRateLimit,
   absorbStartRateLimit,
+  fetchAbsorbingReadLimit,
   holdConnectionList,
   installFakeOAuthProvider,
 } from "../../../../helpers/integrations/fake-oauth-provider";
 import { untilNotRateLimited } from "../../../../helpers/integrations/oauth-callback";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 
 // The Add / Reconnect wizard of /settings/connections, walked up to consent (#2307).
 // Spec doc: docs/core-functionality/integrations/connection-oauth-wizard.md
@@ -66,6 +69,21 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     displayNameTooltip: "A readable name shown in connection lists to help you recognize this account.",
   };
   const RISK_LABEL: Record<string, string> = { read: "Read", write: "Write", destructive: "Destructive" };
+  /**
+   * From this build a failed Add deletes the row it created, and Try again creates a
+   * new one (langflow#15952, `discardFailedNewConnection`). Neither 1.13 line has it.
+   * Decided by the served version, never by whether a row survives (#2336, #2376).
+   */
+  const FAILED_ADD_DISCARDED_SINCE = "1.14.0.dev10";
+  /** Long enough for a start, a callback or a read that waits out two 429 windows (the spec doc's *Budgets*). */
+  const OUTCOME_TIMEOUT = 180_000;
+  /**
+   * For what the page shows only after a fresh list read: such a read may wait out
+   * the read bucket's window (`absorbReadRateLimit`), and until it answers the page
+   * still shows the previous state. Measured on 1.14.0.dev14: a held read kept
+   * test 6's row on Pending for 23 s.
+   */
+  const AFTER_A_READ = { timeout: OUTCOME_TIMEOUT };
 
   let superHeaders: Record<string, string>;
   let provider: FakeOAuthProvider;
@@ -75,6 +93,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     superHeaders = { Authorization: await getAuthToken(request) };
     provider = await installFakeOAuthProvider(page.context(), testInfo.project.use.baseURL!);
     await absorbStartRateLimit(page);
+    await absorbReadRateLimit(page.context());
   });
 
   test.afterEach(async ({ request }) => {
@@ -91,7 +110,12 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
   });
 
   async function listConnections(request: APIRequestContext): Promise<ConnectionRead[]> {
-    const res = await request.get(COLLECTION, { headers: superHeaders });
+    // The test's reads share the page's bucket (see absorbReadRateLimit).
+    const { result: res } = await untilNotRateLimited(
+      "the test's connection list read",
+      () => request.get(COLLECTION, { headers: superHeaders }),
+      (res) => res.status(),
+    );
     expect(res.status(), await res.text()).toBe(200);
     return (await res.json()) as ConnectionRead[];
   }
@@ -107,27 +131,97 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
   }
 
   /**
-   * Opens Add, waits for its registration list, then picks `provider`. Continue
-   * is enabled before that list arrives, and a Continue sent meanwhile names the
-   * provider id as the registration (`"google"`), which the server refuses:
-   * measured by delaying the list, and seen once in CI. The spec doc records it.
+   * The dialog's `oauth/start`, as the server finally answered it: a start refused
+   * with 429 is resent once its window resets (`absorbStartRateLimit`), which a
+   * validation burst or a CI retry reaches, so the wait is the helpers' cap.
+   */
+  function startAnswered(page: Page): Promise<Response> {
+    return page.waitForResponse((res) => res.url().endsWith("/oauth/start"), { timeout: OUTCOME_TIMEOUT });
+  }
+
+  /** The next registration list the page reads, for `provider` when given. */
+  function registrationsListed(page: Page, provider?: string): Promise<Response> {
+    return page.waitForResponse(
+      (res) => {
+        const url = new URL(res.url());
+        return (
+          url.pathname === `${COLLECTION}/oauth/registrations` &&
+          res.request().method() === "GET" &&
+          (provider === undefined || url.searchParams.get("provider") === provider)
+        );
+      },
+      // A read refused with 429 answers once its window resets.
+      { timeout: OUTCOME_TIMEOUT },
+    );
+  }
+
+  /**
+   * Opens Add, waits for its registration list, then picks `provider` and waits
+   * for that provider's list too. Continue is enabled before the list arrives, and
+   * a Continue sent meanwhile names the provider id as the registration
+   * (`"google"`), which the server refuses: measured by delaying the list, and
+   * seen once in CI. The spec doc records it.
    *
-   * The dialog preselects the first provider listed, which on 1.14.0.dev7 is
-   * GitHub (langflow#15957), so every test picks the one it needs. `null` keeps
-   * the preselection, for the test that asserts it.
+   * The list is fetched per provider (`?provider=<id>`), and the dialog preselects
+   * the first provider listed, which on 1.14.0.dev7 is GitHub (langflow#15957). So
+   * the first list is GitHub's, and waiting for it alone left Google's in flight:
+   * on 1.14.0.dev14 that lost the race (#2376). `null` keeps the preselection, for
+   * the test that asserts it.
    */
   async function openAddDialog(page: Page, provider: string | null = "google"): Promise<Locator> {
     await page.goto(PAGE);
-    const listed = page.waitForResponse(
-      (res) =>
-        new URL(res.url()).pathname === `${COLLECTION}/oauth/registrations` && res.request().method() === "GET",
-    );
+    const listed = registrationsListed(page);
     await page.getByTestId("add-connection").click();
     const dialog = page.getByRole("dialog", { name: "Add connection" });
     await expect(dialog).toBeVisible();
     expect((await listed).status()).toBe(200);
-    if (provider) await page.getByTestId("connection-provider").selectOption(provider);
+    const select = page.getByTestId("connection-provider");
+    if (provider && (await select.inputValue()) !== provider) {
+      const picked = registrationsListed(page, provider);
+      await select.selectOption(provider);
+      expect((await picked).status(), `the ${provider} registration list`).toBe(200);
+    }
     return dialog;
+  }
+
+  /**
+   * The list read the dialog itself polls, carrying `name` with `reason`: what the
+   * server recorded, as the dialog read it. From 1.14.0.dev10 the dialog deletes a
+   * failed Add's row right after that read, so a list read by the test comes too
+   * late (#2376). A read held by `holdConnectionList` answers the snapshot taken
+   * before the callback, never the reason, so it cannot match.
+   */
+  async function polledRow(page: Page, name: string, reason: string): Promise<ConnectionRead> {
+    const carries = (rows: ConnectionRead[]) => rows.find((row) => row.name === name && row.status_reason === reason);
+    const res = await page.waitForResponse(
+      async (res) =>
+        res.request().method() === "GET" &&
+        new URL(res.url()).pathname === COLLECTION &&
+        res.status() === 200 &&
+        carries((await res.json().catch(() => [])) as ConnectionRead[]) !== undefined,
+      { timeout: OUTCOME_TIMEOUT },
+    );
+    return carries((await res.json()) as ConnectionRead[])!;
+  }
+
+  /** The next connection the page creates or deletes, as the server answered it. */
+  function connectionWrite(page: Page, method: "POST" | "DELETE"): Promise<Response> {
+    return page.waitForResponse(
+      (res) =>
+        res.request().method() === method &&
+        (method === "POST"
+          ? new URL(res.url()).pathname === COLLECTION
+          : new URL(res.url()).pathname.startsWith(`${COLLECTION}/`)),
+      { timeout: OUTCOME_TIMEOUT },
+    );
+  }
+
+  /** From 1.14.0.dev10: the dialog deleted `row`, and the list no longer carries it. */
+  async function expectDiscarded(request: APIRequestContext, deleted: Promise<Response>, row: ConnectionRead) {
+    const res = await deleted;
+    expect(new URL(res.url()).pathname, "the dialog deletes the row it created").toBe(`${COLLECTION}/${row.id}`);
+    expect(res.status()).toBe(204);
+    expect(await readConnection(request, row.name), "a failed Add leaves no row").toBeUndefined();
   }
 
   /**
@@ -289,14 +383,21 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     "the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection",
     { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
+      const discards = await servedVersionAtLeast(request, FAILED_ADD_DISCARDED_SINCE);
       // A second Google registration, listed first: the picker must not just
       // send whatever it preselected.
       await page.route("**/api/v1/connections/oauth/registrations**", async (route) => {
-        const response = await route.fetch();
+        let response: Awaited<ReturnType<typeof fetchAbsorbingReadLimit>>;
+        try {
+          response = await fetchAbsorbingReadLimit(route);
+        } catch {
+          // The page closed while the read waited: nothing is left to answer.
+          return route.abort().catch(() => undefined);
+        }
         const body = (await response.json()) as { registrations: Array<{ id: string }> };
         const real = body.registrations.find((item) => item.id === GOOGLE);
         if (real) body.registrations.unshift({ ...real, id: `${GOOGLE}-alt` });
-        await route.fulfill({ response, json: body });
+        await route.fulfill({ response, json: body }).catch(() => undefined);
       });
       provider.answer("stall");
       const name = newHandle("pick");
@@ -313,7 +414,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
         await fillDetails(page, name);
         const scopes = await checkedScopes(dialog);
         expect(scopes.length).toBeGreaterThan(0);
-        const started = page.waitForResponse((res) => res.url().endsWith("/oauth/start"));
+        const started = startAnswered(page);
         const opened = page.context().waitForEvent("page");
         await page.getByTestId("connection-continue").click();
         const start = await started;
@@ -343,6 +444,8 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
         const state = provider.requests.at(-1)?.searchParams.get("state");
         expect(state, "the popup opened an authorization URL with a state").toBeTruthy();
         const params = new URLSearchParams({ state: state!, error: "access_denied" });
+        const denied = polledRow(page, name, "oauth-denied");
+        const discarded = discards ? connectionWrite(page, "DELETE") : null;
         // The dialog keeps polling while a 429 is waited out: hold its reads until the callback lands.
         const { result: callback } = await holdConnectionList(page.context(), () =>
           untilNotRateLimited(
@@ -352,25 +455,43 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
           ),
         );
         expect(callback.status(), await callback.text()).toBe(400);
-        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied);
+        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied, AFTER_A_READ);
         await expect(dialog.getByText(COPY.untracked)).toHaveCount(0);
         await expect(dialog.getByTestId("connection-setup-help")).toHaveCount(0);
-        expect(await readConnection(request, name)).toMatchObject({
+        const row = await denied;
+        expect(row, "the server recorded the denial on the row").toMatchObject({
           status: "error",
           status_reason: "oauth-denied",
           has_credentials: false,
         });
+        if (discarded) {
+          await expectDiscarded(request, discarded, row);
+        } else {
+          expect(await readConnection(request, name)).toMatchObject({
+            status: "error",
+            status_reason: "oauth-denied",
+            has_credentials: false,
+          });
+        }
       });
 
-      await test.step("Cancel deletes the unfinished connection", async () => {
-        const row = await readConnection(request, name);
-        expect(row, "the denied row is still there").toBeDefined();
-        const deleted = page.waitForResponse(
-          (res) => res.request().method() === "DELETE" && res.url().endsWith(`${COLLECTION}/${row!.id}`),
-        );
-        await page.getByTestId("connection-done").click();
-        expect((await deleted).status()).toBe(204);
-        await expect(dialog).toBeHidden();
+      await test.step("Cancel leaves no connection behind", async () => {
+        if (discards) {
+          const writes = recordWrites(page);
+          await page.getByTestId("connection-done").click();
+          await expect(dialog).toBeHidden();
+          await page.waitForTimeout(1000);
+          expect(writes, "the failed Add is already gone, so Cancel has nothing to delete").toEqual([]);
+        } else {
+          const row = await readConnection(request, name);
+          expect(row, "the denied row is still there").toBeDefined();
+          const deleted = page.waitForResponse(
+            (res) => res.request().method() === "DELETE" && res.url().endsWith(`${COLLECTION}/${row!.id}`),
+          );
+          await page.getByTestId("connection-done").click();
+          expect((await deleted).status()).toBe(204);
+          await expect(dialog).toBeHidden();
+        }
         expect(await readConnection(request, name)).toBeUndefined();
       });
     },
@@ -380,40 +501,82 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     "a denied consent, then an expired sign-in link, each say so, and the row records why",
     { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
+      const discards = await servedVersionAtLeast(request, FAILED_ADD_DISCARDED_SINCE);
       const name = newHandle("deny");
       const dialog = await openAddDialog(page);
       await fillDetails(page, name);
 
-      await test.step("the provider denies: the dialog says so and the row records oauth-denied", async () => {
+      const first = await test.step("the provider denies: the dialog says so and the row records oauth-denied", async () => {
         provider.answer("deny");
-        const callback = provider.nextCallback();
+        const callback = provider.nextCallback({ timeout: OUTCOME_TIMEOUT });
+        const created = connectionWrite(page, "POST");
+        const denied = polledRow(page, name, "oauth-denied");
+        const discarded = discards ? connectionWrite(page, "DELETE") : null;
         await page.getByTestId("connection-continue").click();
+        const createdRes = await created;
+        expect(createdRes.status(), await createdRes.text()).toBe(201);
         expect((await callback).status()).toBe(400);
-        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied);
-        expect(await readConnection(request, name)).toMatchObject({
+        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied, AFTER_A_READ);
+        const row = await denied;
+        expect(row.id, "the row Continue created").toBe(((await createdRes.json()) as ConnectionRead).id);
+        expect(row, "the server recorded the denial on the row").toMatchObject({
           status: "error",
           status_reason: "oauth-denied",
           has_credentials: false,
         });
+        if (discarded) {
+          await expectDiscarded(request, discarded, row);
+        } else {
+          expect(await readConnection(request, name)).toMatchObject({
+            status: "error",
+            status_reason: "oauth-denied",
+            has_credentials: false,
+          });
+        }
+        return row;
       });
 
       await test.step("Try again, and the provider returns neither code nor error: the link expired", async () => {
         provider.answer("no-code");
-        const callback = provider.nextCallback();
+        const callback = provider.nextCallback({ timeout: OUTCOME_TIMEOUT });
+        const recreated = discards ? connectionWrite(page, "POST") : null;
+        const expired = polledRow(page, name, "oauth-expired");
+        const discarded = discards ? connectionWrite(page, "DELETE") : null;
         await page.getByTestId("connection-try-again").click();
         expect((await callback).status()).toBe(400);
-        await expect(dialog.getByRole("alert")).toHaveText(COPY.expired);
-        expect(await readConnection(request, name)).toMatchObject({
+        await expect(dialog.getByRole("alert")).toHaveText(COPY.expired, AFTER_A_READ);
+        const row = await expired;
+        expect(row, "the server recorded the expired link on the row").toMatchObject({
           status: "error",
           status_reason: "oauth-expired",
+          has_credentials: false,
         });
+        if (recreated && discarded) {
+          const res = await recreated;
+          expect(res.status(), await res.text()).toBe(201);
+          const id = ((await res.json()) as ConnectionRead).id;
+          expect(id, "Try again creates a new row, the first one being gone").not.toBe(first.id);
+          expect(row.id, "the row Try again created").toBe(id);
+          await expectDiscarded(request, discarded, row);
+        } else {
+          expect(row.id, "Try again retries the same row").toBe(first.id);
+          expect(await readConnection(request, name)).toMatchObject({
+            status: "error",
+            status_reason: "oauth-expired",
+          });
+        }
         expect(provider.requests, "both attempts reached the provider").toHaveLength(2);
       });
 
-      await test.step("Cancel deletes the row", async () => {
+      await test.step("Cancel leaves no connection behind", async () => {
+        const writes = recordWrites(page);
         await page.getByTestId("connection-done").click();
         await expect(dialog).toBeHidden();
         await expect.poll(async () => readConnection(request, name)).toBeUndefined();
+        if (discards) {
+          await page.waitForTimeout(1000);
+          expect(writes, "the failed Add is already gone, so Cancel has nothing to delete").toEqual([]);
+        }
       });
     },
   );
@@ -451,7 +614,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       });
 
       const popup = await test.step("Authorize asks for the held scopes and offline_access, in the start and the URL", async () => {
-        const started = page.waitForResponse((res) => res.url().endsWith("/oauth/start"));
+        const started = startAnswered(page);
         const opened = page.context().waitForEvent("page");
         await page.getByTestId("connection-authorize").click();
         const start = await started;
@@ -519,14 +682,14 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
 
       await test.step("the provider denies, and Cancel keeps the row", async () => {
         provider.answer("deny");
-        const callback = provider.nextCallback();
-        const started = page.waitForResponse((res) => res.url().endsWith("/oauth/start"));
+        const callback = provider.nextCallback({ timeout: OUTCOME_TIMEOUT });
+        const started = startAnswered(page);
         await page.getByTestId("connection-authorize").click();
         const sent = (await started).request().postDataJSON() as { scopes: string[] };
         // Google adds nothing of its own to what was checked, unlike Microsoft in test 5.
         expect([...sent.scopes].sort()).toEqual(["email", "openid"]);
         expect((await callback).status()).toBe(400);
-        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied);
+        await expect(dialog.getByRole("alert")).toHaveText(COPY.denied, AFTER_A_READ);
         const writes = recordWrites(page);
         await page.getByTestId("connection-done").click();
         await expect(dialog).toBeHidden();
@@ -535,7 +698,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       });
 
       await test.step("the page shows Error with the reason, and the API agrees", async () => {
-        await expect(row).toContainText(/Error\s*The provider denied authorization\./);
+        await expect(row).toContainText(/Error\s*The provider denied authorization\./, AFTER_A_READ);
         expect(await readConnection(request, name)).toMatchObject({
           status: "error",
           status_reason: "oauth-denied",

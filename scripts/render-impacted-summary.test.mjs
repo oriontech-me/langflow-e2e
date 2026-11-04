@@ -186,6 +186,7 @@ test("the suite-wide caveat says what the selection leaves out", () => {
   assert.match(text, /@destructive/);
   assert.match(text, /@enterprise/);
   assert.match(text, /@serving/);
+  assert.match(text, /@instance-migration/);
   assert.match(text, /outside `@stable`/, "names the unvalidated remainder too");
   // Presence is not enough: they have to be stated as EXCLUDED. Without this, an
   // inverted residual ("It ALSO covers the lane-gated specs ... and every spec

@@ -281,6 +281,8 @@ for (const { label, options, skipReason } of targets) {
     // on the published 1.13.0.dev30 dist in a fresh venv (langchain-core 1.6.6), the VM
     // lane's deployment shape: 5/5 at --retries=0, openai / gpt-4o-mini, no `Input should be
     // callable` in the backend log.
+    // Quarantined (e2e-qa#24) and restored, #2378: a test defect. The picker asked for
+    // index 0, and another worker's agent published after the target sorted above it.
     test("an approved send_to_agent call resumes the run and executes the published agent",
       { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a", "@agents"] },
       async ({ page }) => {
@@ -332,7 +334,8 @@ for (const { label, options, skipReason } of targets) {
             // Required: the node opens in External mode, where the picker is absent.
             await page.getByTestId(MODE_TAB_INTERNAL).click();
             await page.getByTestId(AGENT_DROPDOWN).click();
-            const option = page.getByTestId(`${agentName}-0-option`);
+            // Any index: the list is newest-first across the shared project (#2378).
+            const option = page.getByTestId(new RegExp(`^${agentName}-\\d+-option$`));
             await expect(option).toBeVisible({ timeout: 15_000 });
             await option.click();
             await expect(page.getByTestId(AGENT_DROPDOWN)).toContainText(agentName);

@@ -367,7 +367,7 @@ export function collectDeclaredCounts(): DeclaredCounts {
  * (#1010). A test that carries one is therefore out of the daily BY DESIGN —
  * the orphan reconciler must not read that as an unowned removal.
  */
-export const LANE_TAGS = ["@destructive", "@enterprise", "@serving"] as const;
+export const LANE_TAGS = ["@destructive", "@enterprise", "@serving", "@instance-migration"] as const;
 
 export interface DeclaredTest {
   /** Title as written in the declaring call's first argument. */

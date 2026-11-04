@@ -164,7 +164,7 @@ docker run -d \
   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
   -e LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
   -e LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS="${LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS:-$DEFAULT_OAUTH_REGISTRATIONS}" \
-  -e LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
+  -e LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost}" \
   -e LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-~/.cache/langflow}" \
   -e LANGFLOW_WORKERS="${LANGFLOW_WORKERS:-1}" \
   "${IMAGE}"
@@ -188,7 +188,10 @@ docker run -d \
 # were set here to avoid. Loopback is deliberately NOT allow-listed: several
 # specs use an SSRF-blocked loopback fetch as a deterministic error generator
 # (core-functionality/llm-agents/agent-tool-error-handling.spec.ts), and
-# security/ssrf-url-validation.spec.ts asserts that refusal. Override to
+# security/ssrf-url-validation.spec.ts asserts that refusal; the one loopback
+# entry is `lf-self.localhost`, a name only mcp-server.spec.ts uses to register
+# this instance as its own MCP server (#16041, tests/helpers/mcp/self-mcp-url.ts).
+# Override to
 # reproduce another configuration: LANGFLOW_SSRF_ALLOWED_HOSTS="" ./scripts/...
 
 # LANGFLOW_KB_ALLOWED_FOLDER_ROOTS is the knowledge-base `folder` connector's
