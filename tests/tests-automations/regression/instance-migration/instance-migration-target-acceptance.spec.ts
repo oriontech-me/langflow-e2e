@@ -1,6 +1,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { createWithoutLeak, retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
+import { createWithoutLeak } from "../../../helpers/api/create-without-leak";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 import {
   createCredentialConsumerFlowViaApi,
   RESOLVED_LEN_PREFIX,
@@ -172,7 +173,8 @@ test.describe("Instance migration — the new instance serves the copy, and turn
       let nodeId = "";
       let flowName = "";
       let apiKey = "";
-      let attachmentPath = "";
+      /** The attachment as stored: the server prefixes a timestamp to the uploaded name. */
+      let storedName = "";
       let fileId = "";
       const sourceBytes: { file?: Buffer; attachment?: Buffer } = {};
 
@@ -268,7 +270,7 @@ test.describe("Instance migration — the new instance serves the copy, and turn
           if (r.status() !== 200) throw new Error(`deleting the API key answered ${r.status()}`);
         });
 
-        attachmentPath = await createWithoutLeak(
+        storedName = await createWithoutLeak(
           async () => {
             const upload = await api.request.post(`/api/v1/files/upload/${flowId}`, {
               headers: api.headers,
@@ -277,18 +279,22 @@ test.describe("Instance migration — the new instance serves the copy, and turn
               },
             });
             await expectStatus(upload, 201, "uploading the chat attachment");
-            return (await upload.json()).file_path as string;
+            // `<namespace>/<timestamp>_<name>`. The namespace measured `<flowId>` on 1.14.0.dev14
+            // and `flow-<flowId>` on dev16 (langflow-ai/langflow#15982, LE-3242), and every route
+            // below takes the flow id and resolves it — so this spec addresses the attachment by
+            // flow id and stored name, and leaves the layout to the files specs (#2338).
+            const filePath = (await upload.json()).file_path as string;
+            expect(filePath, "the stored attachment's path").toMatch(new RegExp(`/[^/]+_${attachmentName.replace(/\./g, "\\.")}$`));
+            return filePath.slice(filePath.lastIndexOf("/") + 1);
           },
           async () => {
             // The server prefixes the name with a timestamp; the name itself is the run's.
             const listed = await retryOnDroppedConnection(() => api.request.get(`/api/v1/files/list/${flowId}`, { headers: api.headers }));
-            const name = ((await listed.json()).files as string[]).find((f) => f.endsWith(attachmentName));
-            return name ? `${flowId}/${name}` : undefined;
+            return ((await listed.json()).files as string[]).find((f) => f.endsWith(`_${attachmentName}`));
           },
         );
-        expect(attachmentPath.startsWith(`${flowId}/`), `the attachment is stored in the flow's namespace: ${attachmentPath}`).toBe(true);
         cleanups.push(async () => {
-          const r = await api.request.delete(`/api/v1/files/delete/${attachmentPath}`, { headers: api.headers });
+          const r = await api.request.delete(`/api/v1/files/delete/${flowId}/${storedName}`, { headers: api.headers });
           if (r.status() !== 200) throw new Error(`deleting the attachment answered ${r.status()}`);
         });
       });
@@ -307,7 +313,7 @@ test.describe("Instance migration — the new instance serves the copy, and turn
         const file = await get(api.request, `/api/v2/files/${fileId}`, api.headers);
         await expectStatus(file, 200, "downloading the seed file from the source");
         sourceBytes.file = await file.body();
-        const attachment = await get(api.request, `/api/v1/files/download/${attachmentPath}`, api.headers);
+        const attachment = await get(api.request, `/api/v1/files/download/${flowId}/${storedName}`, api.headers);
         await expectStatus(attachment, 200, "downloading the attachment from the source");
         sourceBytes.attachment = await attachment.body();
         expect(sourceBytes.file.length, "the seed file is not empty").toBeGreaterThan(0);
@@ -404,7 +410,7 @@ test.describe("Instance migration — the new instance serves the copy, and turn
         const file = await get(request, `${target}/api/v2/files/${fileId}`, targetAuth, 180_000);
         await expectStatus(file, 200, "downloading the seed file from the new instance");
         expect((await file.body()).equals(sourceBytes.file!), "the seed file's bytes on the new instance").toBe(true);
-        const attachment = await get(request, `${target}/api/v1/files/download/${attachmentPath}`, targetAuth, 180_000);
+        const attachment = await get(request, `${target}/api/v1/files/download/${flowId}/${storedName}`, targetAuth, 180_000);
         await expectStatus(attachment, 200, "downloading the attachment from the new instance");
         expect((await attachment.body()).equals(sourceBytes.attachment!), "the attachment's bytes on the new instance").toBe(true);
       });

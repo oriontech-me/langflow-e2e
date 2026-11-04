@@ -56,6 +56,10 @@ What Option A gives up is **scheduled coverage**. Nothing runs `@instance-migrat
 
   So the assertions are on the second list. The first list is never offered as proof.
 - **The migrated API key authenticates on the target**, and is how the run is driven. With `LANGFLOW_AUTO_LOGIN=true`, `POST /api/v1/run/{id}` refuses a bearer token (`403 "Since v1.5, LANGFLOW_AUTO_LOGIN requires a valid API key."`). That holds on the source and on the target alike.
+- **The storage namespace changed between nightlies, and the spec does not depend on it.**
+  - On `1.14.0.dev14` an attachment was stored as `<flowId>/<timestamp>_<name>` and an uploaded file as `<userId>/<name>`.
+  - On `1.14.0.dev16` they are `flow-<flowId>/…` and `user-<userId>/…` (langflow-ai/langflow#15982, LE-3242, both measured).
+  - Download, list and delete take the flow **id** and resolve the namespace themselves, measured `200` on dev16. So the spec addresses the attachment by flow id and stored name, asserts only that the stored name is the uploaded one behind its timestamp, and leaves the layout to the files specs (#2338).
 - **Turning changes back on is a dialog, and it does not touch the data.**
   - The paused page shows a status banner, *"Changes are paused on this instance. Paused <time> by <user>."*, with *Turn changes back on*.
   - The button opens *"Turn changes back on?"*, which says *"People can work again. The backup and any copies made so far become out of date, so you'll pause and make them again before you move."* and offers *Resume* / *Cancel*.
@@ -98,7 +102,7 @@ A full run measured 6.2 min: test 1 took 3.9 min and test 2 took 2.2 min. On a l
 
 A pooled socket can be closed by the server at the instant it is reused, because of its 2 s keep-alive (`tests/helpers/api/retry-on-dropped-connection.ts`). Measured on this lane: the setup's `POST /api/v1/flows/` died with `socket hang up` in 1 of 5 runs. Reads, sign-ins and runs are re-dialled once.
 
-Every request that **creates** something goes through `createWithoutLeak` instead. Before it creates again, it looks for what the dropped attempt would have created:
+Every request that **creates** something goes through `createWithoutLeak` instead (`tests/helpers/api/create-without-leak.ts`). It is built on `retryOnDroppedConnection` without changing it. Before it creates again, it looks for what the dropped attempt would have created:
 - the variable and the user, by name;
 - the flow, by difference with the listing taken before;
 - the attachment, by name in the flow's folder;
@@ -127,7 +131,7 @@ A retry never leaves a second copy on the source.
 6. **The flow opens.** Open `http://127.0.0.1:7896/flow/<flow id>`. The canvas shows the custom component node (`<node id>-main-node`), and `flow_name` reads the flow's name. The ids are the source's: the flow was copied, not re-created.
 7. **The credential decrypts and the flow runs.** `POST /api/v1/run/<flow id>` with the **migrated** API key returns `resolved_len=<sentinel length>`, the same as on the source. A credential that did not decrypt reaches the component empty, and the run would still answer `200` with `resolved_len=0`.
 8. **The knowledge base.** `GET /api/v1/knowledge_bases/` lists the seed knowledge base with `backend_type: "postgres"`. `GET /api/v1/knowledge_bases/<name>/chunks?search=seed chunk 1` returns exactly one chunk, `seed-001`, reading *"instance-migration seed chunk 1"*. It is read from pgvector, because the new instance has no local store.
-9. **The files.** The seed file (`GET /api/v2/files/<id>`) and the chat attachment (`GET /api/v1/files/download/<flow id>/<name>`) download from the new instance with **the source's exact bytes**. The flow export is not used as evidence (see above).
+9. **The files.** The seed file (`GET /api/v2/files/<id>`) and the chat attachment (`GET /api/v1/files/download/<flow id>/<stored name>`) download from the new instance with **the source's exact bytes**. The flow export is not used as evidence (see above).
 10. **Cleanup.** Remove the target container **first**, then reset the lane. On the source, delete the flow (and its attachment), the variable, the user and the API key.
 
 ### Test 2 — turning changes back on before the start leaves this instance writable, with its data unchanged
