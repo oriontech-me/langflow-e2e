@@ -146,6 +146,19 @@ the Anthropic key is drained (`credit balance is too low`) and google was not
 exercised, so both rest on the daily's own rotation (#1185). And the run used
 public `httpbin.org`; the go-httpbin path is CI's (#1128).
 
+**`PRIVATE_FIXTURE_NOTE` appended to the instructions (#2367).** On an on-demand
+run of `@agents` on 2026-11-04 (`1.14.0.dev15`, `google` / `gemini-3.5-flash`,
+`--retries=0`), with the fix #2367 already applied to `agent-multi-tool-selection`
+and `agent-max-iterations`, this test failed with *"The tool named in the
+Playground step must be fetch_content"*: the agent called no URL tool. It had
+flaked the same way on the 2026-10-14 and 2026-10-21 dailies (*"Either the agent
+invoked no tool at all…"*), and the daily's retries absorbed it. The task is the
+same fetch of `${ECHO_BASE_URL}/json`, a private address on the VM lane, which
+`gemini-3.5-flash` declines as SSRF (measurements in
+`agent-multi-tool-selection.md` → Tags). The same note is appended here: it says
+the address is an authorized local test server and names no tool, so the
+assertion on which tool ran stays meaningful.
+
 ---
 
 ## Preconditions *(optional)*
@@ -167,7 +180,8 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
    template-instantiation `POST /api/v1/flows/` id is captured for cleanup).
 2. Set Agent Instructions (`textarea_str_system_prompt`): *"For every user
    question you MUST call exactly one tool to obtain the answer — never answer
-   from memory or refuse. Choose the tool that fits the question."*
+   from memory or refuse. Choose the tool that fits the question."*,
+   followed by `PRIVATE_FIXTURE_NOTE` (see Tags, #2367).
 3. Seed the task on the ChatInput node (`textarea_str_input_value`): *"Fetch
    `${FETCH_URL}` and tell me the exact slideshow title it returns. (probe
    `<nonce>`)"* (`FETCH_URL` = `${ECHO_BASE_URL}/json`, default
