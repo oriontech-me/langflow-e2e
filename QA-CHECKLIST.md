@@ -1733,8 +1733,8 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
-| `instance-migration/` — Instance Migration | 8 | 0 | 7 | 0 | 1 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **813** | **699 (86%)** | **61 (8%)** | **14 (2%)** | **39 (5%)** |
+| `instance-migration/` — Instance Migration | 10 | 2 | 7 | 0 | 1 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **815** | **701 (86%)** | **61 (7%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1750,7 +1750,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 801 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 804 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2481,6 +2481,11 @@
 - [x] the application boots into a shipped language for every unsupported or regional preference → `locale-resilience.spec.ts`
 - [x] the application boots in English and never adopts the browser locale as a preference → `locale-resilience.spec.ts`
 - [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
+
+#### instance-migration/
+- [x] Settings shows no Migration entry, its address falls back to General, and no page asks about a migration → `instance-migration-disabled-by-default.spec.ts`
+- [x] the migration routes are not mounted: they answer exactly as a route that does not exist → `instance-migration-disabled-by-default.spec.ts`
+- [x] a normal write succeeds on the default build → `instance-migration-disabled-by-default.spec.ts`
 
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
