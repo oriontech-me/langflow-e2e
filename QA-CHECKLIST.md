@@ -1661,6 +1661,31 @@
 
 ---
 
+## instance-migration/ — Instance Migration (1.13)
+
+> **New area (2026-11-03).** *Settings > Migration* moves a whole instance — users,
+> flows, files, knowledge bases — to a new one, SQLite → PostgreSQL + pgvector + S3
+> (`langflow-ai/langflow` #15327–#15815). It is **not** the schema/upgrade migration
+> the `e2e-routine-migration` VM routine covers (#2193). It is behind
+> `LANGFLOW_FEATURE_INSTANCE_MIGRATION=true`, its pause refuses every write on the
+> instance, and it needs empty destinations, so it runs only on the
+> `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
+> #2347). Tracker: #2357.
+
+> **None of these can be `@stable`** — nothing runs `@instance-migration` on a cron
+> (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`.
+
+#### 25.1 Backup, copies, *Check the copy*, start and record (#2353)
+
+- [-] *Download the database* hands out a SQLite copy of this instance; *I've backed up everything* is refused (`409 database_not_downloaded`) before it and without a location (`422`), and the confirmation records location, user and time → `instance-migration/instance-migration-copy.spec.ts`
+- [-] A database copy stopped mid-way leaves no rows and runs again into the same database with no reset; repeated within one pause it duplicates nothing (target `flow` count = source) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] After changes are turned back on and a source row is deleted, the out-of-date copy step says it needs a new, empty database before anything runs, and *Copy again* into the old one fails `count_mismatch` leaving the target unchanged (langflow#15814) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] Knowledge base and file test runs write nothing (no pgvector table, no bucket key); the copies land the seed's 3 vectors and both the uploaded file and the chat attachment at their sizes; an unreadable knowledge base is reported, blocks the step until *Leave it behind*, and the decision is recorded (langflow#15777) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] *Check the copy* matches a clean copy and names `credentials` once a credential row is deleted from the copy; the start settings show placeholders and no planted secret; *The new instance is running* closes the move (`409 new_instance_started` on every further run); the downloaded `langflow-migration-YYYYMMDD.json` holds the steps and decisions and no planted secret → `instance-migration/instance-migration-copy.spec.ts`
+- [ ] A `flow` row deleted from the PostgreSQL copy is **not** caught by *Check the copy* (measured on 1.14.0.dev14: *"Everything matches."*, start unlocked) — candidate finding, recorded in `docs/instance-migration/instance-migration-copy.md`, not asserted
+
+---
+
 
 ---
 
