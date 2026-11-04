@@ -84,6 +84,22 @@ test("every fixture secret is a sentinel a spec can search raw text for", () => 
   for (const s of lane.sentinels) assert.ok(s.length >= 16, `sentinel '${s}' is too short to be unambiguous`);
 });
 
+test("the new instance runs the source's image on the lane's network, published on loopback beside it", () => {
+  // #2354: the start settings name the database and the bucket by container name, so
+  // the new instance must join the same network, and it needs the pgvector package the
+  // derived image adds to read the knowledge bases the copy moved.
+  const lane = instanceMigrationLane({});
+  assert.deepEqual(lane.newInstance, {
+    container: "langflow-instance-migration-target",
+    url: "http://127.0.0.1:7896",
+    port: "7896",
+    image: "langflow-instance-migration:local",
+    network: "langflow-instance-migration-net",
+  });
+  assert.notEqual(lane.newInstance.url, lane.sourceUrl);
+  assert.equal(instanceMigrationLane({ IM_TARGET_PORT: "7999" }).newInstance.url, "http://127.0.0.1:7999");
+});
+
 test("an override wins, and an EMPTY value falls back instead of producing a broken address", () => {
   const lane = instanceMigrationLane({ IM_PG_CONTAINER: "other-pg", IM_PG_HOST_PORT: "", IM_SEED_KB_CHUNKS: "5" });
   assert.match(lane.target.databaseUrl, /@other-pg:5432\//);

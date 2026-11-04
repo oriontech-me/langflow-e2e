@@ -1684,6 +1684,11 @@
 - [-] *Check the copy* matches a clean copy and names `credentials` once a credential row is deleted from the copy; the start settings show placeholders and no planted secret; *The new instance is running* closes the move (`409 new_instance_started` on every further run); the downloaded `langflow-migration-YYYYMMDD.json` holds the steps and decisions and no planted secret → `instance-migration/instance-migration-copy.spec.ts`
 - [ ] A `flow` row deleted from the PostgreSQL copy is **not** caught by *Check the copy* (measured on 1.14.0.dev14: *"Everything matches."*, start unlocked) — candidate finding, recorded in `docs/instance-migration/instance-migration-copy.md`, not asserted
 
+#### 25.2 The new instance serves the copy, and the way back (#2354)
+
+- [-] A second Langflow started from the settings *Start the new instance* prints (the page's `NAME=value` lines equal the API's; the five placeholders filled from the lane) serves the copy: the source's user signs in with its password (a wrong one `401`), the migrated flow opens on the canvas by its source id, the migrated API key runs it and the Credential variable reaches the component decrypted (`resolved_len` = the sentinel's length — a wrong key gives `0` with a `200`), the seed knowledge base answers `seed-001` from pgvector (`backend_type: "postgres"`), and the uploaded file and the chat attachment download from S3 with the source's exact bytes → `instance-migration/instance-migration-target-acceptance.spec.ts`
+- [-] *Turn changes back on* → *Resume* at the last step before the start turns a `503` write into `201`, puts the migration back at the pause with every later step `locked`, and leaves the source's users, flows, variables, files and knowledge bases exactly as listed before the migration (knowledge base still `sqlite`, seed file bytes unchanged) → `instance-migration/instance-migration-target-acceptance.spec.ts`
+
 ---
 
 

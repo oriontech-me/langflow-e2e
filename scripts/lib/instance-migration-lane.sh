@@ -31,6 +31,18 @@ IM_PORT="${IM_PORT:-7895}"
 IM_PG_HOST_PORT="${IM_PG_HOST_PORT:-55895}"
 IM_S3_HOST_PORT="${IM_S3_HOST_PORT:-58895}"
 
+# The new instance a spec starts on the copy (#2354), from the settings the start step
+# prints. It joins the lane's network, so it reaches the database and the bucket by the
+# names those settings carry. It is not started by the start script: each test starts its
+# own and removes it, and the reset, start and stop scripts remove one a test left behind.
+IM_TARGET_CONTAINER="${IM_TARGET_CONTAINER:-langflow-instance-migration-target}"
+IM_TARGET_PORT="${IM_TARGET_PORT:-7896}"
+
+# The image BOTH Langflows run: the nightly plus the pgvector package, built by the start
+# script. The new instance needs that package as much as the source did, to read the
+# knowledge bases the copy moved into pgvector.
+IM_DERIVED_IMAGE="${IM_DERIVED_IMAGE:-langflow-instance-migration:local}"
+
 # Pinned companion images. SeaweedFS rather than MinIO: MinIO stopped publishing
 # pullable images (minio/minio and quay.io/minio/minio both answer "not found"), and
 # upstream Langflow's own CI moved to this exact image and command for its S3 tests

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: ./scripts/stop-langflow-instance-migration.sh
 #
-# Removes the @instance-migration lane (#2347): its three containers and their network.
+# Removes the @instance-migration lane (#2347): its three containers, the new instance a
+# test started on the copy if one is left (#2354), and their network.
 # Only the lane's own names, from scripts/lib/instance-migration-lane.sh — never the
 # shared `langflow-e2e-runner` or any other session's container.
 #
@@ -15,7 +16,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/instance-migration-lane.sh
 . "${HERE}/lib/instance-migration-lane.sh"
 
-for name in "${IM_SOURCE_CONTAINER}" "${IM_PG_CONTAINER}" "${IM_S3_CONTAINER}"; do
+for name in "${IM_TARGET_CONTAINER}" "${IM_SOURCE_CONTAINER}" "${IM_PG_CONTAINER}" "${IM_S3_CONTAINER}"; do
   if docker container inspect "${name}" > /dev/null 2>&1; then
     docker rm -f "${name}" > /dev/null
     echo "removed ${name}"
