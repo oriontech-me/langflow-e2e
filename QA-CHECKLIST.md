@@ -1722,7 +1722,8 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **805** | **699 (87%)** | **54 (7%)** | **14 (2%)** | **38 (5%)** |
+| `instance-migration/` — Instance Migration | 6 | 0 | 5 | 0 | 1 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **811** | **699 (86%)** | **59 (7%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
