@@ -185,7 +185,8 @@ calling the Gemini API directly. The measurements are in
 address, the direct calls declined 4 of 10. With `PRIVATE_FIXTURE_NOTE` appended
 they declined 0 of 10. That note says the URL is a local test server in an authorized
 test environment. It is what the instructions now end with. The run-count evidence
-for the restoration is in the PR for #2367.
+for the restoration is in the PR for #2367. Test 1 flaked again under the same
+cause on the 2026-11-04 daily (`1.14.0.dev15`, same model), before the fix merged.
 
 `@regression` — guards the max-iterations enforcement from regressing (the bug
 #481 documented); `@agents` — agent execution; `@playground` — the flow is run
