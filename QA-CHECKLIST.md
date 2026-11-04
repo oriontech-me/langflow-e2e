@@ -1672,8 +1672,14 @@
 > `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
 > #2347). Tracker: #2357.
 
-> **None of these can be `@stable`** — nothing runs `@instance-migration` on a cron
-> (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`.
+> **None of 25.1–25.2 can be `@stable`** — nothing runs `@instance-migration` on a cron
+> (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`. 25.0 is
+> the exception: it asserts the **default** build, so it runs on the normal lane.
+
+#### 25.0 Off by default (#2348)
+
+- [x] With `LANGFLOW_FEATURE_INSTANCE_MIGRATION` unset, `/api/v1/config` reports `instance_migration: false`; the Settings sidebar has no Migration entry once the flags and a superuser's `whoami` are in; `/settings/migration` lands on `/settings/general`; and no `/api/v1/migration*` request leaves the page across Settings, the direct address and the home page (with the flag on, every page polls `GET /api/v1/migration/pause`) → `instance-migration/instance-migration-disabled-by-default.spec.ts`
+- [x] `GET /api/v1/migration`, `GET /api/v1/migration/pause` and `POST /api/v1/migration/pause` answer exactly like a path no router serves (`404`, and `405` with `allow: {GET, HEAD}` for the `POST` — not `404`), and a flow rename answers `200` and reads back → `instance-migration/instance-migration-disabled-by-default.spec.ts`
 
 #### 25.1 Backup, copies, *Check the copy*, start and record (#2353)
 
