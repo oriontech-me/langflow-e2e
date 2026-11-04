@@ -123,7 +123,13 @@ case "$1" in
   run) case "$*" in *postgres*) exit 0 ;; esac
     port="$(echo "$*" | sed -n 's/.*127\\.0\\.0\\.1:\\([0-9]*\\):7860.*/\\1/p')"
     echo "\${@: -1}" | sed 's/.*://' > ${q(served)}/$port ;;
-  compose) case "$*" in *" up "*)
+  compose)
+    # Real compose interpolates the whole file on every command: a required variable
+    # unset fails up, rm and down alike (#2391).
+    if [ -z "\${POSTGRES_PASSWORD:-}" ] || [ -z "\${LANGFLOW_SUPERUSER_PASSWORD:-}" ]; then
+      echo "compose refused: required variable is missing a value" >> ${q(join(dir, "docker.log"))}; exit 1
+    fi
+    case "$*" in *" up "*)
     ov="$(echo "$*" | sed -n 's/.*-f \\([^ ]*override\\.yml\\).*/\\1/p')"
     port="$(sed -n 's/.*"127\\.0\\.0\\.1:\\([0-9]*\\):7860".*/\\1/p' "$ov")"
     sed -n 's/^ *image: .*:\\(.*\\)$/\\1/p' "$ov" | head -1 > ${q(served)}/$port ;;
@@ -372,6 +378,16 @@ test("everything the routine names is cleared on exit, and its ollama stopped", 
   assert.match(r.docker, /ps -aq --filter name=\^e2e-migration-/);
   assert.match(r.docker, /volume ls -q --filter name=\^e2e-migration-/);
   assert.match(r.ollama, /^stop 11464$/m);
+});
+
+test("every compose call of a postgres-docker cell gets the variables upstream's file requires (#2391)", () => {
+  const r = migration({ cells: "postgres-docker-upgrade" });
+  assert.equal(r.status, 0, r.log);
+  assert.doesNotMatch(r.docker, /compose refused/, r.docker);
+  const compose = r.docker.split("\n").filter((l) => l.startsWith("compose "));
+  assert.ok(compose.some((l) => / up -d$/.test(l)), r.docker);
+  assert.ok(compose.some((l) => / rm -sf langflow$/.test(l)), r.docker);
+  assert.ok(compose.some((l) => / down -v$/.test(l)), r.docker);
 });
 
 test("a run that ends skipped waiting for its turn tears down nothing: the holder's cells are not its", () => {

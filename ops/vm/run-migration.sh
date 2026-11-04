@@ -407,7 +407,7 @@ EOF
 # interpolates the whole file on every command, `rm` and `down` too, and a `${VAR:?}`
 # left unset fails all of them: LANGFLOW_SUPERUSER_PASSWORD since upstream #13822,
 # POSTGRES_PASSWORD since #15979 (1.13.1). The cleanup calls failed into /dev/null
-# from June until #2391. POSTGRES_PASSWORD is the pip cells' password: one value for
+# from this routine's first run until #2391. POSTGRES_PASSWORD is the pip cells' password: one value for
 # every cell, so a volume seeded by the source opens under the target.
 migration_compose_run() {
   LANGFLOW_SUPERUSER_PASSWORD="${MC_SU_PW:-unused-with-auto-login}" POSTGRES_PASSWORD=langflow \
@@ -446,7 +446,7 @@ migration_stop_langflow() {
       kill -9 "$MC_PID" 2> /dev/null; MC_PID="" ;;
     docker)
       if [ "$MC_DB" = sqlite ]; then docker stop -t 30 "e2e-migration-$MC_CELL" > /dev/null 2>&1; docker rm -f "e2e-migration-$MC_CELL" > /dev/null 2>&1
-      else migration_compose_run rm -sf langflow >> "$MC_LOG" 2>&1; fi ;;
+      elif [ -f "$MC_DIR/override.yml" ]; then migration_compose_run rm -sf langflow >> "$MC_LOG" 2>&1; fi ;;
   esac
 }
 
