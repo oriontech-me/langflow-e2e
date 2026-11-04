@@ -398,11 +398,21 @@ services:
       timeout: 3s
       retries: 30
 EOF
-  local pw="${MC_SU_PW:-unused-with-auto-login}"
-  if ! LANGFLOW_SUPERUSER_PASSWORD="$pw" docker compose -p "e2e-migration-$MC_CELL" \
-       -f "$c/docker-compose.yml" -f "$MC_DIR/override.yml" up -d >> "$MC_LOG" 2>&1 8>&-; then
+  if ! migration_compose_run up -d >> "$MC_LOG" 2>&1 8>&-; then
     MC_UP_VERDICT=failed; MC_UP_WHY="docker compose up failed: $(migration_log_tail)"; return 1
   fi
+}
+
+# Every compose call of a cell, with the variables upstream's file requires. Compose
+# interpolates the whole file on every command, `rm` and `down` too, and a `${VAR:?}`
+# left unset fails all of them: LANGFLOW_SUPERUSER_PASSWORD since upstream #13822,
+# POSTGRES_PASSWORD since #15979 (1.13.1). The cleanup calls failed into /dev/null
+# from June until #2391. POSTGRES_PASSWORD is the pip cells' password: one value for
+# every cell, so a volume seeded by the source opens under the target.
+migration_compose_run() {
+  LANGFLOW_SUPERUSER_PASSWORD="${MC_SU_PW:-unused-with-auto-login}" POSTGRES_PASSWORD=langflow \
+    docker compose -p "e2e-migration-$MC_CELL" \
+      -f "$MIG_WORK/compose/docker-compose.yml" -f "$MC_DIR/override.yml" "$@"
 }
 
 # A Postgres 16 for a pip cell, on the cell's port, data in a named volume.
@@ -436,7 +446,7 @@ migration_stop_langflow() {
       kill -9 "$MC_PID" 2> /dev/null; MC_PID="" ;;
     docker)
       if [ "$MC_DB" = sqlite ]; then docker stop -t 30 "e2e-migration-$MC_CELL" > /dev/null 2>&1; docker rm -f "e2e-migration-$MC_CELL" > /dev/null 2>&1
-      else docker compose -p "e2e-migration-$MC_CELL" -f "$MIG_WORK/compose/docker-compose.yml" -f "$MC_DIR/override.yml" rm -sf langflow > /dev/null 2>&1; fi ;;
+      else migration_compose_run rm -sf langflow >> "$MC_LOG" 2>&1; fi ;;
   esac
 }
 
@@ -445,7 +455,7 @@ migration_down() {
   migration_stop_langflow
   docker rm -f "e2e-migration-$MC_CELL" "e2e-migration-$MC_CELL-pg" > /dev/null 2>&1
   if [ -f "$MC_DIR/override.yml" ]; then
-    docker compose -p "e2e-migration-$MC_CELL" -f "$MIG_WORK/compose/docker-compose.yml" -f "$MC_DIR/override.yml" down -v > /dev/null 2>&1
+    migration_compose_run down -v >> "$MC_LOG" 2>&1
   fi
   docker volume rm -f "e2e-migration-$MC_CELL-data" "e2e-migration-$MC_CELL-pg" > /dev/null 2>&1
   rm -rf "${MC_DIR:?}/venv"
