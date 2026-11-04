@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-03
+> **Last updated:** 2026-11-04
 
 ---
 
@@ -1619,8 +1619,8 @@
 
 #### 24.6 Saved-flow contract and node surfaces
 
-- [x] The manifest names exactly the providers the served version ships — Google, Microsoft 365 and Slack, plus GitHub from `1.14.0.dev7` (upstream #15957, #2360) — so a new provider fails by name. Every action the manifest names is in its own provider's group under **Bundles** (`disclosure-bundles-google` / `…-microsoft 365` / `…-slack` / `…-github`). Triggers, split by the catalog's `metadata.trigger_kind`: from `1.14.0.dev4`, where `ENABLE_TRIGGERS` is on, each one is in its own provider's group; before, while the palette filters on that marker, none is in any group. The served version decides which is asserted (#2336). A group is asserted to *contain* its actions, never to equal them (Google also lists four components the manifest does not own). Every Slack action's name ends in *"(as user)"* or *"(as app)"* matching its capability's identity — the "runs as" label that tells `slack.user.send` from `slack.bot.post` (A4) → core-functionality/integrations/connector-node-picker.spec.ts
-- [x] Every manifest action, read at run time (5 Google, 8 Microsoft 365, 7 Slack on `1.13.0.dev47`; plus 8 GitHub from `1.14.0.dev7`, skipped before it), lands on the canvas from the sidebar search with its connection field unbound, reading *"Select a <provider> connection"* → core-functionality/integrations/connector-node-picker.spec.ts
+- [x] The manifest names exactly the providers the served version ships — Google, Microsoft 365 and Slack, plus GitHub from `1.14.0.dev7` (upstream #15957, #2360) and Jira from `1.14.0.dev10` (upstream #15952, #2377) — so a new provider fails by name. Every action the manifest names is in its own provider's group under **Bundles** (`disclosure-bundles-google` / `…-microsoft 365` / `…-slack` / `…-github` / `…-jira`). Triggers, split by the catalog's `metadata.trigger_kind`: from `1.14.0.dev4`, where `ENABLE_TRIGGERS` is on, each one is in its own provider's group; before, while the palette filters on that marker, none is in any group. The served version decides which is asserted (#2336). A group is asserted to *contain* its actions, never to equal them (Google also lists four components the manifest does not own). Every Slack action's name ends in *"(as user)"* or *"(as app)"* matching its capability's identity — the "runs as" label that tells `slack.user.send` from `slack.bot.post` (A4) → core-functionality/integrations/connector-node-picker.spec.ts
+- [x] Every manifest action, read at run time (5 Google, 8 Microsoft 365, 7 Slack on `1.13.0.dev47`; plus 8 GitHub from `1.14.0.dev7` and 5 Jira from `1.14.0.dev10`, each skipped before it), lands on the canvas from the sidebar search with its connection field unbound, reading *"Select a <provider> connection"* → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] The node-level picker (B5) requests its field's provider (`?provider=`) and lists every connection of it: a usable row with no badge, the unusable ones with their reason — *"Missing gmail.send"*, *"Runs as the instance, not a user"*, *"Pending"*, *"Revoked"*, and on a trigger *"Not owned by the flow owner"* for an instance row and another user's while the flow owner's own row is usable — and no other provider's handle. `instanceRequired` and `instanceOwnedRequired` are not black-box reachable; the spec doc records why → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] The requirement line follows the node's inputs (the client half of langflow#15810): *SharePoint/OneDrive: List Items* reads `Files.Read`, adds `Sites.Read.All` with a site and `Files.Read.All` with a drive, and drops `Sites.Read.All` when the site is cleared; a field with no required scope reads *"No scope required"* → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] An empty list says how to get a connection, the list stays cached until **Refresh**, and a failed list says *"Could not load connections."* once react-query's retries run out (~31 s). Both lists are mocked: the superuser lists every user's rows, so neither state is reachable on a shared instance → core-functionality/integrations/connector-node-picker.spec.ts
@@ -1668,6 +1668,36 @@
 
 ---
 
+## instance-migration/ — Instance Migration (1.13)
+
+> **New area (2026-11-03).** *Settings > Migration* moves a whole instance — users,
+> flows, files, knowledge bases — to a new one, SQLite → PostgreSQL + pgvector + S3
+> (`langflow-ai/langflow` #15327–#15815). It is **not** the schema/upgrade migration
+> the `e2e-routine-migration` VM routine covers (#2193). It is behind
+> `LANGFLOW_FEATURE_INSTANCE_MIGRATION=true`, its pause refuses every write on the
+> instance, and it needs empty destinations, so it runs only on the
+> `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
+> #2347). Tracker: #2357.
+
+> **None of these can be `@stable`** — nothing runs `@instance-migration` on a cron
+> (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`.
+
+#### 25.1 Backup, copies, *Check the copy*, start and record (#2353)
+
+- [-] *Download the database* hands out a SQLite copy of this instance; *I've backed up everything* is refused (`409 database_not_downloaded`) before it and without a location (`422`), and the confirmation records location, user and time → `instance-migration/instance-migration-copy.spec.ts`
+- [-] A database copy stopped mid-way leaves no rows and runs again into the same database with no reset; repeated within one pause it duplicates nothing (target `flow` count = source) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] After changes are turned back on and a source row is deleted, the out-of-date copy step says it needs a new, empty database before anything runs, and *Copy again* into the old one fails `count_mismatch` leaving the target unchanged (langflow#15814) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] Knowledge base and file test runs write nothing (no pgvector table, no bucket key); the copies land the seed's 3 vectors and both the uploaded file and the chat attachment at their sizes; an unreadable knowledge base is reported, blocks the step until *Leave it behind*, and the decision is recorded (langflow#15777) → `instance-migration/instance-migration-copy.spec.ts`
+- [-] *Check the copy* matches a clean copy and names `credentials` once a credential row is deleted from the copy; the start settings show placeholders and no planted secret; *The new instance is running* closes the move (`409 new_instance_started` on every further run); the downloaded `langflow-migration-YYYYMMDD.json` holds the steps and decisions and no planted secret → `instance-migration/instance-migration-copy.spec.ts`
+- [ ] A `flow` row deleted from the PostgreSQL copy is **not** caught by *Check the copy* (measured on 1.14.0.dev14: *"Everything matches."*, start unlocked) — candidate finding, recorded in `docs/instance-migration/instance-migration-copy.md`, not asserted
+
+#### 25.2 The new instance serves the copy, and the way back (#2354)
+
+- [-] A second Langflow started from the settings *Start the new instance* prints (the page's `NAME=value` lines equal the API's; the five placeholders filled from the lane) serves the copy: the source's user signs in with its password (a wrong one `401`), the migrated flow opens on the canvas by its source id, the migrated API key runs it and the Credential variable reaches the component decrypted (`resolved_len` = the sentinel's length — a wrong key gives `0` with a `200`), the seed knowledge base answers `seed-001` from pgvector (`backend_type: "postgres"`), and the uploaded file and the chat attachment download from S3 with the source's exact bytes → `instance-migration/instance-migration-target-acceptance.spec.ts`
+- [-] *Turn changes back on* → *Resume* at the last step before the start turns a `503` write into `201`, puts the migration back at the pause with every later step `locked`, and leaves the source's users, flows, variables, files and knowledge bases exactly as listed before the migration (knowledge base still `sqlite`, seed file bytes unchanged) → `instance-migration/instance-migration-target-acceptance.spec.ts`
+
+---
+
 
 ---
 
@@ -1704,7 +1734,8 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **805** | **699 (87%)** | **54 (7%)** | **14 (2%)** | **38 (5%)** |
+| `instance-migration/` — Instance Migration | 8 | 0 | 7 | 0 | 1 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **813** | **699 (86%)** | **61 (8%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1720,7 +1751,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 797 `test()` calls carrying the `@stable` tag, distributed across 296 spec
+> 801 `test()` calls carrying the `@stable` tag, distributed across 296 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1893,6 +1924,7 @@
 #### api/models/
 - [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
 - [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
+- [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
 - [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
 - [x] the enabled_models write stores a DISABLED set, and it is per user → `api-models-selection.spec.ts`
 
@@ -2124,6 +2156,7 @@
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
+- [x] the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4 → `connector-node-picker.spec.ts`
 - [x] every <provider.label> action in the manifest lands on the canvas with an unbound connection field → `connector-node-picker.spec.ts`
 - [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
 - [x] a trigger refuses a connection its flow's owner does not own → `connector-node-picker.spec.ts`
@@ -2167,11 +2200,13 @@
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent reply renders as correct Markdown in the Playground → `agent-markdown-output.spec.ts`
 - [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
+- [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
+- [x] agent runs the URL then Web Search tools in sequence for a chained prompt → `agent-multi-tool-selection.spec.ts`
 - [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`

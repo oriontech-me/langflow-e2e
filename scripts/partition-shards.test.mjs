@@ -461,9 +461,15 @@ test("playwright.config.ts still excludes @destructive from every non-destructiv
     path.join(import.meta.dirname, "..", "tests", "fixtures", "lane.ts"),
     "utf8",
   );
+  // The DEFAULT lane is the function's final return, so its grepInvert is the LAST one
+  // in the file. The first version matched the literal `/@destructive|@enterprise/,`
+  // anywhere in the module, and that literal was the @serving branch's, not the
+  // default's: it held only while no fifth branch existed, and broke the day
+  // `@instance-migration` (#2347) changed that branch while the default was fine.
+  const defaultLane = lane.slice(lane.lastIndexOf("grepInvert:"));
   assert.match(
-    lane,
-    /grepInvert:\s*\/@destructive\|@enterprise\/,/,
+    defaultLane,
+    /^grepInvert:\s*\/[^/\n]*@destructive[^/\n]*\/,/,
     "the default lane must still exclude @destructive — the partition input assumes it (#1326)",
   );
 });
