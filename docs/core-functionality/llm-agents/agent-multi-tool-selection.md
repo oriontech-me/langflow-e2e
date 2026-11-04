@@ -141,6 +141,12 @@ VM, and `ssrf-url-validation.spec.ts` reads the same `ECHO_BASE_URL` and decides
 its cases by IP. The sentence relies on the model complying. If a refusal comes
 back, the hostname is the next step.
 
+**`@stable` removed from Test 1 and restored (#2367).** The fix had not merged by
+the 2026-11-04 daily (`1.14.0.dev15`, same model). Test 1 then failed on all three
+attempts with the same observable (`no fetch_content tool_use block persisted
+yet`) and was auto-removed. It is restored here, together with Test 3, on the
+same evidence.
+
 ---
 
 ## Preconditions *(optional)*
