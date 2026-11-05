@@ -64,9 +64,13 @@ test.describe("Flows API — versions", () => {
   //   1.13.0.dev12   0/10 first reads answered 200, all 10 `{"detail":"Flow not found"}`,
   //                  POST 11-17 ms — the client was not waiting for the commit
   //   1.13.0.dev14   10/10 answered 200, POST 321-344 ms — now it is
-  test(
+  //
+  // Quarantined at triage of e2e-qa#28: recurrent flake (2026-10-07, 2026-11-05), the
+  // activate call answers 503 on a first attempt. Lifting it (drop `test.fixme`, restore
+  // `@stable`) is #2400's deliverable.
+  test.fixme(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
-    { tag: ["@stable", "@api", "@workspace"] },
+    { tag: ["@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
