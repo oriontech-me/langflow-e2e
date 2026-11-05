@@ -3,8 +3,10 @@ import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { getAuthToken } from "../../../helpers/auth/get-auth-token";
-import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../helpers/flows/track-created-flows";
 
 // A saved flow whose 5 components (Prompt, Chat Input, OpenAI, Chat Output, Chat
 // Memory) are pinned behind the current backend version in a *breaking* way, so
@@ -17,38 +19,20 @@ const OUTDATED_FLOW = path.resolve(
   "../../../assets/flows/outdated_flow.json",
 );
 
-// Track flows created by the drop-import so afterEach deletes them id-scoped
-// (repo convention, #490/#681) — never a global cleanAllFlows that would wipe a
-// concurrent worker's flow (#465/#515).
-const createdFlowIds: string[] = [];
-
-function trackCreatedFlows(page: Page): void {
-  page.on("response", (resp) => {
-    if (
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201
-    ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {});
-    }
-  });
-}
+// Every flow the page creates — the bootstrap's and the drop-import's — tracked
+// from before the bootstrap so afterEach deletes them id-scoped (repo convention,
+// #490/#681) — never a global cleanAllFlows that would wipe a concurrent worker's
+// flow (#465/#515).
+let flows: FlowTracker | undefined;
 
 test.afterEach(async ({ request }) => {
-  if (createdFlowIds.length === 0) return;
-  const bearer = await getAuthToken(request);
-  for (const id of createdFlowIds.splice(0)) {
-    // deleteFlow throws on a failed delete (repo convention #545) so a leak
-    // surfaces loudly instead of quietly accumulating. Cleanup is load-bearing
-    // here — unlike the rejected-import case, every test creates a real flow —
-    // so the throw is intentionally NOT swallowed.
-    await deleteFlow(request, id, { headers: { Authorization: bearer } });
-  }
+  const tracker = flows;
+  flows = undefined;
+  // `strict`: a failed delete fails the teardown (repo convention #545) so a leak
+  // surfaces loudly instead of quietly accumulating. Cleanup is load-bearing
+  // here — unlike the rejected-import case, every test creates a real flow — so
+  // the throw is intentionally NOT swallowed. It comes after the whole sweep.
+  await tracker?.cleanup(request, { strict: true });
 });
 
 // Drop the fixture onto the flows-page drop zone (cards-wrapper) via a synthetic
@@ -79,7 +63,14 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
   });
 
   const raw = readFileSync(OUTDATED_FLOW, "utf-8");
-  const flowName = `Breaking Change Alert ${Date.now()}`;
+  // Random suffix as well as the clock: the three tests run on two workers, and two
+  // imports landing in the same millisecond under the same name are refused by
+  // `POST /api/v1/flows/upload/` with an unmapped 500 (measured on 1.13.1 and
+  // 1.14.0.dev18, #2399) that the frontend then retries — a detour, not a failure,
+  // but noise in the backend-error log this spec should never cause.
+  const flowName = `Breaking Change Alert ${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
   const content = JSON.stringify({ ...JSON.parse(raw), name: flowName });
 
   const dataTransfer = await page.evaluateHandle((d: string) => {
@@ -89,17 +80,33 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
   }, content);
 
   // Armed AFTER bootstrap on purpose: on an empty instance the bootstrap helper
-  // creates a "Basic Prompting" flow of its own, and that POST would otherwise
-  // be the one this waiter matched.
-  const imported = page.waitForResponse(
-    (r) =>
-      new URL(r.url()).pathname.replace(/\/$/, "") === "/api/v1/flows" &&
-      r.request().method() === "POST" &&
-      r.status() === 201,
-    { timeout: 60000 },
-  );
-  await page.getByTestId("cards-wrapper").dispatchEvent("drop", { dataTransfer });
-  const flowId = (await imported.then((r) => r.json())).id as string;
+  // creates a "Basic Prompting" flow of its own, and that flow would otherwise
+  // be the one read here. Its ids are a subset of the file-level tracker's, so it
+  // is disposed, never cleaned up.
+  //
+  // Which response carries the id depends on the version under test (#2399): one
+  // `POST /api/v1/flows/` answering the flow (≤ 1.13), or one
+  // `POST /api/v1/flows/upload/` answering an ARRAY (≥ 1.14.0.dev18,
+  // langflow-ai/langflow#16120). Waiting for the first contract alone is what
+  // timed all three tests out on 2026-11-05 with the card on screen.
+  const imported = trackCreatedFlows(page);
+  let flowId: string;
+  try {
+    await page.getByTestId("cards-wrapper").dispatchEvent("drop", { dataTransfer });
+    // A single-flow file imports exactly ONE flow — the shared import gate.
+    await expect
+      .poll(
+        async () => {
+          await imported.settle();
+          return imported.ids().length;
+        },
+        { timeout: 60000, message: "flows the drop created" },
+      )
+      .toBe(1);
+    [flowId] = imported.ids();
+  } finally {
+    imported.dispose();
+  }
 
   // Navigate by id instead of clicking the imported card. Clicking made the
   // test depend on the flows LIST — its length, its order, and whatever the
@@ -137,15 +144,11 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 15000 });
 }
 
-// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
-// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
-// /api/v1/flows/ per flow.
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
-test.fixme(
+test(
   "breaking-change outdated components alert with a Review action, not a silent Update",
-  { tag: ["@components", "@regression", "@ui-ux"] },
+  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
-    trackCreatedFlows(page);
+    flows = trackCreatedFlows(page);
 
     await test.step("Import the outdated fixture and open it", async () => {
       await importOutdatedFlowAndOpen(page);
@@ -180,15 +183,11 @@ test.fixme(
   },
 );
 
-// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
-// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
-// /api/v1/flows/ per flow.
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
-test.fixme(
+test(
   "reviewing a single breaking change warns about disconnection and defaults to a backup",
-  { tag: ["@components", "@regression", "@ui-ux"] },
+  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
-    trackCreatedFlows(page);
+    flows = trackCreatedFlows(page);
 
     await test.step("Import the outdated fixture and open it", async () => {
       await importOutdatedFlowAndOpen(page);
@@ -219,15 +218,11 @@ test.fixme(
   },
 );
 
-// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
-// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
-// /api/v1/flows/ per flow.
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
-test.fixme(
+test(
   "Review All flags every outdated component as breaking and pre-selects none",
-  { tag: ["@components", "@regression", "@ui-ux"] },
+  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
-    trackCreatedFlows(page);
+    flows = trackCreatedFlows(page);
 
     let breakingCount = 0;
     let nonBreakingCount = 0;

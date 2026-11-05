@@ -2,7 +2,10 @@ import { readFileSync } from "fs";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
-import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../helpers/flows/track-created-flows";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
 
@@ -14,11 +17,17 @@ import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop"
 // ui-ux/sidebar-add-component.spec.ts) — the file name has caused that mix-up
 // before.
 //
-// Both tests assert the import through the `POST /api/v1/flows/` 201 responses
-// the drop fires (one per imported flow, which is also how the imported ids are
-// collected for cleanup) plus id-anchored home cards. Anchoring by id matters:
-// the home list sorts by `updated_at` DESC, so a positional or free-text match
-// can resolve to a flow another parallel worker just touched.
+// Both tests assert the import through the ids the drop's responses carry, plus
+// id-anchored home cards. Anchoring by id matters: the home list sorts by
+// `updated_at` DESC, so a positional or free-text match can resolve to a flow
+// another parallel worker just touched.
+//
+// The responses depend on the version under test (#2399): up to 1.13 a drop is one
+// `POST /api/v1/flows/` per flow, each answering the created flow; from
+// 1.14.0.dev18 (langflow-ai/langflow#16120) it is ONE `POST /api/v1/flows/upload/`
+// answering an array of every created flow. The shared tracker reads both, and the
+// assertions count FLOWS, never responses — on 1.14 a 15-flow collection is one
+// response.
 
 const COLLECTION_FIXTURE = "tests/assets/flows/collection.json";
 const SINGLE_FLOW_FIXTURE = "tests/assets/flows/flow_test_drag_and_drop.json";
@@ -30,50 +39,26 @@ const DROPZONE_TESTID = "cards-wrapper";
 
 test.describe("flow import by file drop on the home page", () => {
   let token: string;
-  // Every flow the drop created, collected from the create responses.
-  let importedIds: string[];
-  // Every flow the BOOTSTRAP created, kept apart from the line above on purpose:
-  // these are deleted like any other id this page made, and no assertion ever
-  // counts them (#1787). Measured on 1.13.0.dev7 before this split existed: a
-  // green run left `New Flow` plus a second `Basic Prompting` behind, once per
-  // run, because the import listener goes up only after the bootstrap and so
-  // never saw them. The old comment called them "shared bootstrap state, not
-  // ours to delete" -- but a parallel worker's bootstrap creates a DIFFERENT id,
-  // so deleting by id cannot reach it; what was actually load-bearing is that
-  // their 201s must stay out of the import count, which this split preserves.
-  let bootstrapIds: string[];
-  // Flips once the bootstrap has finished. Read SYNCHRONOUSLY inside the
-  // handler, never inside the `.then()`: `res.json()` settles on a later tick,
-  // so a bootstrap 201 whose body resolves after the flip would otherwise be
-  // misfiled -- and the reverse (deciding by "is the import array still empty")
-  // is a race between the two handlers' promises during the drop itself.
-  let bootstrapDone: boolean;
+  // Every flow this page created -- the bootstrap's AND the drop's. This is the
+  // one the cleanup reads, so no assertion ever depends on it. The bootstrap's
+  // flows belong here (#1787): measured on 1.13.0.dev7 before they were tracked, a
+  // green run left `New Flow` plus a second `Basic Prompting` behind, once per run.
+  // A parallel worker's bootstrap creates a DIFFERENT id, so deleting by id can
+  // never reach it.
+  let flows: FlowTracker | undefined;
+  // Only the flows the DROP created: attached after the bootstrap, so the
+  // bootstrap's creates stay out of the import count -- the half of #1787's split
+  // that was always load-bearing. Its ids are a subset of `flows`'s, so it is
+  // disposed, never cleaned up (that would delete each flow twice).
+  let imported: FlowTracker | undefined;
 
   test.beforeEach(async ({ page, request }) => {
+    flows = undefined;
+    imported = undefined;
     token = await getAuthToken(request);
-    importedIds = [];
-    bootstrapIds = [];
-    bootstrapDone = false;
 
-    // Installed BEFORE the bootstrap so its own creates are captured for
-    // cleanup; feeds a separate array, so the import count is untouched.
-    page.on("response", (res) => {
-      if (
-        res.request().method() === "POST" &&
-        res.url().includes("/api/v1/flows/") &&
-        res.status() === 201
-      ) {
-        if (bootstrapDone) return;
-        res
-          .json()
-          .then((body: { id?: string }) => {
-            if (body?.id) bootstrapIds.push(body.id);
-          })
-          .catch(() => {
-            /* a non-JSON 201 cannot carry an id to clean up */
-          });
-      }
-    });
+    // Installed BEFORE the bootstrap so its own creates are captured for cleanup.
+    flows = trackCreatedFlows(page);
 
     // Home page with the flow list rendered. skipModal: the templates modal is
     // not part of this journey, and opening a template would create an extra
@@ -82,45 +67,22 @@ test.describe("flow import by file drop on the home page", () => {
     await expect(page.getByTestId(DROPZONE_TESTID)).toBeVisible({
       timeout: 30000,
     });
-    // Bootstrap is over: from here every 201 belongs to the drop under test.
-    bootstrapDone = true;
 
-    // Listener installed only AFTER the bootstrap: on a freshly empty instance
-    // awaitBootstrapTest itself creates a flow (shared bootstrap state, not ours
-    // to delete), and counting those 201s would both break the expected import
-    // count and make the cleanup delete another test's precondition.
-    page.on("response", (res) => {
-      if (
-        res.request().method() === "POST" &&
-        res.url().includes("/api/v1/flows/") &&
-        res.status() === 201
-      ) {
-        res
-          .json()
-          .then((body: { id?: string }) => {
-            if (body?.id) importedIds.push(body.id);
-          })
-          .catch(() => {
-            /* a non-JSON 201 cannot carry an id to clean up */
-          });
-      }
-    });
+    // Bootstrap is over: from here every created flow belongs to the drop.
+    imported = trackCreatedFlows(page);
   });
 
   test.afterEach(async ({ request }) => {
+    imported?.dispose();
     // Id-scoped, never a global sweep: under fullyParallel, deleting anything
-    // this page did not create would wipe a concurrent worker's flow.
-    for (const id of [...importedIds, ...bootstrapIds]) {
-      await deleteFlow(request, id, { headers: { Authorization: token } });
-    }
+    // this page did not create would wipe a concurrent worker's flow. `strict`
+    // keeps what the hand-rolled loop did before #2399 -- a failed delete fails
+    // the teardown -- but only after every captured id has been attempted.
+    await flows?.cleanup(request, { strict: true });
   });
 
-  // Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
-  // /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
-  // /api/v1/flows/ per flow.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
-  test.fixme("dropping a collection file imports every flow it contains",
-    { tag: ["@release", "@workspace", "@mainpage"] },
+  test("dropping a collection file imports every flow it contains",
+    { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
     async ({ page, request }) => {
       // Read the expected count from the asset itself, so adding a flow to the
       // fixture updates the expectation instead of reddening the test.
@@ -134,10 +96,21 @@ test.describe("flow import by file drop on the home page", () => {
         await simulateDragAndDrop(page, COLLECTION_FIXTURE, DROPZONE_TESTID);
       });
 
+      let importedIds: string[] = [];
+
       await test.step(`${expectedCount} flows are created`, async () => {
+        // The number of FLOWS, never of responses: on 1.14 the whole collection is
+        // one `POST /api/v1/flows/upload/`, on 1.13 it is 15 `POST /api/v1/flows/`.
         await expect
-          .poll(() => importedIds.length, { timeout: 120000 })
+          .poll(
+            async () => {
+              await imported!.settle();
+              return imported!.ids().length;
+            },
+            { timeout: 120000, message: "flows the collection drop created" },
+          )
           .toBe(expectedCount);
+        importedIds = imported!.ids();
       });
 
       await test.step("every imported flow exists on the server", async () => {
@@ -166,12 +139,8 @@ test.describe("flow import by file drop on the home page", () => {
       });
     });
 
-  // Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
-  // /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
-  // /api/v1/flows/ per flow.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
-  test.fixme("dropping a single flow file imports that flow",
-    { tag: ["@release", "@workspace", "@mainpage"] },
+  test("dropping a single flow file imports that flow",
+    { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
     async ({ page, request }) => {
       const uniqueName = `dnd-flow-${Date.now()}-${Math.random()
         .toString(36)
@@ -191,8 +160,19 @@ test.describe("flow import by file drop on the home page", () => {
         );
       });
 
+      let importedIds: string[] = [];
+
       await test.step("exactly one flow is created", async () => {
-        await expect.poll(() => importedIds.length, { timeout: 120000 }).toBe(1);
+        await expect
+          .poll(
+            async () => {
+              await imported!.settle();
+              return imported!.ids().length;
+            },
+            { timeout: 120000, message: "flows the single-file drop created" },
+          )
+          .toBe(1);
+        importedIds = imported!.ids();
         await assertFlowsExist(request, token, importedIds);
       });
 

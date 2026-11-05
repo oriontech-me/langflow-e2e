@@ -1,6 +1,7 @@
 # Import Flow with Outdated Components — UI Upload Path (§12.4 Export / Import Flow)
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev18`, upload contract) and
+1.13.x (`1.13.1`, per-flow contract)
 
 ---
 
@@ -41,29 +42,34 @@ the remaining §12.4 gap (`[~] Import flow with outdated components`).
 
 ## Tags *(required)*
 
-`@release` `@workspace` `@regression`
+`@stable` `@release` `@workspace` `@regression`
 
 Cross-cutting: `@release` (import is a happy-path flow), `@workspace` (flow
 management), `@regression` (guards the outdated-on-import behavior). Functional:
-covered by `@workspace` (Export/Import Flow, §12.4). Not `@stable` on
-introduction — promotion follows team validation per `CONTRIBUTING.md`.
+covered by `@workspace` (Export/Import Flow, §12.4). Promoted to `@stable` in
+#1808; quarantined on 2026-11-05 (#2402) when 1.14.0.dev18 changed the import
+contract, and restored by #2399.
 
 ---
 
 ## Step by step *(required)*
 
 Shared setup: bootstrap the app (`awaitBootstrapTest(page, { skipModal: true })`)
-and wait for `mainpage_title`. The flow this test creates is captured from its
-`POST /api/v1/flows` response and deleted id-scoped in `afterEach`
-(repo convention #490/#681 — never a global `cleanAllFlows`).
+and wait for `mainpage_title`. Every flow the page creates — the bootstrap's and
+the import's — is captured by the shared `trackCreatedFlows` tracker and deleted
+id-scoped in `afterEach` (repo convention #490/#681 — never a global
+`cleanAllFlows`).
 
 1. Wait for `upload-project-button` to be visible on the flows page.
 2. Arm a `filechooser` capture, click `upload-project-button`, and feed
    `tests/assets/flows/outdated_flow.json` (single-flow shape — has `data.nodes`,
    no `flows[]` bundle — so it goes through the single-flow `uploadFlow` path).
-3. Capture the created flow's id from the `POST /api/v1/flows` response
-   (the UI upload mints a **fresh** id — verified live it does not reuse the
-   fixture's frozen `03bae731…`, so parallel uploads never collide on id).
+3. Capture the created flow's id from the import's response, whichever contract
+   the version under test speaks (see *The import contract* below), and require
+   **exactly one** flow to have been created — a single-flow file that imports
+   zero or two flows is a defect, not an id to pick from. The UI upload mints a
+   **fresh** id — verified live it does not reuse the fixture's frozen
+   `03bae731…`, so parallel uploads never collide on id.
 4. Assert the **"uploaded successfully"** message is visible — the outdated
    payload was ingested without error.
 5. Open the imported flow deterministically by navigating to `/flow/<capturedId>`
@@ -83,6 +89,7 @@ and wait for `mainpage_title`. The flow this test creates is captured from its
 After importing `outdated_flow.json` via the `upload-project-button` file chooser
 and opening the imported flow by its captured id:
 
+- The import created **exactly one** flow (by either contract), AND
 - The **"uploaded successfully"** message appears (import accepted), AND
 - The flow-level banner matching `/\d+ components? needs? updates?/i` is visible,
   AND
@@ -109,6 +116,13 @@ sibling `outdated-component-notification.spec.ts`'s concern, not this spec's.
 - `data-testid="update-all-button"` — the toolbar bulk update/review CTA that
   accompanies the outdated notification.
 - `data-testid="mainpage_title"` — flows page loaded marker.
+- `tests/helpers/flows/track-created-flows.ts` — collects the imported id from
+  either import contract, and the bootstrap's flows for cleanup.
+- The import request, which depends on the version under test: one
+  `POST /api/v1/flows/` answering the created flow (≤ 1.13), or one
+  `POST /api/v1/flows/upload/` answering an array of the created flows
+  (≥ 1.14.0.dev18, langflow-ai/langflow#16120 —
+  `src/frontend/src/controllers/API/queries/flows/use-post-upload-flows.ts`).
 - `tests/assets/flows/outdated_flow.json` — shared frozen fixture (5 components on
   a 1.4.0-era snapshot). Same fixture used by
   `outdated-component-notification.spec.ts`.
@@ -132,6 +146,16 @@ sibling `outdated-component-notification.spec.ts`'s concern, not this spec's.
 ---
 
 ## Notes *(optional)*
+
+- **The import contract (#2399).** Up to 1.13 the upload button created the flow
+  with one `POST /api/v1/flows/`, answering the created flow object. From
+  `1.14.0.dev18` (langflow-ai/langflow#16120) it sends one
+  `POST /api/v1/flows/upload/` for the whole selection, answering an **array**.
+  The spec's waiter matched any `POST` whose URL contained `/api/v1/flows`, so on
+  dev18 it caught the upload and read `.id` off an array — `upload POST
+  /api/v1/flows must return the created flow id`, `Received: undefined`, with the
+  imported card on screen. The id is now read through the shared tracker, which
+  understands both shapes, so the spec stays green against a 1.13 patch as well.
 
 - **Observables verified live on 1.12.0.dev3** via `playwright-cli`: uploading
   `outdated_flow.json` through `upload-project-button` left the app on `/flows`

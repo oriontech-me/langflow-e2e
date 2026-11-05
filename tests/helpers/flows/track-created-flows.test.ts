@@ -12,8 +12,11 @@
 //
 //   1. bodies are settled before cleanup — 50 of the 51 copies dropped an id that
 //      resolved a tick late, and the last test in a worker has no later hook;
-//   2. the URL match is the exact creation endpoint — `/flows/batch/` and
-//      `/flows/upload/` also answer 201;
+//   2. the URL match is exact — the creation endpoint and the import endpoint,
+//      nothing else under `/flows/` (`/flows/batch/` also answers 201). The import
+//      endpoint joined in #2399: from 1.14.0.dev18 every UI import is one
+//      `POST /api/v1/flows/upload/` answering an ARRAY, and ignoring it leaked
+//      every flow a UI import created;
 //   3. the page leaves the canvas BEFORE the delete — a mounted editor 404s on the
 //      flow it is polling (#1023/#1103);
 //   4. a failed delete is reported, not swallowed — the copies that wrote
@@ -33,7 +36,9 @@ import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import {
   flowIdFrom,
+  flowIdsFrom,
   isFlowCreateUrl,
+  isFlowUploadUrl,
   trackCreatedFlows,
   type TrackedPage,
   type TrackedResponse,
@@ -154,6 +159,28 @@ test("only the exact creation endpoint is a flow creation", () => {
   assert.equal(isFlowCreateUrl("not a url"), false);
 });
 
+test("only the exact import endpoint is a flow upload", () => {
+  assert.equal(isFlowUploadUrl(`${BASE}/api/v1/flows/upload/`), true);
+  assert.equal(isFlowUploadUrl(`${BASE}/api/v1/flows/upload`), true);
+  assert.equal(isFlowUploadUrl(`${BASE}/api/v1/flows/upload/?folder_id=x`), true, "a query string is not part of the path");
+  assert.equal(isFlowUploadUrl(`${BASE}/api/v1/flows/`), false);
+  assert.equal(isFlowUploadUrl(`${BASE}/api/v1/flows/batch/`), false);
+  // The PROJECT import answers a project, not flows, and is not this endpoint.
+  assert.equal(isFlowUploadUrl(`${BASE}/api/v1/projects/upload/`), false);
+  assert.equal(isFlowUploadUrl(`${BASE}/assets/flows/upload/index.js`), false);
+  assert.equal(isFlowUploadUrl("not a url"), false);
+});
+
+test("an object body yields its id; an array body yields every element's id", () => {
+  assert.deepEqual(flowIdsFrom({ id: "abc" }), ["abc"]);
+  assert.deepEqual(flowIdsFrom([{ id: "a" }, { id: "b" }]), ["a", "b"]);
+  // An element without a usable id is skipped, never turned into a hole.
+  assert.deepEqual(flowIdsFrom([{ id: "a" }, {}, null, { id: "" }, { id: 7 }, { id: "b" }]), ["a", "b"]);
+  for (const body of [undefined, null, {}, { id: "" }, [], "abc", { flows: [{ id: "a" }] }]) {
+    assert.deepEqual(flowIdsFrom(body), [], `unexpected ids for ${JSON.stringify(body)}`);
+  }
+});
+
 test("a body without a usable id yields no id", () => {
   assert.equal(flowIdFrom({ id: "abc" }), "abc");
   for (const body of [undefined, null, {}, { id: "" }, { id: 7 }, [{ id: "a" }]]) {
@@ -175,6 +202,43 @@ test("captures the created flow ids, ignoring everything else", async () => {
   await flows.settle();
 
   assert.deepEqual(flows.ids(), ["flow-1", "flow-2"]);
+});
+
+test("captures every flow an import response carries (#2399)", async () => {
+  // 1.14.0.dev18: the whole selection is ONE `POST /api/v1/flows/upload/`, and its
+  // 201 body is the array of created flows. Before #2399 this response was
+  // ignored, so a UI import of 15 flows left 15 flows behind and no id to count.
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+
+  emit(
+    creationResponse(undefined, {
+      url: `${BASE}/api/v1/flows/upload/`,
+      body: [{ id: "up-1" }, { id: "up-2" }, { id: "up-3" }],
+    }),
+  );
+  emit(creationResponse("created-1"));
+  emit(
+    creationResponse(undefined, {
+      url: `${BASE}/api/v1/flows/upload/`,
+      method: "GET",
+      body: [{ id: "ignored" }],
+    }),
+  );
+  await flows.settle();
+
+  assert.deepEqual(flows.ids(), ["up-1", "up-2", "up-3", "created-1"]);
+});
+
+test("a failed import POST is recorded like a failed creation", async () => {
+  // An atomic import that the server rejects (422, langflow-ai/langflow#16120)
+  // created nothing — the setup step that consults this must see it.
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse(undefined, { url: `${BASE}/api/v1/flows/upload/`, status: 500 }));
+  assert.deepEqual(flows.failedCreations(), ["500 Internal Server Error"]);
+  await flows.settle();
+  assert.deepEqual(flows.ids(), []);
 });
 
 test("the same id observed twice is captured once", async () => {

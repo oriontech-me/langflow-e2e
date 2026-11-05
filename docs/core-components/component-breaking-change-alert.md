@@ -2,7 +2,8 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/component-breaking-change-alert.spec.ts`
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev9`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev18`, upload contract) and
+1.13.x (`1.13.1`, per-flow contract)
 
 ---
 
@@ -64,7 +65,21 @@ same event an OS drag-and-drop fires — the same import mechanism used by the
 
 No test applies the update (no "Update Component(s)" click), so the imported flow
 is never mutated and no `(Backup)` flow is created. Each imported flow is tracked
-by id (from `POST /api/v1/flows/ → 201`) and deleted id-scoped in `afterEach`.
+by id and deleted id-scoped in `afterEach`, through the shared
+`trackCreatedFlows` tracker in `{ strict: true }` mode (a failed delete still
+fails the teardown, as it did before the tracker existed).
+
+### The import contract changed in 1.14 (#2399)
+
+Up to 1.13 the drop created the flow with one `POST /api/v1/flows/`, answering
+the created flow object. From `1.14.0.dev18` (langflow-ai/langflow#16120,
+*"Selected flow imports use one atomic request"*) it sends one
+`POST /api/v1/flows/upload/` for the whole selection, answering an **array**. The
+import helper waited for a pathname of exactly `/api/v1/flows`, which dev18 never
+sends, so all three tests timed out at `page.waitForResponse` with the imported
+card on screen (2026-11-05). The helper now reads the imported id from whichever
+contract the version under test speaks, and requires **exactly one** flow to have
+been created by the drop of a single-flow file.
 
 ---
 
@@ -78,6 +93,7 @@ by id (from `POST /api/v1/flows/ → 201`) and deleted id-scoped in `afterEach`.
 
 | # | State | Locator | Expected |
 |---|---|---|---|
+| all | After the drop | flows the import created (either contract) | exactly `1` — the shared import gate, before anything is opened |
 | 1 | After import + open | `getByTestId("review-button")` | `≥ 1` (breaking surfaced for Review) |
 | 1 | After import + open | `getByText(/\d+ components? needs? updates?/i)` | `toBeVisible()` (also the shared import gate) |
 | 1 | After import + open | `getByTestId("update-all-button")` | text `Review All` |
@@ -150,6 +166,12 @@ fixture to an older snapshot, not a product bug.
   unselected).
 - `tests/assets/flows/outdated_flow.json` — the fixture flow whose 5 components
   are pinned behind the current version so all resolve to breaking updates.
+- `tests/helpers/flows/track-created-flows.ts` — reads the imported id from
+  either import contract and owns the id-scoped cleanup.
+- The import request, which depends on the version under test: one
+  `POST /api/v1/flows/` answering the created flow (≤ 1.13), or one
+  `POST /api/v1/flows/upload/` answering an array of the created flows
+  (≥ 1.14.0.dev18 — `src/frontend/src/hooks/flows/use-upload-flow.ts`).
 - No model-provider credentials required — the fixture's OpenAI node carries a
   dummy key and no flow is executed.
 
@@ -199,4 +221,12 @@ scope here.
   Validation block — one mutation per test, each observed failing, then reverted.
 - The fixture is renamed with a unique per-run suffix before import so the test
   waits for *its own* dropped card (avoids racing bootstrap-seeded cards), the
-  same pattern as the upstream `outdated-actions` reference.
+  same pattern as the upstream `outdated-actions` reference. Since #2399 the
+  suffix is the clock **plus a random part**: the three tests run on two workers,
+  and two imports reaching `POST /api/v1/flows/upload/` concurrently under the
+  same name are refused with an unmapped `500` ("An internal error occurred while
+  creating the flow."), where `POST /api/v1/flows/` answers `400 Name must be
+  unique` — measured on both 1.13.1 and 1.14.0.dev18, so not new in 1.14, only
+  newly reachable from the UI. The frontend retries a 5xx (up to 3 times), so the
+  import still lands and the test still passes, but the `🚨 Backend Error` line it
+  leaves is noise this spec should not cause.

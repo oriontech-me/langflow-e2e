@@ -15,10 +15,11 @@ pointed at this spec for the §15.2 drag.
 Two independent tests:
 
 1. **Collection file** — dropping `tests/assets/flows/collection.json` (15 flows)
-   creates **one flow per entry in the file**: the spec counts the
-   `POST /api/v1/flows/` 201 responses the drop fires and requires exactly as many
+   creates **one flow per entry in the file**: the spec counts the **flows** the
+   drop created — the ids its import responses carry — and requires exactly as many
    as the asset declares, then asserts the imported flows are on screen anchored
-   by their own ids (`flow-name-<id>` inside `list-card`).
+   by their own ids (`flow-name-<id>` inside `list-card`). The count is of flows,
+   never of responses: see *The import contract changed in 1.14* below.
 2. **Single flow file** — dropping a copy of
    `tests/assets/flows/flow_test_drag_and_drop.json` renamed to a per-run random
    string creates exactly one flow, whose card carries that name and its returned
@@ -51,31 +52,50 @@ Two independent tests:
   `New Flow` plus a second `Basic Prompting`, once per run.
 
   The fix keeps both reasons intact by separating the two populations. A
-  **bootstrap** listener is installed *before* `awaitBootstrapTest` and feeds its
-  own array, which `afterEach` deletes and no assertion ever counts; the
-  **import** listener still goes up afterwards and still feeds the array the count
-  assertion reads. Never a global sweep — the suite runs `fullyParallel`.
+  **cleanup** tracker is installed *before* `awaitBootstrapTest` and captures every
+  flow the page creates, which `afterEach` deletes and no assertion ever counts;
+  the **import** tracker goes up afterwards and is the only thing the count
+  assertion reads. Since #2399 both are the shared `trackCreatedFlows` (the import
+  tracker's ids are a subset of the cleanup tracker's, so it is disposed, never
+  cleaned up). Never a global sweep — the suite runs `fullyParallel`.
 - **Assertions anchored by id, not by list position or free text** — per the
   home-cards convention (the list sorts by `updated_at` DESC, so a positional
   match is another worker's flow under parallel CI).
 
+### The import contract changed in 1.14 (#2399)
+
+Up to 1.13 the home-page import created the flows **one `POST /api/v1/flows/` per
+flow**, each answering `201` with the created flow object. From `1.14.0.dev18`
+(langflow-ai/langflow#16120, *"Selected flow imports use one atomic request"*)
+the same drop sends **one `POST /api/v1/flows/upload/`** for the whole selection,
+answering `201` with an **array** of the created flows. Both are intended
+contracts, and the suite still runs against 1.13 patches on demand, so the spec
+reads **either**: the ids come from the shared `trackCreatedFlows` tracker, which
+collects them from a creation response (one id) and from an upload response (one
+id per element). On 2026-11-05 the spec counted `201`s whose body had a top-level
+`id`, so the single upload response — an array — counted as nothing: `expected
+15, received 0` while the cards were on screen, and every imported flow leaked.
+
+That is why the assertion is on the **number of flows**, not the number of
+responses: on 1.14 a collection drop is one response carrying 15 flows, and
+"15 responses" would be a test of the transport rather than of the import.
+
 ## Tags
 
-`@release` `@workspace` `@mainpage`
+`@stable` `@release` `@workspace` `@mainpage`
 
-**No `@stable` (deliberate).** This spec covers the `§10.1 Upload flow by
-drag-and-drop to folder` bullet, whose promotion belongs to its own wave item —
-this change only removes the dead assertions and the flow leak, so promoting it
-here would flip a checklist bullet outside the scope of #938. The tests are run
-clean and force-failed as part of that change.
+Promoted to `@stable` in #1808 (measured green in the T1 triage of #1787).
+Quarantined on 2026-11-05 (`test.fixme`, `@stable` removed by hand in #2402,
+because the mass-failure guard tripped) when 1.14.0.dev18 changed the import
+contract, and restored by #2399 once the spec read both contracts.
 
 ## Validation criterion
 
 | Step | Criterion |
 |---|---|
-| Collection drop | number of `POST /api/v1/flows/` 201 responses equals the asset's `flows.length` (15); the first imported id renders a `flow-name-<id>` card |
-| Single-flow drop | exactly 1 `POST /api/v1/flows/` 201; its `flow-name-<id>` card is visible and shows the per-run random name |
-| Both | zero `🚨 Backend Error` (fixture monitor) and every imported id deleted in `afterEach` |
+| Collection drop | number of **flows** the drop created (ids carried by its `POST /api/v1/flows/` or `POST /api/v1/flows/upload/` 201 responses) equals the asset's `flows.length` (15); every one is readable through `GET /api/v1/flows/{id}`; at least one renders a `flow-name-<id>` card |
+| Single-flow drop | exactly 1 flow created, by either contract; its `flow-name-<id>` card is visible and shows the per-run random name, and its stored name is exactly that name |
+| Both | zero `🚨 Backend Error` (fixture monitor) and every imported id — plus every flow the bootstrap created — deleted in `afterEach`, on both contracts |
 
 ## External dependencies
 
@@ -85,10 +105,20 @@ clean and force-failed as part of that change.
   `LANGFLOW TEST` name is replaced per run.
 - `helpers/ui/simulate-drag-and-drop.ts` — builds the `DataTransfer` and
   dispatches `mousedown`/`mousemove`/`drop` on the dropzone.
+- `helpers/flows/track-created-flows.ts` — collects the created ids from both
+  import contracts; one tracker for every flow the page created (the cleanup),
+  one attached after the bootstrap for the drop's flows only (the count).
 - Home page: `cards-wrapper` (dropzone), `list-card`, `flow-name-<id>`.
-- `POST /api/v1/flows/` — one 201 per imported flow (confirmed live on
-  1.12.0.dev6); this is the signal both the count assertion and the cleanup use.
+- The import request, which depends on the version under test:
+  - `POST /api/v1/flows/` — one 201 per imported flow, answering the created flow
+    (≤ 1.13; confirmed live on 1.12.0.dev6 and 1.13.1);
+  - `POST /api/v1/flows/upload/` — one 201 for the whole selection, answering an
+    array of the created flows (≥ 1.14.0.dev18, langflow-ai/langflow#16120).
+- `src/frontend/src/hooks/flows/use-upload-flow.ts` and
+  `src/frontend/src/controllers/API/queries/flows/use-post-upload-flows.ts` — the
+  1.14 import path.
 
 ## Last validated
 
-1.13.x (nightly `1.13.0.dev8`)
+1.14.x (nightly `1.14.0.dev18`, upload contract) and 1.13.x (`1.13.1`, per-flow
+contract)
