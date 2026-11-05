@@ -1778,7 +1778,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 794 `test()` calls carrying the `@stable` tag, distributed across 294 spec
+> 797 `test()` calls carrying the `@stable` tag, distributed across 294 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1845,6 +1845,7 @@
 - [x] every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared → `api-integrations-manifest.spec.ts`
 
 #### api/files/
+- [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
 - [x] deletes a flow-scoped file and the listing reflects it → `api-files-v1-flow-scoped.spec.ts`
 - [x] serves an image through images/ and refuses an unknown flow → `api-files-v1-flow-scoped.spec.ts`
 - [x] serves the bundled profile pictures → `api-files-v1-flow-scoped.spec.ts`
@@ -2287,6 +2288,8 @@
 - [x] should open Create Knowledge Base with the 1000 / 200 / newline defaults and apply the chunk settings chosen there to the stored chunks → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when a line is longer than the chunk size → `memory-base-ingestion.spec.ts`
+- [x] should ingest a server-side folder through the folder connector and read its chunks back → `memory-base-ingestion.spec.ts`
+- [x] should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back → `memory-base-ingestion.spec.ts`
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal is scoped to the current flow → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
