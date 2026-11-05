@@ -1672,7 +1672,7 @@
 > `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
 > #2347). Tracker: #2357.
 
-> **None of 25.1–25.3 can be `@stable`** — nothing runs `@instance-migration` on a cron
+> **None of 25.1–25.4 can be `@stable`** — nothing runs `@instance-migration` on a cron
 > (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`. 25.0 is
 > the exception: it asserts the **default** build, so it runs on the normal lane.
 
@@ -1701,6 +1701,14 @@
 - [-] While paused, ten write surfaces (save and create a flow, `/api/v1/run`, `/api/v2/workflows`, both uploads, sign-up, create and delete a global variable, create an API key) answer `503 {"detail": "This instance is being migrated."}` and nothing they asked for exists afterwards; reads, login, refresh, logout and a regular user's `GET /api/v1/migration/pause` answer `200` → `instance-migration/instance-migration-pause.spec.ts`
 - [-] A regular user who signs in during the pause sees the notice on the home page, *General*, *Global Variables* and their flow, which opens on the canvas; a new global variable fails at once with the server's reason after exactly one `POST` → `instance-migration/instance-migration-pause.spec.ts`
 - [-] The pause survives a container restart (same `frozen_at`, the rename still `503`); `DELETE /api/v1/migration/pause` lets the same rename through, and the flow's description, the file's bytes and the variable are intact → `instance-migration/instance-migration-pause.spec.ts`
+
+#### 25.4 Destinations and the secret key (#2351)
+
+- [-] *Where your data goes* names each failure by its code and the server's reason: a wrong password and an unreachable host (both `db_unreachable`, told apart only by the reason), a database without pgvector (`pgvector_missing`), a missing bucket (`bucket_missing`); the page shows *Can't connect to this database.* with the reason, and a valid destination saves to `done` with only locations in the record → `instance-migration/instance-migration-destinations-and-key.spec.ts`
+- [-] The lane's planted secrets, the typed ones and the key's fingerprint appear in no `PUT` answer, `GET /api/v1/migration`, page HTML or page API answer, `migration.json` on disk, copy events or container logs; an endpoint with credentials and an unescaped `@` are refused and not kept → `instance-migration/instance-migration-destinations-and-key.spec.ts`
+- [-] After a restart the step still reads `done`, the copy answers `409 secrets_missing` and the page says to enter them again; *Change or enter again* fills back no password or key, and entered again the copy runs to `done` → `instance-migration/instance-migration-destinations-and-key.spec.ts`
+- [-] *Hand over the secret key* names `LANGFLOW_SECRET_KEY` and never the key; a key pasted whole is cut to 12 characters before it is sent; a wrong fingerprint is refused (`400`, alert, step `blocked`), the right one accepted, and a later wrong one reopens the step; the pause and the copies answer `409 locked` until it is verified → `instance-migration/instance-migration-destinations-and-key.spec.ts`
+- [ ] A wrong S3 key (`bucket_denied`) — the lane's gateway accepts any key (#2397)
 
 ---
 

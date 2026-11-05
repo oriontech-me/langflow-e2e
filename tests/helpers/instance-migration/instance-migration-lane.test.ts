@@ -84,6 +84,13 @@ test("every fixture secret is a sentinel a spec can search raw text for", () => 
   for (const s of lane.sentinels) assert.ok(s.length >= 16, `sentinel '${s}' is too short to be unambiguous`);
 });
 
+test("the migration record is read from the config dir the start script gives the source", () => {
+  // #2351 reads <configDir>/migrations/migration.json with `docker exec`; the start script
+  // sets LANGFLOW_CONFIG_DIR from the same variable, and the reset script removes that folder.
+  assert.equal(instanceMigrationLane({}).configDir, "/app/data/.cache/langflow");
+  assert.equal(instanceMigrationLane({ IM_CONFIG_DIR: "/srv/langflow" }).configDir, "/srv/langflow");
+});
+
 test("the new instance runs the source's image on the lane's network, published on loopback beside it", () => {
   // #2354: the start settings name the database and the bucket by container name, so
   // the new instance must join the same network, and it needs the pgvector package the

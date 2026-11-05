@@ -82,6 +82,11 @@ export interface InstanceMigrationLane {
   };
   /** The same destinations as THIS host reaches them, for assertions on what landed. */
   fromHost: { databaseUrl: string; s3Endpoint: string };
+  /**
+   * The source's LANGFLOW_CONFIG_DIR, inside its container. The migration record lives at
+   * `<configDir>/migrations/migration.json` (#2351 reads it to assert no secret is written).
+   */
+  configDir: string;
   /** The source's LANGFLOW_SECRET_KEY and the fingerprint the secret-key step asks for. */
   secretKey: string;
   secretKeyFingerprint: string;
@@ -138,6 +143,7 @@ export function instanceMigrationLane(env: NodeJS.ProcessEnv = process.env): Ins
       databaseUrl: `postgresql://${user}:${password}@127.0.0.1:${v("IM_PG_HOST_PORT")}/${database}`,
       s3Endpoint: `http://127.0.0.1:${v("IM_S3_HOST_PORT")}`,
     },
+    configDir: v("IM_CONFIG_DIR"),
     secretKey,
     secretKeyFingerprint: secretKeyFingerprint(secretKey),
     sentinels: [password, v("IM_S3_ACCESS_KEY_ID"), v("IM_S3_SECRET_ACCESS_KEY"), secretKey],

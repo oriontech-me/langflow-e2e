@@ -53,6 +53,8 @@ export interface MigrationState {
     version: string;
     database: { type: string; path?: string };
     knowledge_bases?: { folder?: string; local?: boolean };
+    /** Where the key lives, never the key or its fingerprint (#2351). */
+    secret_key?: { source: "env" | "file"; path?: string };
   };
   steps: StepState[];
   blocking_findings: string[];
