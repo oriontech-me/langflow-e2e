@@ -3121,6 +3121,56 @@ for (const [name, targetOut, level] of [
   });
 }
 
+// --- lf-self.localhost: the MCP self-registration host must resolve on the target -------
+
+for (const [name, out, expected] of [
+  ["mapped to loopback", probed("127.0.0.1"), /^ok: /],
+  ["mapped to both loopback families", probed("::1", "127.0.0.1"), /^ok: /],
+  ["the QA VM before the hosts line, where the resolver errors", "UNRESOLVED", /^MISSING: /],
+  ["mapped somewhere Langflow does not listen", probed("::1"), /^WRONG: /],
+  ["no answer at all", "", /^UNKNOWN: /],
+]) {
+  test(`self_mcp_host_verdict: ${name}`, () => {
+    const r = sourced('self_mcp_host_verdict "$OUT"', { OUT: out });
+    assert.equal(r.status, 0);
+    assert.match(r.stdout.trim(), expected);
+    assert.equal(r.stdout.trim().split("\n").length, 1, "one verdict line");
+  });
+}
+
+test("a missing self-registration host names the specs it falsifies and the line that fixes it", () => {
+  const r = sourced('self_mcp_host_verdict "$OUT"', { OUT: "UNRESOLVED" });
+  assert.match(r.stdout, /mcp-server\.spec\.ts/);
+  assert.match(r.stdout, /127\.0\.0\.1 localhost/);
+  assert.match(r.stdout, /ops\/systemd\/README\.md/);
+});
+
+for (const [name, targetOut, level] of [
+  ["a target without the name", "UNRESOLVED", "warn"],
+  ["a target that cannot be asked", null, "warn"],
+  ["a correct target", probed("127.0.0.1"), "info"],
+]) {
+  test(`check_target_self_mcp_host never fails the run, and records the verdict: ${name}`, () => {
+    const dir = makeTempDir("run-e2e-self-mcp-host-");
+    mkdirSync(join(dir, "logs"));
+    const stub = targetOut === null ? "target_ssh() { return 255; }" : `target_ssh() { printf '%s\\n' "$TARGET_OUT"; }`;
+    const r = sourced(`RUN_DIR="$DIR"\n${stub}\ncheck_target_self_mcp_host; echo "rc=$?"`, { DIR: dir, TARGET_OUT: targetOut ?? "" });
+    assert.match(r.stdout, /rc=0/);
+    const logged = readFileSync(join(dir, "logs", "target-self-mcp-host.log"), "utf8").trim();
+    assert.ok(logged.length > 0);
+    if (level === "warn") assert.match(r.stderr, new RegExp(`::warning:: ${logged.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    else assert.match(r.stdout, /ok: lf-self\.localhost resolves to 127\.0\.0\.1/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
+test("the self-registration host is asked in the preflight, after the run directory exists", () => {
+  const body = readFileSync(SCRIPT, "utf8").split("\nphase_preflight() {")[1].split("\n}\n")[0];
+  const mkdir = body.indexOf('mkdir -p "$RUN_DIR"/{logs');
+  const call = body.indexOf("check_target_self_mcp_host");
+  assert.ok(mkdir > 0 && call > mkdir, "check_target_self_mcp_host runs after the run directory is created");
+});
+
 test("the preflight asks the target, after the run directory exists", () => {
   // Before the mkdir there is nowhere to write the verdict; the first version of the
   // mirror check made exactly that mistake (#1947).

@@ -341,7 +341,7 @@ jobs:
           #    private IP against these CIDRs and skips its private-IP block
           #    (#462). This lets the echo-dependent tests run against a reliable
           #    in-CI endpoint instead of the flaky public postman-echo.
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s

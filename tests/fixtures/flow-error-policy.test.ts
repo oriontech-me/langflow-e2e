@@ -15,6 +15,7 @@ import {
   classifyFlowError,
   isUnreadableStream,
   parseStreamEvents,
+  providerOutage,
   runStreamSurface,
 } from "./flow-error-policy";
 
@@ -606,4 +607,71 @@ test("an ordinary flow error is untouched by the downgrade", () => {
     `data: ${JSON.stringify({ type: "RUN_ERROR", message: "THIS IS A TEST ERROR MESSAGE" })}`,
   );
   assert.equal(verdict.failed, true);
+});
+
+// ---------- integration errors (#2355, upstream #15773 / #15775) ----------
+
+/**
+ * A connector's failure as the AG-UI translator puts it in `RUN_ERROR`: the error's
+ * message, a blank line, then its hint (`agui_translator.py`, #15773). Measured on
+ * 1.14.0.dev7 for `connection-unresolved` and `auth-expired`; the rest are composed
+ * from `lfx/integrations/errors.py` the same way.
+ */
+const integrationRunError = (message: string, hint: string) =>
+  `data: ${JSON.stringify({ type: "RUN_ERROR", message: `${message}\n\n${hint}`, code: "x" })}`;
+
+const NETWORK_HINT = "Check this server's outbound network access, DNS, proxy, and TLS settings.";
+const NETWORK_REASONS = [
+  "request timed out",
+  "DNS lookup failed",
+  "connection refused",
+  "network unreachable",
+  "TLS connection failed",
+  "connection failed",
+];
+
+test("a genuine integration error is a flow error, never a provider outage", () => {
+  // #2355: PROVIDER_OUTAGE_PATTERNS exists so a drained account cannot strip
+  // @stable, and it must not swallow an error about the instance, the connection
+  // or the policy. network-error is this server's own egress (#15775), not the
+  // provider, so it belongs here too.
+  const cases: Array<[string, string, string]> = [
+    [
+      "connection-unresolved",
+      "Connection 'google/e2e' could not be resolved. Configure the connection for this execution environment.",
+      "Configure the connection for this execution environment.",
+    ],
+    ["auth-expired", "The provider credential is expired or was rejected.", "Reconnect the integration and try again."],
+    [
+      "scope-missing",
+      "The connection does not grant every scope required by this action.",
+      "Grant the missing scopes and reconnect.",
+    ],
+    [
+      "policy-blocked",
+      "This integration action is not available under the current integration policy.",
+      "Ask an administrator to approve the integration or unblock the action.",
+    ],
+    ...NETWORK_REASONS.map((reason): [string, string, string] => [
+      `network-error (${reason})`,
+      `Langflow could not reach www.googleapis.com (${reason}). ${NETWORK_HINT}`,
+      NETWORK_HINT,
+    ]),
+  ];
+  for (const [code, message, hint] of cases) {
+    const verdict = classifyFlowError(integrationRunError(message, hint));
+    assert.equal(verdict.failed, true, code);
+    assert.equal(providerOutage(`${message}\n\n${hint}`), null, code);
+  }
+});
+
+test("an integration's rate limit is the one integration error downgraded to a provider outage", () => {
+  // Matches the gate's existing rate-limited pattern on purpose: a provider's
+  // rate limit is account state, like an LLM's. Pinned so the test above cannot
+  // be read as "every integration code is a failure".
+  const verdict = classifyFlowError(
+    integrationRunError("The provider rate limit was reached.", "Retry after the provider's backoff interval."),
+  ) as any;
+  assert.equal(verdict.failed, false);
+  assert.equal(verdict.providerOutage, "rate-limited");
 });

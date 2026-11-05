@@ -1,6 +1,6 @@
 # A2A Client — the `A2AAgent` as an Agent tool, through a tool-call approval
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev10`)
 
 **Issue:** #1855 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C3**) ·
 **Follows:** #1354 (C1) · **Jira:** epic `LE-1588`, regression `LE-1963`, tool-call
@@ -65,6 +65,16 @@ covers that half).
   with no `Input should be callable` in the backend log. A pre-fix dist was not
   re-run as a negative control on this setup; the VM lane's 10/10 failure on
   `1.13.0.dev16` is the pre-fix evidence.
+- **Quarantined and restored, a test defect (#2378).** On 2026-10-26 and 2026-10-30 the
+  VM lane failed the first attempt waiting for the target's option in the picker. The
+  failure screenshots show the dropdown open with the target **listed**, but second: the
+  test asked for `<A's name>-0-option`, and the dropdown's testid is
+  `${option}-${index}-option`. The list is ordered by `updated_at` descending and scoped
+  to the project, which every worker shares, so an agent another spec published or
+  edited after A takes index 0. Reproduced locally on `1.14.0.dev10` by re-saving a
+  second published agent once a second during the run: same locator, same statement; the
+  same spec passes with that agent idle. The test now picks the option by name at any
+  index.
 
 ---
 
@@ -129,8 +139,10 @@ and deleted in `afterEach`; A is deleted by id.
    the sidebar drops the new node on top of them, and with `send_to_agent` as the
    Agent's only tool a missing approval card can only mean "the model called no tool".
 5. Add the `A2AAgent` node (`add-component-button-a2a-agent`), click `tab_0_internal`,
-   open `value-dropdown-dropdown_str_agent_name_selected` and pick
-   `<A's name>-0-option`.
+   open `value-dropdown-dropdown_str_agent_name_selected` and pick A's option by name,
+   at whatever index it has (`<A's name>-<index>-option`). The list is ordered by
+   `updated_at` descending across the shared project, so another worker's agent can sit
+   above A (#2378).
 6. Select the node (`title-A2A Agent`) and click `tool-mode-button`; assert
    `tool_send_to_agent`.
 7. **Wait for the node's update round trips to settle** (`waitForComponentUpdateSettled`),

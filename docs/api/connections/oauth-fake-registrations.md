@@ -10,7 +10,8 @@ callback).
 ## What this test validates *(required)*
 
 This document specifies **infrastructure, not a test**. It records a lane configuration and the decision behind
-it, and ships no `.spec.ts`. The specs that rely on it are #2307's. `docs/serving/end-user-identity-lane.md` is the
+it, and ships no `.spec.ts`. The specs that rely on it are #2307's: `api-connections-oauth-callback.md` and
+`docs/core-functionality/integrations/connection-oauth-wizard.md`. `docs/serving/end-user-identity-lane.md` is the
 precedent for a `docs/` artifact that specifies a mechanism.
 
 ### The gap
@@ -37,7 +38,7 @@ provider tenant:
 | `GET /oauth/google/callback?state=…&error=access_denied` with the cookie | `400` HTML *"OAuth authorization failed. Return to connections and start again."* with the same three headers. The row moves to `status: error`, `status_reason: oauth-denied`. |
 
 So everything short of a real consent is reachable. The last row also makes `status: error` reachable, which
-`api-connections-secret-boundary.md` had recorded as out of reach. Covering it belongs to #2307.
+`api-connections-secret-boundary.md` had recorded as out of reach. `api-connections-oauth-callback.md` covers it (#2307).
 
 ### The four registrations
 

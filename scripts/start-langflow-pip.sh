@@ -42,7 +42,7 @@ LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING=true \
 LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
 LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS="${LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS:-$DEFAULT_OAUTH_REGISTRATIONS}" \
-LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
+LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,lf-self.localhost}" \
 LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-~/.cache/langflow,~/Library/Caches/langflow}" \
   langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser \
     --workers "${LANGFLOW_WORKERS:-1}" &
@@ -56,7 +56,11 @@ LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-~/.cache/l
 # echo endpoint (ECHO_BASE_URL) or any private-network service is refused locally
 # while working in CI, silently. Loopback stays OUT of the list on purpose —
 # specs use an SSRF-blocked loopback fetch as a deterministic error generator and
-# security/ssrf-url-validation.spec.ts asserts that refusal.
+# security/ssrf-url-validation.spec.ts asserts that refusal. The one loopback
+# entry is a NAME no other spec uses, `lf-self.localhost`: mcp-server.spec.ts
+# registers this instance as its own MCP server under it, and from 1.13.1 an MCP
+# HTTP destination on loopback is admitted only by an explicit entry (#16041;
+# tests/helpers/mcp/self-mcp-url.ts).
 # LANGFLOW_KB_ALLOWED_FOLDER_ROOTS is the knowledge-base `folder` connector's
 # allow-list (empty refuses every walk), set to Langflow's config directory — where
 # flow-scoped uploads land — as every lane sets it, so memory-base-ingestion.spec.ts

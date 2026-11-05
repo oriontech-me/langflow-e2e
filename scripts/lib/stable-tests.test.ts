@@ -400,8 +400,8 @@ test("an unreadable tag option is flagged rather than read as untagged", () => {
   assert.equal(out[0].stable, false);
 });
 
-test("the lane selectors are the three that are never combined with @stable", () => {
-  assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving"]);
+test("the lane selectors are the four that are never combined with @stable", () => {
+  assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving", "@instance-migration"]);
 });
 
 test("collectDeclaredTests covers every @stable test the Phase 0 parser finds", () => {

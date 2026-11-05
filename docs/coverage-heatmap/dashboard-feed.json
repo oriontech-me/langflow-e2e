@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-26",
+ "refreshed": "2026-11-05",
  "refreshWindow": {
-  "testHealthSince": "2026-09-11",
+  "testHealthSince": "2026-09-21",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 822,
-  "bulletsAutomatedUnwatched": 125,
-  "residualRiskTotal": 100.3
+  "bullets": 826,
+  "bulletsAutomatedUnwatched": 128,
+  "residualRiskTotal": 99.4
  },
  "areas": [
   {
@@ -107,11 +107,11 @@
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 2,
-   "residualRisk": 7,
+   "residualRisk": 6.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.72,
+   "mitigation": 0.73,
    "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
@@ -135,9 +135,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 37,
-    "penalty": 0.01
+    "penalty": 0
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -151,7 +151,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": -0.4,
+    "residualRisk": -0.6,
     "rank": 2,
     "direction": "improved"
    },
@@ -260,67 +260,9 @@
    "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
   },
   {
-   "key": "security",
-   "label": "NEW security",
-   "rank": 5,
-   "residualRisk": 6.2,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.59,
-   "mitigationBulletDerived": 0.69,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
-   },
-   "bullets": {
-    "total": 30,
-    "validated": 26,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 4
-   },
-   "specs": {
-    "specs": 7,
-    "stable": 7
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 2,
-    "stableSpecs": 7,
-    "penalty": 0.099
-   },
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 1,
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0
-   },
-   "delta": {
-    "residualRisk": -8.8,
-    "rank": -4,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "SSRF/secret exposure; not a checklist area at all"
-  },
-  {
    "key": "graph-engine",
    "label": "12.6 Build / graph engine",
-   "rank": 6,
+   "rank": 5,
    "residualRisk": 5.6,
    "inherentRisk": 20,
    "probability": 4,
@@ -363,7 +305,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 1,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -375,73 +317,72 @@
    "rationale": "If a run fails nothing else in the product matters; async graph execution"
   },
   {
-   "key": "a2a",
-   "label": "16 A2A",
-   "rank": 7,
-   "residualRisk": 5.3,
-   "inherentRisk": 12,
+   "key": "security",
+   "label": "NEW security",
+   "rank": 6,
+   "residualRisk": 5.4,
+   "inherentRisk": 15,
    "probability": 3,
-   "impact": 4,
-   "mitigation": 0.56,
-   "mitigationBulletDerived": 0.59,
+   "impact": 5,
+   "mitigation": 0.64,
+   "mitigationBulletDerived": 0.69,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 2,
-    "churnQuintile": 2,
-    "fragility": 4,
-    "weightedBugs": 5,
-    "weightedChurn": 0.29
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
    },
    "bullets": {
-    "total": 18,
-    "validated": 13,
+    "total": 30,
+    "validated": 26,
     "automatedUnwatched": 0,
-    "partial": 1,
+    "partial": 0,
     "flaky": 0,
     "empty": 4
    },
    "specs": {
-    "specs": 11,
-    "stable": 11
+    "specs": 7,
+    "stable": 7
    },
    "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 11,
-    "penalty": 0.027
+    "chronicHardFailures": 0,
+    "chronicFlaky": 1,
+    "stableSpecs": 7,
+    "penalty": 0.049
    },
    "upstreamBugsByYear": {
-    "2026": 4
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
    },
    "previous": {
-    "rank": 6,
-    "residualRisk": 6.3,
-    "inherentRisk": 8,
-    "mitigation": 0.21
+    "rank": 1,
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0
    },
    "delta": {
-    "residualRisk": -1,
-    "rank": -1,
+    "residualRisk": -9.6,
+    "rank": -5,
     "direction": "improved"
    },
    "isNew": false,
-   "cappedByProduct": true,
+   "cappedByProduct": false,
    "instrumentCaveat": null,
-   "platformItems": [
-    2837,
-    2838
-   ],
-   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
+   "platformItems": [],
+   "rationale": "SSRF/secret exposure; not a checklist area at all"
   },
   {
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
-   "rank": 8,
-   "residualRisk": 5.2,
+   "rank": 7,
+   "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
-   "mitigation": 0.74,
+   "mitigation": 0.75,
    "mitigationBulletDerived": 0.75,
    "mitigationOverride": null,
    "axes": {
@@ -465,9 +406,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 27,
-    "penalty": 0.014
+    "penalty": 0
    },
    "upstreamBugsByYear": {
     "2023": 4,
@@ -482,15 +423,74 @@
     "mitigation": 0.75
    },
    "delta": {
-    "residualRisk": 0.1,
-    "rank": 2,
-    "direction": "worsened"
+    "residualRisk": -0.1,
+    "rank": 3,
+    "direction": "improved"
    },
    "isNew": false,
    "cappedByProduct": false,
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
+  },
+  {
+   "key": "a2a",
+   "label": "16 A2A",
+   "rank": 8,
+   "residualRisk": 4.9,
+   "inherentRisk": 12,
+   "probability": 3,
+   "impact": 4,
+   "mitigation": 0.59,
+   "mitigationBulletDerived": 0.59,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 4,
+    "weightedBugs": 5,
+    "weightedChurn": 0.29
+   },
+   "bullets": {
+    "total": 18,
+    "validated": 13,
+    "automatedUnwatched": 0,
+    "partial": 1,
+    "flaky": 0,
+    "empty": 4
+   },
+   "specs": {
+    "specs": 11,
+    "stable": 11
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2026": 4
+   },
+   "previous": {
+    "rank": 6,
+    "residualRisk": 6.3,
+    "inherentRisk": 8,
+    "mitigation": 0.21
+   },
+   "delta": {
+    "residualRisk": -1.4,
+    "rank": -2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": true,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2837,
+    2838
+   ],
+   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
   },
   {
    "key": "memory-base",
@@ -553,9 +553,68 @@
    "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
   },
   {
+   "key": "playground",
+   "label": "9 Playground / chat",
+   "rank": 10,
+   "residualRisk": 4.6,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "mitigation": 0.77,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "bullets": {
+    "total": 70,
+    "validated": 70,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 24,
+    "stable": 24
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 2,
+    "stableSpecs": 24,
+    "penalty": 0.033
+   },
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "previous": {
+    "rank": 12,
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": -0.1,
+    "rank": 2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "The user's main verification loop; SSE streaming"
+  },
+  {
    "key": "component-config",
    "label": "2 Component config",
-   "rank": 10,
+   "rank": 11,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
@@ -602,7 +661,7 @@
    },
    "delta": {
     "residualRisk": -0.2,
-    "rank": 3,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -614,7 +673,7 @@
   {
    "key": "flow-lifecycle",
    "label": "12 Flow lifecycle",
-   "rank": 11,
+   "rank": 12,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 4,
@@ -638,7 +697,7 @@
     "empty": 0
    },
    "specs": {
-    "specs": 38,
+    "specs": 41,
     "stable": 38
    },
    "testHealth": {
@@ -661,7 +720,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 0,
+    "rank": -1,
     "direction": "improved"
    },
    "isNew": false,
@@ -669,65 +728,6 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "Cannot create/save/import a flow = product unusable"
-  },
-  {
-   "key": "playground",
-   "label": "9 Playground / chat",
-   "rank": 12,
-   "residualRisk": 4,
-   "inherentRisk": 20,
-   "probability": 5,
-   "impact": 4,
-   "mitigation": 0.8,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 5,
-    "churnQuintile": 5,
-    "fragility": 4,
-    "weightedBugs": 60.9,
-    "weightedChurn": 2.88
-   },
-   "bullets": {
-    "total": 70,
-    "validated": 70,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 24,
-    "stable": 24
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 24,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2023": 2,
-    "2024": 40,
-    "2025": 49,
-    "2026": 13
-   },
-   "previous": {
-    "rank": 12,
-    "residualRisk": 4.7,
-    "inherentRisk": 20,
-    "mitigation": 0.77
-   },
-   "delta": {
-    "residualRisk": -0.7,
-    "rank": 0,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "The user's main verification loop; SSE streaming"
   },
   {
    "key": "model-providers",
@@ -792,12 +792,12 @@
    "key": "rest-api",
    "label": "1 REST API / endpoints",
    "rank": 14,
-   "residualRisk": 3.8,
+   "residualRisk": 3.9,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
-   "mitigation": 0.75,
-   "mitigationBulletDerived": 0.76,
+   "mitigation": 0.74,
+   "mitigationBulletDerived": 0.75,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 3,
@@ -807,22 +807,22 @@
     "weightedChurn": 2.61
    },
    "bullets": {
-    "total": 102,
+    "total": 106,
     "validated": 96,
-    "automatedUnwatched": 1,
-    "partial": 2,
+    "automatedUnwatched": 4,
+    "partial": 3,
     "flaky": 1,
     "empty": 2
    },
    "specs": {
-    "specs": 44,
-    "stable": 44
+    "specs": 47,
+    "stable": 46
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 1,
-    "stableSpecs": 44,
-    "penalty": 0.009
+    "stableSpecs": 46,
+    "penalty": 0.008
    },
    "upstreamBugsByYear": {
     "2024": 10,
@@ -836,7 +836,7 @@
     "mitigation": 0.78
    },
    "delta": {
-    "residualRisk": -0.6,
+    "residualRisk": -0.5,
     "rank": 0,
     "direction": "improved"
    },

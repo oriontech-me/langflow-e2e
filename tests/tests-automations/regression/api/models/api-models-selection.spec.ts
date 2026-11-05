@@ -1,6 +1,7 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { postLogin } from "../../../../helpers/auth/login-request";
 
 // The four WRITE operations of the models family, driven as a THROWAWAY USER.
 // Spec doc: docs/api/models/api-models-selection.md
@@ -41,12 +42,10 @@ test.describe("Models API — the selection write surface", () => {
     expect(activated.status(), await activated.text()).toBe(200);
     expect((await activated.json()).is_active).toBe(true);
 
-    // Form-encoded, not JSON — and exactly ONE login per file, because OSS
-    // rate-limits /api/v1/login at 5/min per IP on a fixed window.
-    const login = await request.post("/api/v1/login", {
-      headers: superHeaders,
-      form: { username, password },
-    });
+    // Exactly ONE login per file, because OSS rate-limits /api/v1/login at
+    // 5/min per IP on a fixed window. The window is shared with the rest of the
+    // suite, so postLogin waits out a 429 instead of failing on it (#2385).
+    const login = await postLogin(request, username, password);
     expect(login.status(), await login.text()).toBe(200);
     userHeaders = { Authorization: `Bearer ${(await login.json()).access_token}` };
   });

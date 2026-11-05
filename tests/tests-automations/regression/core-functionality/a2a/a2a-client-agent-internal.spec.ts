@@ -121,10 +121,10 @@ test.describe("A2A Client — A2AAgent component in Internal mode", () => {
         await test.step("the dropdown offers the published agent, and it is selected", async () => {
           await page.getByTestId(AGENT_DROPDOWN).click();
 
-          // Presence of THIS test's agent, never option count: the account is
-          // shared and a parallel spec may hold its own published agent in the
-          // same project.
-          const option = page.getByTestId(`${agentName}-0-option`);
+          // Presence of THIS test's agent, never option count or position: the
+          // account is shared, a parallel spec may hold its own published agent in
+          // the same project, and the list is newest-first (#2378).
+          const option = page.getByTestId(new RegExp(`^${agentName}-\\d+-option$`));
           await expect(option).toBeVisible();
           await option.click();
 

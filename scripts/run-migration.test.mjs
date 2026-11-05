@@ -123,7 +123,14 @@ case "$1" in
   run) case "$*" in *postgres*) exit 0 ;; esac
     port="$(echo "$*" | sed -n 's/.*127\\.0\\.0\\.1:\\([0-9]*\\):7860.*/\\1/p')"
     echo "\${@: -1}" | sed 's/.*://' > ${q(served)}/$port ;;
-  compose) case "$*" in *" up "*)
+  compose)
+    # Real compose interpolates the whole file on every command: a required variable
+    # unset fails up, rm and down alike (#2391).
+    if [ -z "\${POSTGRES_PASSWORD:-}" ] || [ -z "\${LANGFLOW_SUPERUSER_PASSWORD:-}" ]; then
+      echo "compose refused: required variable is missing a value" >> ${q(join(dir, "docker.log"))}; exit 1
+    fi
+    echo "pg=$POSTGRES_PASSWORD su=$LANGFLOW_SUPERUSER_PASSWORD :: $*" >> ${q(join(dir, "compose-env.log"))}
+    case "$*" in *" up "*)
     ov="$(echo "$*" | sed -n 's/.*-f \\([^ ]*override\\.yml\\).*/\\1/p')"
     port="$(sed -n 's/.*"127\\.0\\.0\\.1:\\([0-9]*\\):7860".*/\\1/p' "$ov")"
     sed -n 's/^ *image: .*:\\(.*\\)$/\\1/p' "$ov" | head -1 > ${q(served)}/$port ;;
@@ -174,6 +181,7 @@ exit 0`);
     log: readIf(join(dir, "log", "e2e-migration", "latest.log")) || `${r.stdout}${r.stderr}`,
     calls: readIf(join(dir, "calls.log")),
     docker: readIf(join(dir, "docker.log")),
+    composeEnv: readIf(join(dir, "compose-env.log")),
     ollama: readIf(join(dir, "ollama.log")),
     uv: readIf(join(dir, "uv.log")),
     langflowEnvs: readdirSync(dir).filter((f) => f.startsWith("langflow-env.")).map((f) => readIf(join(dir, f))),
@@ -372,6 +380,31 @@ test("everything the routine names is cleared on exit, and its ollama stopped", 
   assert.match(r.docker, /ps -aq --filter name=\^e2e-migration-/);
   assert.match(r.docker, /volume ls -q --filter name=\^e2e-migration-/);
   assert.match(r.ollama, /^stop 11464$/m);
+});
+
+test("every compose call of a postgres-docker cell gets the variables upstream's file requires (#2391)", () => {
+  for (const cell of ["postgres-docker-upgrade", "postgres-docker-upgrade-autologin-off"]) {
+    const r = migration({ cells: cell });
+    assert.equal(r.status, 0, r.log);
+    assert.doesNotMatch(r.docker, /compose refused/, r.docker);
+    const calls = r.composeEnv.split("\n").filter(Boolean);
+    // up for the source, rm between source and target, up for the target, down at the end.
+    for (const tail of [/ up -d$/, / rm -sf langflow$/, / down -v$/]) {
+      assert.ok(calls.some((l) => tail.test(l)), `${cell}: no call ending ${tail}\n${r.composeEnv}`);
+    }
+    // One Postgres password for every call: the source's volume must open under the target.
+    for (const l of calls) assert.match(l, /^pg=langflow su=\S+ :: /, l);
+    // The source is seeded with auto-login on; in an AUTO_LOGIN-off cell the target's
+    // calls (from its up on) carry the configured superuser's password, one value.
+    const su = calls.map((l) => l.match(/ su=(\S+) /)[1]);
+    const targetUp = calls.findIndex((l, i) => i > 0 && / up -d$/.test(l));
+    assert.ok(targetUp > 0, r.composeEnv);
+    assert.deepEqual(new Set(su.slice(0, targetUp)), new Set(["unused-with-auto-login"]), r.composeEnv);
+    const after = new Set(su.slice(targetUp));
+    assert.equal(after.size, 1, r.composeEnv);
+    if (cell.endsWith("autologin-off")) assert.match([...after][0], /^Admin-[0-9a-f]{18}$/, r.composeEnv);
+    else assert.deepEqual([...after], ["unused-with-auto-login"], r.composeEnv);
+  }
 });
 
 test("a run that ends skipped waiting for its turn tears down nothing: the holder's cells are not its", () => {

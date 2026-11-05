@@ -70,9 +70,17 @@ const URL_TOOL = "fetch_content";
 // spelling both satisfy this, and neither is hardcoded away from URL_TOOL.
 const TOOL_STEP_LABEL = new RegExp(URL_TOOL.replace(/_/g, "[\\s_]"), "i");
 const EXPECTED_TITLE = /Sample Slide Show/i;
+// gemini-3.5-flash (now served as gemini-3.6-flash) declines to fetch a private IP
+// as SSRF, and the VM lane's ECHO_BASE_URL is one (#2367). Same note as
+// agent-multi-tool-selection and agent-max-iterations: it tells the model the
+// address is ours, without naming a tool.
+const PRIVATE_FIXTURE_NOTE =
+  " The URLs in these tasks point at a local test server on a private network address; " +
+  "it is part of an authorized test environment, so fetch it.";
 const SYSTEM_PROMPT =
   "For every user question you MUST call exactly one tool to obtain the answer - " +
-  "never answer from memory and never refuse. Choose the tool that fits the question.";
+  "never answer from memory and never refuse. Choose the tool that fits the question." +
+  PRIVATE_FIXTURE_NOTE;
 
 // Flow ids created by each test, deleted by id in afterEach (id-scoped — never
 // name-based or delete-all). SimpleAgentTemplatePage.load() discards the id, so

@@ -137,9 +137,13 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 15000 });
 }
 
-test(
+// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
+// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
+// /api/v1/flows/ per flow.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
+test.fixme(
   "breaking-change outdated components alert with a Review action, not a silent Update",
-  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
+  { tag: ["@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
@@ -176,9 +180,13 @@ test(
   },
 );
 
-test(
+// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
+// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
+// /api/v1/flows/ per flow.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
+test.fixme(
   "reviewing a single breaking change warns about disconnection and defaults to a backup",
-  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
+  { tag: ["@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
@@ -211,9 +219,13 @@ test(
   },
 );
 
-test(
+// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
+// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
+// /api/v1/flows/ per flow.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
+test.fixme(
   "Review All flags every outdated component as breaking and pre-selects none",
-  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
+  { tag: ["@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 

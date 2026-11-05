@@ -75,6 +75,7 @@ const MODULES: ModuleConfig[] = [
     excludeFromTotal: true },
   { label: "`serving/` — Serving-Plane End-User Identity",   sectionStart: "## serving/" },
   { label: "`integrations/` — Dedicated Integrations",         sectionStart: "## integrations/" },
+  { label: "`instance-migration/` — Instance Migration",     sectionStart: "## instance-migration/" },
 ];
 
 const PART_II_HEADER = "# PART II — TEST AUTOMATION COVERAGE";
