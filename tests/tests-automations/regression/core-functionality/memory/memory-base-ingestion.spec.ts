@@ -429,9 +429,12 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     return runId;
   }
 
-  test(
+  // Quarantined at triage of e2e-qa#28 (2026-11-05): the typed flow storage namespace
+  // (`flow-<id>/`, langflow-ai/langflow#15982) reached 1.14 in dev18; the fix is PR #2339.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2338's deliverable.
+  test.fixme(
     "should ingest a server-side folder through the folder connector and read its chunks back",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",
@@ -501,9 +504,12 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  test(
+  // Quarantined at triage of e2e-qa#28 (2026-11-05): the typed flow storage namespace
+  // (`flow-<id>/`, langflow-ai/langflow#15982) reached 1.14 in dev18; the fix is PR #2339.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2338's deliverable.
+  test.fixme(
     "should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",
