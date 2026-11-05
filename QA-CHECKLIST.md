@@ -1672,7 +1672,7 @@
 > `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
 > #2347). Tracker: #2357.
 
-> **None of 25.1–25.2 can be `@stable`** — nothing runs `@instance-migration` on a cron
+> **None of 25.1–25.3 can be `@stable`** — nothing runs `@instance-migration` on a cron
 > (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`. 25.0 is
 > the exception: it asserts the **default** build, so it runs on the normal lane.
 
@@ -1694,6 +1694,13 @@
 
 - [-] A second Langflow started from the settings *Start the new instance* prints (the page's `NAME=value` lines equal the API's; the five placeholders filled from the lane) serves the copy: the source's user signs in with its password (a wrong one `401`), the migrated flow opens on the canvas by its source id, the migrated API key runs it and the Credential variable reaches the component decrypted (`resolved_len` = the sentinel's length — a wrong key gives `0` with a `200`), the seed knowledge base answers `seed-001` from pgvector (`backend_type: "postgres"`), and the uploaded file and the chat attachment download from S3 with the source's exact bytes → `instance-migration/instance-migration-target-acceptance.spec.ts`
 - [-] *Turn changes back on* → *Resume* at the last step before the start turns a `503` write into `201`, puts the migration back at the pause with every later step `locked`, and leaves the source's users, flows, variables, files and knowledge bases exactly as listed before the migration (knowledge base still `sqlite`, seed file bytes unchanged) → `instance-migration/instance-migration-target-acceptance.spec.ts`
+
+#### 25.3 The pause (#2352)
+
+- [-] With a flow run under way, *Pause changes* answers `409 jobs_active` naming the run (`flow_name`, `in_progress`) and its request, the page lists it with *Check again*, and the instance stays writable (`paused: false`, a `PATCH` answers `200`); once the run has ended, *Check again* pauses (`200`) and the step reaches `done` after the page's own check → `instance-migration/instance-migration-pause.spec.ts`
+- [-] While paused, ten write surfaces (save and create a flow, `/api/v1/run`, `/api/v2/workflows`, both uploads, sign-up, create and delete a global variable, create an API key) answer `503 {"detail": "This instance is being migrated."}` and nothing they asked for exists afterwards; reads, login, refresh, logout and a regular user's `GET /api/v1/migration/pause` answer `200` → `instance-migration/instance-migration-pause.spec.ts`
+- [-] A regular user who signs in during the pause sees the notice on the home page, *General*, *Global Variables* and their flow, which opens on the canvas; a new global variable fails at once with the server's reason after exactly one `POST` → `instance-migration/instance-migration-pause.spec.ts`
+- [-] The pause survives a container restart (same `frozen_at`, the rename still `503`); `DELETE /api/v1/migration/pause` lets the same rename through, and the flow's description, the file's bytes and the variable are intact → `instance-migration/instance-migration-pause.spec.ts`
 
 ---
 
