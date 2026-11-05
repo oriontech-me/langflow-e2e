@@ -52,7 +52,7 @@ test.describe("Flows API — versions", () => {
     return flow;
   }
 
-  // `@stable` is BACK (#1777). The daily's auto-removal took it on 2026-09-09 when
+  // `@stable` was restored (#1777). The daily's auto-removal took it on 2026-09-09 when
   // step 1 below read `404 {"detail":"Flow not found"}` on a flow its own `POST` had
   // just returned `201` for. Verdict was PRODUCT — `LE-2598`, every write route taking
   // `DbSession` answering its 2xx before the commit — so the tag is restored on the
