@@ -58,6 +58,8 @@ export interface MigrationState {
   };
   steps: StepState[];
   blocking_findings: string[];
+  /** The names of the checks an admin may accept, e.g. `source: files` (#2349 asserts a regular user reads none). */
+  acceptable_checks?: string[];
   // The record is the server's to shape; specs read the fields they assert on.
   record: Record<string, any>;
   start: { settings: { name: string; value: string; fill: boolean }[] };
@@ -344,6 +346,68 @@ const SOURCE_QUERY = [
 export function sourceSql(lane: InstanceMigrationLane, dbPath: string, sql: string, exec: Exec = docker): unknown[][] {
   const out = exec(["exec", lane.containers.source, "python", "-c", SOURCE_QUERY, dbPath, sql]);
   return JSON.parse(out.trim().split("\n").at(-1) ?? "[]") as unknown[][];
+}
+
+/** One route of the migration router, as the running source declares it (#2349). */
+export interface MigrationRoute {
+  /** Without the `/api/v1` prefix, with its path parameters as declared: `/migration/steps/{step_id}/runs`. */
+  path: string;
+  methods: string[];
+  /** Some dependency of the route, at any depth, is `get_current_active_superuser`. */
+  superuser: boolean;
+  /** Some dependency of the route, at any depth, is `get_current_active_user`. */
+  signedIn: boolean;
+}
+
+const ROUTE_INVENTORY = [
+  "import json",
+  "from langflow.api.v1.migration import router",
+  "def names(dependant):",
+  "    for dep in dependant.dependencies:",
+  "        yield getattr(dep.call, '__name__', repr(dep.call))",
+  "        yield from names(dep)",
+  "rows = []",
+  "for route in router.routes:",
+  "    called = set(names(route.dependant))",
+  "    rows.append({'path': route.path, 'methods': sorted(route.methods),",
+  "                 'superuser': 'get_current_active_superuser' in called,",
+  "                 'signed_in': 'get_current_active_user' in called})",
+  "print(json.dumps(rows))",
+].join("\n");
+
+/**
+ * Every route of the instance migration router, read from the router the SOURCE is
+ * running. The router is `include_in_schema=False`, so `/openapi.json` does not list it,
+ * and a hand-written list would miss the route upstream adds next — the one an
+ * authorization test exists to catch.
+ *
+ * Throws on an empty or malformed answer: an inventory that read nothing would make
+ * "every superuser route refuses" true of no route at all.
+ */
+export function migrationRouteInventory(lane: InstanceMigrationLane, exec: Exec = docker): MigrationRoute[] {
+  const out = exec(["exec", lane.containers.source, "python", "-c", ROUTE_INVENTORY]);
+  const last = out.trim().split("\n").at(-1) ?? "";
+  let rows: unknown;
+  try {
+    rows = JSON.parse(last);
+  } catch {
+    throw new Error(`the route inventory did not answer JSON: ${last.slice(0, 200)}`);
+  }
+  must(Array.isArray(rows) && rows.length > 0, `the route inventory listed no route: ${last.slice(0, 200)}`);
+  return rows.map((row) => {
+    const { path, methods, superuser, signed_in: signedIn } = (row ?? {}) as Record<string, unknown>;
+    must(
+      typeof path === "string" &&
+        path.startsWith("/migration") &&
+        Array.isArray(methods) &&
+        methods.length > 0 &&
+        methods.every((m) => typeof m === "string") &&
+        typeof superuser === "boolean" &&
+        typeof signedIn === "boolean",
+      `the route inventory listed a row it cannot read: ${JSON.stringify(row)}`,
+    );
+    return { path, methods: methods as string[], superuser, signedIn };
+  });
 }
 
 export interface BucketObject {

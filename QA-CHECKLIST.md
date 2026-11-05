@@ -1672,7 +1672,7 @@
 > `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
 > #2347). Tracker: #2357.
 
-> **None of 25.1–25.4 can be `@stable`** — nothing runs `@instance-migration` on a cron
+> **None of 25.1–25.5 can be `@stable`** — nothing runs `@instance-migration` on a cron
 > (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`. 25.0 is
 > the exception: it asserts the **default** build, so it runs on the normal lane.
 
@@ -1709,6 +1709,12 @@
 - [-] After a restart the step still reads `done`, the copy answers `409 secrets_missing` and the page says to enter them again; *Change or enter again* fills back no password or key, and entered again the copy runs to `done` → `instance-migration/instance-migration-destinations-and-key.spec.ts`
 - [-] *Hand over the secret key* names `LANGFLOW_SECRET_KEY` and never the key; a key pasted whole is cut to 12 characters before it is sent; a wrong fingerprint is refused (`400`, alert, step `blocked`), the right one accepted, and a later wrong one reopens the step; the pause and the copies answer `409 locked` until it is verified → `instance-migration/instance-migration-destinations-and-key.spec.ts`
 - [ ] A wrong S3 key (`bucket_denied`) — the lane's gateway accepts any key (#2397)
+
+#### 25.5 Authorization (#2349)
+
+- [-] The migration router running in the source (read inside the container, since it is not in OpenAPI) guards every route but `GET /migration/pause` with `get_current_active_superuser`; each of those routes answers a regular user `403 {"detail":"The user doesn't have enough privileges"}` and a client with no credentials `403 {"detail":"No authentication credentials provided"}` — the database download included — and none of the attempts changes `migration.json`, the step states or the pause → `instance-migration/instance-migration-authorization.spec.ts`
+- [-] During a pause a regular user's `GET /api/v1/migration/pause` answers exactly `{"paused":true}` (no secret, destination, source path or check name), their `DELETE` and `POST` of the pause answer `403` and leave it paused with the record unchanged, and a client with no credentials cannot read it (`403`) → `instance-migration/instance-migration-authorization.spec.ts`
+- [-] A regular user signed in through the form has no *Migration* entry in Settings with the feature on (the superuser, as a control, has it); `/settings/migration` opened directly stays on its address, shows *Only admins can move this instance.* and no step, and the page sends no migration request but `GET /api/v1/migration/pause` → `instance-migration/instance-migration-authorization.spec.ts`
 
 ---
 
