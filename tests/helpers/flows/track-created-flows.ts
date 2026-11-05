@@ -61,12 +61,15 @@ export interface TrackedResponse {
 /**
  * Is this the flow-CREATION endpoint?
  *
- * Exact pathname, not `.includes("/api/v1/flows")`: `/api/v1/flows/batch/` and
- * `/api/v1/flows/upload/` also answer 201, with a list body that carries no
- * top-level `id`. That made the loose match fragility rather than a live bug — the
- * captured id was simply `undefined` and dropped — but it is the reason the four
- * stricter copies exist, and a future endpoint under `/flows/` that DOES return an
- * `id` would turn it into one.
+ * Exact pathname, not `.includes("/api/v1/flows")`: `/api/v1/flows/batch/` also
+ * answers 201, with a list body that carries no top-level `id`. That made the loose
+ * match fragility rather than a live bug — the captured id was simply `undefined`
+ * and dropped — but it is the reason the four stricter copies exist, and a future
+ * endpoint under `/flows/` that DOES return an `id` would turn it into one.
+ *
+ * The import endpoint is matched separately, by `isFlowUploadUrl`: its body is a
+ * different shape, and conflating the two is exactly how a spec ended up reading
+ * `.id` off an array (#2399).
  */
 export function isFlowCreateUrl(url: string): boolean {
   try {
@@ -76,10 +79,53 @@ export function isFlowCreateUrl(url: string): boolean {
   }
 }
 
+/**
+ * Is this the flow-IMPORT endpoint, `POST /api/v1/flows/upload/`?
+ *
+ * Since `1.14.0.dev18` (langflow-ai/langflow#16120, *"Selected flow imports use one
+ * atomic request"*) every UI import — the upload button and a file dropped on the
+ * home list — is ONE request to this endpoint for the whole selection, answering
+ * `201` with an ARRAY of the created flows. Up to 1.13 the same import was one
+ * `POST /api/v1/flows/` per flow. Before #2399 this tracker ignored the endpoint
+ * (its list body "carries no top-level id"), so on 1.14 every flow a UI import
+ * created leaked, in every spec that imports through the UI.
+ *
+ * Capturing it is safe for the reason the rest of this helper is: the ids are the
+ * ones THIS page's request returned. The UI strips the payload's id before the
+ * request (`getCreateFlowPayload` sends none), so a UI import always creates new
+ * rows; only a hand-built upload carrying an existing id would upsert — and then
+ * the returned flow is still one this page just wrote.
+ *
+ * Exact pathname for the same reason as `isFlowCreateUrl`, and so that
+ * `/api/v1/projects/upload/` — which answers a PROJECT — never matches.
+ */
+export function isFlowUploadUrl(url: string): boolean {
+  try {
+    return /^\/api\/v1\/flows\/upload\/?$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** The created flow's id, or `undefined` for any body shape that has none. */
 export function flowIdFrom(body: unknown): string | undefined {
   const id = (body as { id?: unknown } | null)?.id;
   return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Every flow id a creation or import response carries: the one id of a created
+ * flow object (`POST /api/v1/flows/`), or one per element of an import's array
+ * (`POST /api/v1/flows/upload/`). An element without a usable id is skipped, never
+ * returned as a hole, so the LENGTH is the number of flows the body names — which
+ * is what a spec asserting "N flows were imported" has to count, on either contract.
+ */
+export function flowIdsFrom(body: unknown): string[] {
+  if (Array.isArray(body)) {
+    return body.map(flowIdFrom).filter((id): id is string => id !== undefined);
+  }
+  const id = flowIdFrom(body);
+  return id ? [id] : [];
 }
 
 export interface FlowCleanupResult {
@@ -156,7 +202,9 @@ export interface FlowTracker {
   /** Ids captured so far. Settled reads only — call `settle()` first to be sure. */
   ids(): string[];
   /**
-   * Creation POSTs that answered 4xx/5xx, as `"<status> <statusText>"` (#1114).
+   * Creation or import POSTs that answered 4xx/5xx, as `"<status> <statusText>"`
+   * (#1114). An import is included since #2399: a rejected atomic import created
+   * nothing, which is the same fact a setup step consulting this needs to know.
    *
    * Recorded synchronously and without the body: the body is what the fixture
    * already prints on its `🚨 Backend Error` line, and reading it here would land a
@@ -205,7 +253,11 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
 
   const onResponse = (response: TrackedResponse) => {
     if (response.request().method() !== "POST") return;
-    if (!isFlowCreateUrl(response.url())) return;
+    // Decided SYNCHRONOUSLY, as is the 201 check below: a caller that disposes the
+    // tracker right after an action relies on every response observed before the
+    // dispose being queued here, even though its body lands a tick later.
+    const url = response.url();
+    if (!isFlowCreateUrl(url) && !isFlowUploadUrl(url)) return;
     if (response.status() >= 400) {
       failed.push(`${response.status()} ${response.statusText()}`);
       return;
@@ -215,8 +267,7 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       response
         .json()
         .then((body) => {
-          const id = flowIdFrom(body);
-          if (id) ids.add(id);
+          for (const id of flowIdsFrom(body)) ids.add(id);
         })
         .catch(() => {}), // non-JSON / already-consumed body
     );
