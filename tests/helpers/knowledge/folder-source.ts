@@ -75,12 +75,16 @@ export function folderUnderRoot(root: string, folder: string): string {
 /**
  * Splits an upload's `file_path` (`<folder>/<stored name>`) into the folder the
  * server keyed it under and the name it stored it as. `undefined` for anything
- * that is not exactly those two non-empty parts.
+ * that is not exactly those two parts, each a real path segment: an empty part,
+ * `.` or `..` is refused, because `ingestFlowFolder` joins the folder onto an
+ * allow-listed root and `..` would point the connector at the root's parent.
  */
 export function splitUploadPath(filePath: unknown): { folder: string; name: string } | undefined {
   if (typeof filePath !== "string") return undefined;
   const parts = filePath.split("/");
-  if (parts.length !== 2 || parts.some((part) => part === "")) return undefined;
+  if (parts.length !== 2 || parts.some((part) => part === "" || part === "." || part === "..")) {
+    return undefined;
+  }
   return { folder: parts[0], name: parts[1] };
 }
 

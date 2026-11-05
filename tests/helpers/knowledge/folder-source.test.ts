@@ -102,7 +102,20 @@ test("an upload path splits into the folder the server named and the stored name
 });
 
 test("an upload path that is not exactly <folder>/<name> is not guessed at", () => {
-  for (const filePath of ["a.txt", "/a.txt", "abc/", "x/abc/a.txt", "", undefined, null, 42]) {
+  for (const filePath of [
+    "a.txt",
+    "/a.txt",
+    "abc/",
+    "x/abc/a.txt",
+    "../a.txt",
+    "./a.txt",
+    "abc/..",
+    "abc/.",
+    "",
+    undefined,
+    null,
+    42,
+  ]) {
     assert.equal(splitUploadPath(filePath), undefined, `file_path ${JSON.stringify(filePath)}`);
   }
 });
@@ -156,6 +169,18 @@ test("the flow folder is looked for under each root in turn until one is accepte
   });
   assert.deepEqual(tried, ["/a/flow1", "/b/flow1"]);
   assert.deepEqual(result, { folder: "/b/flow1", runId: "run-1" });
+});
+
+test("the upload folder is walked exactly as the server named it, namespace included", async () => {
+  // The argument is the folder `uploadToFlowFolder` returned, not a flow id: it
+  // must reach the connector verbatim, with no prefix added or stripped (#2338).
+  const tried: string[] = [];
+  const result = await ingestFlowFolder(["/a"], "flow-abc", async (path) => {
+    tried.push(path);
+    return { status: 200, detail: undefined, runId: "run-1" };
+  });
+  assert.deepEqual(tried, ["/a/flow-abc"]);
+  assert.deepEqual(result, { folder: "/a/flow-abc", runId: "run-1" });
 });
 
 test("a root that holds no folder for the flow fails naming the roots it tried", async () => {
