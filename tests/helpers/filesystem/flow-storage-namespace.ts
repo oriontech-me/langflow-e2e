@@ -1,5 +1,5 @@
 import type { APIRequestContext } from "@playwright/test";
-import { versionAtLeast } from "../other/served-version";
+import { servedVersion, versionAtLeast } from "../other/served-version";
 
 /**
  * Which folder a Langflow build stores a flow's attachments under (#2338).
@@ -45,12 +45,5 @@ export async function servedFlowStorageFolder(
   request: APIRequestContext,
   flowId: string,
 ): Promise<string> {
-  const res = await request.get("/api/v1/version");
-  if (!res.ok()) {
-    throw new Error(
-      `GET /api/v1/version answered HTTP ${res.status()}: the instance is unhealthy, which says ` +
-        "nothing about which storage layout it uses.",
-    );
-  }
-  return flowStorageFolder(((await res.json()) as { version?: unknown }).version, flowId);
+  return flowStorageFolder(await servedVersion(request), flowId);
 }

@@ -39,14 +39,23 @@ export function versionAtLeast(raw: unknown, floor: string): boolean {
   return order >= 0;
 }
 
-/** `versionAtLeast` against the instance's own `GET /api/v1/version`. */
-export async function servedVersionAtLeast(request: APIRequestContext, floor: string): Promise<boolean> {
+/**
+ * The raw `version` the instance declares on `GET /api/v1/version`, unparsed, for
+ * the deciders above. A non-2xx throws: an unhealthy instance says nothing about
+ * which build it is.
+ */
+export async function servedVersion(request: APIRequestContext): Promise<unknown> {
   const res = await request.get("/api/v1/version");
   if (!res.ok()) {
     throw new Error(
       `GET /api/v1/version answered HTTP ${res.status()}: the instance is unhealthy, which says ` +
-        `nothing about which side of ${floor} it is on.`,
+        "nothing about which build it is.",
     );
   }
-  return versionAtLeast(((await res.json()) as { version?: unknown }).version, floor);
+  return ((await res.json()) as { version?: unknown }).version;
+}
+
+/** `versionAtLeast` against the instance's own `GET /api/v1/version`. */
+export async function servedVersionAtLeast(request: APIRequestContext, floor: string): Promise<boolean> {
+  return versionAtLeast(await servedVersion(request), floor);
 }
