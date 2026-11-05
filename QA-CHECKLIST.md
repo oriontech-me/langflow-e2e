@@ -1778,7 +1778,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 797 `test()` calls carrying the `@stable` tag, distributed across 294 spec
+> 803 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2017,6 +2017,9 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] breaking-change outdated components alert with a Review action, not a silent Update → `component-breaking-change-alert.spec.ts`
+- [x] reviewing a single breaking change warns about disconnection and defaults to a backup → `component-breaking-change-alert.spec.ts`
+- [x] Review All flags every outdated component as breaking and pre-selects none → `component-breaking-change-alert.spec.ts`
 - [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
@@ -2456,6 +2459,8 @@
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
+- [x] dropping a collection file imports every flow it contains → `dragAndDrop.spec.ts`
+- [x] dropping a single flow file imports that flow → `dragAndDrop.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
 - [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
@@ -2487,6 +2492,7 @@
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
+- [x] importing an outdated flow via the UI upload button surfaces the outdated notification on open → `import-outdated-flow.spec.ts`
 - [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
