@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-04
+> **Last updated:** 2026-11-05
 
 ---
 
@@ -1740,8 +1740,8 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
-| `instance-migration/` — Instance Migration | 10 | 2 | 7 | 0 | 1 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **815** | **701 (86%)** | **61 (7%)** | **14 (2%)** | **39 (5%)** |
+| `instance-migration/` — Instance Migration | 14 | 2 | 11 | 0 | 1 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **819** | **701 (86%)** | **65 (8%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
