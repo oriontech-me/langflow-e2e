@@ -9,7 +9,10 @@ import { versionAtLeast } from "../other/served-version";
  * change reached the two release lines a lane may run at different builds, so one
  * floor cannot describe it:
  *
- * - **1.13 line:** from `1.13.1rc0` (measured: the on-demand run of 2026-10-26).
+ * - **1.13 line:** from `1.13.1.dev0`, i.e. every build declaring any 1.13.1
+ *   version. The bump to 1.13.1 (`9d11ac9982`, 2026-10-25 15:50Z) sits after the
+ *   fix (`9567e202d`, 15:18Z) on the same line, so no 1.13.1 dev, alpha, beta or rc
+ *   predates it (`1.13.1rc0` measured on the on-demand run of 2026-10-26).
  * - **1.14 line:** from `1.14.0.dev16`, the first nightly whose tag contains
  *   `9567e202d` (`dev15` does not; checked with the GitHub compare API).
  * - Every later line carries it; every earlier one does not.
@@ -18,11 +21,18 @@ import { versionAtLeast } from "../other/served-version";
  * the reason `served-version.ts` gives: asking "does the path start with `flow-`?"
  * would pass a build that lost the separation by accident, which is the regression
  * this exists to catch. An unreadable version throws instead of picking a side.
+ *
+ * Exact for every PUBLISHED build (a tag, a PyPI release, a nightly image). A source
+ * build of an untagged commit can declare a version that disagrees with its code:
+ * release-1.13.x between the fix and the bump declares `1.13.0` and writes
+ * `flow-`, and release-1.14.0 before the 1.13.1 merge declares `1.14.0` and writes
+ * the bare folder. A red round-trip on such a build is that ambiguity, not a lost
+ * separation, so check which commit the clone is on before reading it as one.
  */
 export function usesTypedFlowNamespace(version: unknown): boolean {
   if (versionAtLeast(version, "1.14.0.dev16")) return true;
   if (versionAtLeast(version, "1.14.0.dev0")) return false;
-  return versionAtLeast(version, "1.13.1rc0");
+  return versionAtLeast(version, "1.13.1.dev0");
 }
 
 /** The folder `flowId`'s attachments are stored under on a build of `version`. */

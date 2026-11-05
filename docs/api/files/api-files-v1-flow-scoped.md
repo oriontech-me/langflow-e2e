@@ -78,8 +78,10 @@ neither.
    attachments from the bare `<flow_id>/` namespace user uploads are keyed in too, and
    `<flow_id>` before it. The expected folder is decided from `GET /api/v1/version`,
    never from the response (`tests/helpers/filesystem/flow-storage-namespace.ts`):
-   `flow-` from `1.13.1rc0` on the 1.13 line and from `1.14.0.dev16` on the 1.14 line
-   (the first tag containing `9567e202d`), bare before. So a build that should separate
+   `flow-` from any 1.13.1 build on the 1.13 line (`1.13.1.dev0` up: the bump to 1.13.1
+   follows the fix `9567e202d`) and from `1.14.0.dev16` on the 1.14 line (the first tag
+   containing it), bare before. Exact for published builds; a source build of an
+   untagged commit can declare a version its code disagrees with (see the helper). So a build that should separate
    and puts flow attachments back in the user namespace fails here, while a lane
    running an older build is not read as a regression (#2338).
 3. `GET /api/v1/files/list/{flow_id}` → `200`, `files` contains exactly the stamped
