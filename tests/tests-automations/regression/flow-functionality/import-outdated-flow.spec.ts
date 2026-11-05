@@ -59,7 +59,9 @@ function trackCreatedFlows(page: Page): void {
   });
 }
 
-// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST /api/v1/flows/ per flow.
+// Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
+// /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec reads the flow id from the
+// import POST, which is now an array.
 // Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
 test.fixme(
   "importing an outdated flow via the UI upload button surfaces the outdated notification on open",

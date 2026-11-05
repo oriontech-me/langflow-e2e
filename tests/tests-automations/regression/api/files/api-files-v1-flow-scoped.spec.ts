@@ -57,7 +57,8 @@ test.describe("Files API — v1, flow-scoped", () => {
     return flow.id as string;
   }
 
-  // Quarantined at triage of e2e-qa#28 (2026-11-05): the typed flow storage namespace (`flow-<id>/`, langflow-ai/langflow#15982) reached 1.14 in dev18; the fix is PR #2339.
+  // Quarantined at triage of e2e-qa#28 (2026-11-05): the typed flow storage namespace
+  // (`flow-<id>/`, langflow-ai/langflow#15982) reached 1.14 in dev18; the fix is PR #2339.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2338's deliverable.
   test.fixme(
     "upload, list and download round-trip a flow-scoped file",

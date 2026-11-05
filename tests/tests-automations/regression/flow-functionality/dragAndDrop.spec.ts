@@ -115,7 +115,9 @@ test.describe("flow import by file drop on the home page", () => {
     }
   });
 
-  // Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST /api/v1/flows/ per flow.
+  // Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
+  // /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
+  // /api/v1/flows/ per flow.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
   test.fixme("dropping a collection file imports every flow it contains",
     { tag: ["@release", "@workspace", "@mainpage"] },
@@ -164,7 +166,9 @@ test.describe("flow import by file drop on the home page", () => {
       });
     });
 
-  // Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST /api/v1/flows/ per flow.
+  // Quarantined at triage of e2e-qa#28 (2026-11-05): 1.14.0.dev18 imports flows in one POST
+  // /api/v1/flows/upload/ (langflow-ai/langflow#16120); the spec waits for one POST
+  // /api/v1/flows/ per flow.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2399's deliverable.
   test.fixme("dropping a single flow file imports that flow",
     { tag: ["@release", "@workspace", "@mainpage"] },
