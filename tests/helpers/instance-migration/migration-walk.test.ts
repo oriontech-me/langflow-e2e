@@ -10,6 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { instanceMigrationLane } from "./instance-migration-lane";
 import {
+  migrationRouteInventory,
   parseListObjects,
   parseRunEvents,
   sourceSql,
@@ -135,6 +136,43 @@ test("targetRowCount refuses a table name it would have to quote", () => {
 test("targetVectorTables lists the lf_ tables and answers none for empty output", () => {
   assert.deepEqual(targetVectorTables(lane, fakeDocker("lf_49b5\nlf_77aa").exec), ["lf_49b5", "lf_77aa"]);
   assert.deepEqual(targetVectorTables(lane, fakeDocker("").exec), []);
+});
+
+// #2349: the authorization spec sweeps every route this reads, so a reader that read
+// nothing would make "every superuser route refuses" true of no route at all.
+test("migrationRouteInventory reads the router inside the source container, from the last line of output", () => {
+  const rows = [
+    { path: "/migration", methods: ["GET"], superuser: true, signed_in: false },
+    { path: "/migration/pause", methods: ["GET"], superuser: false, signed_in: true },
+  ];
+  const { exec, calls } = fakeDocker(`some notice\n${JSON.stringify(rows)}\n`);
+  assert.deepEqual(migrationRouteInventory(lane, exec), [
+    { path: "/migration", methods: ["GET"], superuser: true, signedIn: false },
+    { path: "/migration/pause", methods: ["GET"], superuser: false, signedIn: true },
+  ]);
+  const [verb, container, python, flag, script] = calls[0];
+  assert.deepEqual([verb, container, python, flag], ["exec", "langflow-instance-migration", "python", "-c"]);
+  assert.match(script, /from langflow\.api\.v1\.migration import router/);
+  assert.match(script, /get_current_active_superuser/);
+  assert.match(script, /get_current_active_user/);
+});
+
+test("migrationRouteInventory refuses an empty inventory", () => {
+  assert.throws(() => migrationRouteInventory(lane, fakeDocker("[]\n").exec), /listed no route/);
+});
+
+test("migrationRouteInventory refuses output that is not JSON — an import error is not an empty router", () => {
+  assert.throws(
+    () => migrationRouteInventory(lane, fakeDocker("ModuleNotFoundError: No module named 'langflow.api.v1.migration'\n").exec),
+    /did not answer JSON: ModuleNotFoundError/,
+  );
+});
+
+test("migrationRouteInventory refuses a row it cannot read instead of guessing its guard", () => {
+  const rows = [{ path: "/migration", methods: ["GET"], superuser: "yes", signed_in: false }];
+  assert.throws(() => migrationRouteInventory(lane, fakeDocker(JSON.stringify(rows)).exec), /a row it cannot read/);
+  const outside = [{ path: "/flows", methods: ["GET"], superuser: true, signed_in: false }];
+  assert.throws(() => migrationRouteInventory(lane, fakeDocker(JSON.stringify(outside)).exec), /a row it cannot read/);
 });
 
 test("sourceSql reads the source database read-only and parses the last line of output", () => {
