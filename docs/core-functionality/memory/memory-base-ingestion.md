@@ -1,6 +1,6 @@
 # Memory Base — ingestion: chunk settings, preview, folder connector, runs and cancel
 
-**Last validated:** Langflow 1.13.x (`1.13.1rc0`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev18`)
 
 ---
 

@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/files/api-files-v1-flow-scoped.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.1rc0`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev18`)
 
 Owning issue: #1692 (Wave 7 — OSS API coverage). Denominator, definitions and the
 gauge this spec feeds: `docs/api/api-surface-coverage-gauge.md`.
