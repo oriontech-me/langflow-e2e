@@ -20,6 +20,8 @@ import { splitUploadPath } from "../../../../helpers/knowledge/folder-source";
 // makes `npm run api:coverage` a measurement instead of a comment (#1692).
 test.describe("Files API — v1, flow-scoped", () => {
   const TEXT_ASSET = "test-file.txt";
+  // The asset name as a literal inside a RegExp: unescaped, its `.` matches any character.
+  const TEXT_ASSET_PATTERN = TEXT_ASSET.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const IMAGE_ASSET = "chain.png";
 
   // Id-scoped cleanup: the flow id comes from the creation 201 and afterEach
@@ -102,7 +104,7 @@ test.describe("Files API — v1, flow-scoped", () => {
         expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(body.file_path)}`).toBeDefined();
         expect(stored?.folder).toBe(folder);
         expect(stored?.name).toMatch(
-          new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET}$`),
+          new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET_PATTERN}$`),
         );
         uploadedName = stored?.name ?? "";
       });
@@ -151,9 +153,10 @@ test.describe("Files API — v1, flow-scoped", () => {
         },
       });
       expect(upload.status()).toBe(201);
-      const uploadedName = String((await upload.json()).file_path)
-        .split("/")
-        .pop() as string;
+      const filePath = (await upload.json()).file_path;
+      const stored = splitUploadPath(filePath);
+      expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(filePath)}`).toBeDefined();
+      const uploadedName = stored?.name ?? "";
 
       await test.step("DELETE confirms the file by name", async () => {
         const res = await request.delete(
@@ -206,9 +209,10 @@ test.describe("Files API — v1, flow-scoped", () => {
         },
       });
       expect(upload.status()).toBe(201);
-      const uploadedName = String((await upload.json()).file_path)
-        .split("/")
-        .pop() as string;
+      const filePath = (await upload.json()).file_path;
+      const stored = splitUploadPath(filePath);
+      expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(filePath)}`).toBeDefined();
+      const uploadedName = stored?.name ?? "";
 
       await test.step("images/ serves it as image/png", async () => {
         const res = await request.get(
