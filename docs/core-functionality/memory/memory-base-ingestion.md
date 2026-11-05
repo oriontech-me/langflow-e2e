@@ -1,6 +1,6 @@
 # Memory Base — ingestion: chunk settings, preview, folder connector, runs and cancel
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
+**Last validated:** Langflow 1.13.x (`1.13.1rc0`)
 
 ---
 
@@ -116,8 +116,9 @@ test 1 drives the Knowledge page and never used the helper.
   turn it into a second copy of test 2.
 - **Tests 4 and 5 own their folder.** `POST /api/v1/files/upload/{flow_id}` stores an
   upload in a directory of `<config_dir>` keyed by a flow the test creates:
-  `flow-<flow_id>/` from 1.13.1 (LE-3242), `<flow_id>/` before (measured:
-  `~/.cache/langflow/<flow_id>/…` in the nightly image). The test takes the directory's
+  `flow-<flow_id>/` from 1.13.1 (LE-3242), `<flow_id>/` before (measured on
+  `1.13.0.dev33`: `~/.cache/langflow/<flow_id>/…` in the nightly image; the 1.14
+  nightlies write `flow-<flow_id>/` from `1.14.0.dev16`). The test takes the directory's
   name from the upload's `file_path` rather than building it from the flow id, so
   it follows either layout (#2338), and nothing another
   spec or worker uploads can enter the walk. The config directory is **read from the
@@ -165,7 +166,8 @@ test 1 drives the Knowledge page and never used the helper.
   The order is load-bearing: **deleting a flow does not delete its uploads** — measured,
   the files outlive the flow on disk — and the file-delete route resolves the flow
   first, so after the flow is gone its files are unreachable through the API. Only the
-  empty `<flow_id>` directory is left behind, which no route removes.
+  empty upload directory (`flow-<flow_id>`, or `<flow_id>` before LE-3242) is left
+  behind, which no route removes.
 
 ---
 

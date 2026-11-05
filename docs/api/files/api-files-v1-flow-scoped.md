@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/files/api-files-v1-flow-scoped.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev0`)
+**Last validated:** Langflow 1.13.x (`1.13.1rc0`)
 
 Owning issue: #1692 (Wave 7 — OSS API coverage). Denominator, definitions and the
 gauge this spec feeds: `docs/api/api-surface-coverage-gauge.md`.
@@ -27,7 +27,7 @@ Measured contracts (`1.13.0.dev0`, auto-login bearer):
 
 | Operation | Answer |
 |---|---|
-| `POST /api/v1/files/upload/{flow_id}` | `201` `{flowId, file_path}`; `file_path` is `<flow_id>/<YYYY-MM-DD_HH-MM-SS>_<original name>` |
+| `POST /api/v1/files/upload/{flow_id}` | `201` `{flowId, file_path}`; `file_path` is `<folder>/<YYYY-MM-DD_HH-MM-SS>_<original name>`, where `<folder>` is `<flow_id>` here and `flow-<flow_id>` on a build carrying LE-3242 (see Test 1) |
 | `POST /api/v1/files/upload/{unknown flow uuid}` | `404` `{"detail":"Flow not found"}` |
 | `GET /api/v1/files/list/{flow_id}` | `200` `{"files":["<stamped name>"]}` |
 | `GET /api/v1/files/download/{flow_id}/{file_name}` | `200`, `application/octet-stream`, byte-identical to the upload |
@@ -72,12 +72,16 @@ neither.
 **Test 1 — `upload, list and download round-trip a flow-scoped file`**
 1. Create a flow; upload `tests/assets/files/test-file.txt` to
    `POST /api/v1/files/upload/{flow_id}`.
-2. Assert `201`, `flowId === flow id`, and `file_path` starting with `flow-<flow_id>/`
-   and ending with `_test-file.txt`. The `flow-` namespace is the separation of flow
-   attachments from user uploads that Langflow 1.13.1 introduced (LE-3242,
-   langflow-ai/langflow#15982). Before it, the folder was the bare `<flow_id>/`, so
-   this assertion fails on an older version and on a regression that puts flow
-   attachments back in the user namespace (#2338).
+2. Assert `201`, `flowId === flow id`, and `file_path` being exactly
+   `<folder>/<YYYY-MM-DD_HH-MM-SS>_test-file.txt`. `<folder>` is `flow-<flow_id>` on a
+   build carrying LE-3242 (langflow-ai/langflow#15982), the separation of flow
+   attachments from the bare `<flow_id>/` namespace user uploads are keyed in too, and
+   `<flow_id>` before it. The expected folder is decided from `GET /api/v1/version`,
+   never from the response (`tests/helpers/filesystem/flow-storage-namespace.ts`):
+   `flow-` from `1.13.1rc0` on the 1.13 line and from `1.14.0.dev16` on the 1.14 line
+   (the first tag containing `9567e202d`), bare before. So a build that should separate
+   and puts flow attachments back in the user namespace fails here, while a lane
+   running an older build is not read as a regression (#2338).
 3. `GET /api/v1/files/list/{flow_id}` → `200`, `files` contains exactly the stamped
    name from step 2.
 4. `GET /api/v1/files/download/{flow_id}/{name}` → `200`,
