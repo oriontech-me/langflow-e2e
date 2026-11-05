@@ -889,6 +889,13 @@
 - [-] A component changed on both sides is a conflict: its row asks for a version (*"Action required"*), *Update Current Flow* stays disabled with *"Resolve 1 conflict before updating this flow."*, and *Keep my version* resolves it so the server and canvas hold the viewer's value → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
 - [-] *Keep <name>'s version* saves the other side's value whole, even when the dialog shows it in part (*"Shown in part. Open the component to see the whole value."*) → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
 - [-] Two conflicts resolved opposite ways plus a checked uncontested change save exactly the chosen values; the hint counts down from *"Resolve 2 conflicts…"* → `flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
+- [-] A run on a stale canvas with an unsaved edit is blocked: the pre-run check raises the banner, a second Run shows *"This flow moved on while you were editing. Review the changes to run it."*, and no `POST /api/v2/workflows` or `PATCH` is sent → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+- [-] A run on a stale canvas with no edit adopts the latest version (*"{user} updated this flow… run again to execute it."*) without running, and the next Run executes it: `POST /api/v2/workflows` → `200` and the stored User message carries the other session's text → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+- [-] A conflict keeps a local draft (`lf_draft_<user>_<flow>`); a reload offers it (*"Unsaved changes from {time}"*), *Restore* puts the work back without saving, raises the conflict again and keeps the draft → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+- [-] *Discard* removes the draft, keeps the server's version, writes nothing, and a second reload offers nothing → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+- [-] A hyphenated API key is cleared from the draft: no `localStorage` value holds it, the offer reads *"…secret fields need to be entered again."*, and the restored field is empty → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+- [-] An alphanumeric API key is cleared from the draft too — pinned as a known defect (`test.fail()`): `removeApiKeys` keeps a key matching `/^[A-Z][A-Z0-9_]*$/i` in plain text → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+- [-] A flow too large to keep a local copy (> 2 000 000 characters) stores no draft and warns *"This flow is too large to keep a local copy of your unsaved changes…"* on the next edit while the conflict stands → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
 
 ---
 
