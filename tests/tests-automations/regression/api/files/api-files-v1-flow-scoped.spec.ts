@@ -3,6 +3,8 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
+import { servedFlowStorageFolder } from "../../../../helpers/filesystem/flow-storage-namespace";
+import { splitUploadPath } from "../../../../helpers/knowledge/folder-source";
 
 // The v1 files router: the FLOW-scoped file store every component that reads or
 // writes a file goes through, plus the bundled profile-picture assets. Spec doc:
@@ -18,6 +20,8 @@ import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-p
 // makes `npm run api:coverage` a measurement instead of a comment (#1692).
 test.describe("Files API — v1, flow-scoped", () => {
   const TEXT_ASSET = "test-file.txt";
+  // The asset name as a literal inside a RegExp: unescaped, its `.` matches any character.
+  const TEXT_ASSET_PATTERN = TEXT_ASSET.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const IMAGE_ASSET = "chain.png";
 
   // Id-scoped cleanup: the flow id comes from the creation 201 and afterEach
@@ -57,12 +61,9 @@ test.describe("Files API — v1, flow-scoped", () => {
     return flow.id as string;
   }
 
-  // Quarantined at triage of e2e-qa#28 (2026-11-05): the typed flow storage namespace
-  // (`flow-<id>/`, langflow-ai/langflow#15982) reached 1.14 in dev18; the fix is PR #2339.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2338's deliverable.
-  test.fixme(
+  test(
     "upload, list and download round-trip a flow-scoped file",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",
@@ -90,13 +91,22 @@ test.describe("Files API — v1, flow-scoped", () => {
         expect(res.status()).toBe(201);
         const body = await res.json();
         expect(body.flowId).toBe(flowId);
-        // `<flow_id>/<YYYY-MM-DD_HH-MM-SS>_<original name>` — the store stamps
-        // the name, so the upload response is the only place the real filename
-        // comes from.
-        expect(body.file_path).toMatch(
-          new RegExp(`^${flowId}/\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET}$`),
+        // `<folder>/<YYYY-MM-DD_HH-MM-SS>_<original name>` — the store stamps the
+        // name, so the upload response is the only place the real filename comes
+        // from. The folder is `flow-<flow_id>` on a build carrying LE-3242
+        // (langflow-ai/langflow#15982), the tenant separation that moved flow
+        // attachments out of the bare `<flow_id>/` folder user uploads are keyed in
+        // too, and `<flow_id>` before it (#2338). Which one is expected is read from
+        // the instance's version, never from this response, so a build that lost
+        // the separation fails here instead of being accepted as the old layout.
+        const folder = await servedFlowStorageFolder(request, flowId);
+        const stored = splitUploadPath(body.file_path);
+        expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(body.file_path)}`).toBeDefined();
+        expect(stored?.folder).toBe(folder);
+        expect(stored?.name).toMatch(
+          new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET_PATTERN}$`),
         );
-        uploadedName = String(body.file_path).split("/").pop() ?? "";
+        uploadedName = stored?.name ?? "";
       });
 
       await test.step("GET list returns exactly that file", async () => {
@@ -143,9 +153,10 @@ test.describe("Files API — v1, flow-scoped", () => {
         },
       });
       expect(upload.status()).toBe(201);
-      const uploadedName = String((await upload.json()).file_path)
-        .split("/")
-        .pop() as string;
+      const filePath = (await upload.json()).file_path;
+      const stored = splitUploadPath(filePath);
+      expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(filePath)}`).toBeDefined();
+      const uploadedName = stored?.name ?? "";
 
       await test.step("DELETE confirms the file by name", async () => {
         const res = await request.delete(
@@ -198,9 +209,10 @@ test.describe("Files API — v1, flow-scoped", () => {
         },
       });
       expect(upload.status()).toBe(201);
-      const uploadedName = String((await upload.json()).file_path)
-        .split("/")
-        .pop() as string;
+      const filePath = (await upload.json()).file_path;
+      const stored = splitUploadPath(filePath);
+      expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(filePath)}`).toBeDefined();
+      const uploadedName = stored?.name ?? "";
 
       await test.step("images/ serves it as image/png", async () => {
         const res = await request.get(

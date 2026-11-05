@@ -20,6 +20,7 @@ import {
   ingestFlowFolder,
   parseFolderAllowList,
   resolveAllowListRoots,
+  splitUploadPath,
 } from "./folder-source";
 
 test("an unset allow-list is recognised, so the spec can name the variable", () => {
@@ -86,6 +87,39 @@ test("the flow folder is joined under a root without doubling the slash", () => 
   assert.equal(folderUnderRoot("/app/data/.cache/langflow/", "abc"), "/app/data/.cache/langflow/abc");
 });
 
+// The folder comes from the upload's file_path, never from the flow id: 1.13.1 moved
+// flow attachments from `<flow_id>/` to `flow-<flow_id>/` (LE-3242, #2338), and both
+// layouts must resolve to the folder the server actually wrote.
+test("an upload path splits into the folder the server named and the stored name", () => {
+  assert.deepEqual(splitUploadPath("flow-abc/2026-10-26_09-22-10_a.txt"), {
+    folder: "flow-abc",
+    name: "2026-10-26_09-22-10_a.txt",
+  });
+  assert.deepEqual(splitUploadPath("abc/2026-10-26_09-22-10_a.txt"), {
+    folder: "abc",
+    name: "2026-10-26_09-22-10_a.txt",
+  });
+});
+
+test("an upload path that is not exactly <folder>/<name> is not guessed at", () => {
+  for (const filePath of [
+    "a.txt",
+    "/a.txt",
+    "abc/",
+    "x/abc/a.txt",
+    "../a.txt",
+    "./a.txt",
+    "abc/..",
+    "abc/.",
+    "",
+    undefined,
+    null,
+    42,
+  ]) {
+    assert.equal(splitUploadPath(filePath), undefined, `file_path ${JSON.stringify(filePath)}`);
+  }
+});
+
 // resolveAllowListRoots / ingestFlowFolder take the HTTP calls as functions, so the
 // branches that decide between "fail naming the variable", "try the next root" and
 // "this is the run" are pinned without an instance.
@@ -135,6 +169,18 @@ test("the flow folder is looked for under each root in turn until one is accepte
   });
   assert.deepEqual(tried, ["/a/flow1", "/b/flow1"]);
   assert.deepEqual(result, { folder: "/b/flow1", runId: "run-1" });
+});
+
+test("the upload folder is walked exactly as the server named it, namespace included", async () => {
+  // The argument is the folder `uploadToFlowFolder` returned, not a flow id: it
+  // must reach the connector verbatim, with no prefix added or stripped (#2338).
+  const tried: string[] = [];
+  const result = await ingestFlowFolder(["/a"], "flow-abc", async (path) => {
+    tried.push(path);
+    return { status: 200, detail: undefined, runId: "run-1" };
+  });
+  assert.deepEqual(tried, ["/a/flow-abc"]);
+  assert.deepEqual(result, { folder: "/a/flow-abc", runId: "run-1" });
 });
 
 test("a root that holds no folder for the flow fails naming the roots it tried", async () => {
