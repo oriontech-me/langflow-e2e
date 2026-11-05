@@ -3,6 +3,8 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
+import { servedFlowStorageFolder } from "../../../../helpers/filesystem/flow-storage-namespace";
+import { splitUploadPath } from "../../../../helpers/knowledge/folder-source";
 
 // The v1 files router: the FLOW-scoped file store every component that reads or
 // writes a file goes through, plus the bundled profile-picture assets. Spec doc:
@@ -90,16 +92,22 @@ test.describe("Files API — v1, flow-scoped", () => {
         expect(res.status()).toBe(201);
         const body = await res.json();
         expect(body.flowId).toBe(flowId);
-        // `flow-<flow_id>/<YYYY-MM-DD_HH-MM-SS>_<original name>` — the store stamps
-        // the name, so the upload response is the only place the real filename
-        // comes from. The `flow-` prefix is the tenant separation of LE-3242
-        // (langflow-ai/langflow#15982, 1.13.1): before it, flow attachments sat in
-        // a bare `<flow_id>/` folder, the namespace user uploads are keyed in too,
-        // so a flow created with a user's id shared that user's folder (#2338).
-        expect(body.file_path).toMatch(
-          new RegExp(`^flow-${flowId}/\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET}$`),
+        // `<folder>/<YYYY-MM-DD_HH-MM-SS>_<original name>` — the store stamps the
+        // name, so the upload response is the only place the real filename comes
+        // from. The folder is `flow-<flow_id>` on a build carrying LE-3242
+        // (langflow-ai/langflow#15982), the tenant separation that moved flow
+        // attachments out of the bare `<flow_id>/` folder user uploads are keyed in
+        // too, and `<flow_id>` before it (#2338). Which one is expected is read from
+        // the instance's version, never from this response, so a build that lost
+        // the separation fails here instead of being accepted as the old layout.
+        const folder = await servedFlowStorageFolder(request, flowId);
+        const stored = splitUploadPath(body.file_path);
+        expect(stored, `file_path is not <folder>/<name>: ${JSON.stringify(body.file_path)}`).toBeDefined();
+        expect(stored?.folder).toBe(folder);
+        expect(stored?.name).toMatch(
+          new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_${TEXT_ASSET}$`),
         );
-        uploadedName = String(body.file_path).split("/").pop() ?? "";
+        uploadedName = stored?.name ?? "";
       });
 
       await test.step("GET list returns exactly that file", async () => {
