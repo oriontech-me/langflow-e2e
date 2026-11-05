@@ -152,8 +152,12 @@ export interface PrepareOptions {
   acceptFindings?: string[];
 }
 
-/** Every step before the backup: check, destinations, secret key, pause, and the check again during it. */
-export async function prepareThroughPause(
+/**
+ * Every step before the pause: the check, the destinations and the secret key. The pause
+ * step is then the current one — for a spec about the pause itself (#2352), which asks
+ * for it on its own terms.
+ */
+export async function prepareBeforePause(
   api: MigrationApi,
   lane: InstanceMigrationLane,
   { acceptFindings = [] }: PrepareOptions = {},
@@ -202,6 +206,17 @@ export async function prepareThroughPause(
     200,
     "POST /secret-key/verify",
   );
+  const pause = stepOf(await getMigration(api), "pause");
+  must(pause.state === "current", `the pause step is ${pause.state} (${pause.reason}) after the steps before it, not current`);
+}
+
+/** Every step before the backup: check, destinations, secret key, pause, and the check again during it. */
+export async function prepareThroughPause(
+  api: MigrationApi,
+  lane: InstanceMigrationLane,
+  options: PrepareOptions = {},
+): Promise<void> {
+  await prepareBeforePause(api, lane, options);
   await expectStatus(await api.request.post(`${MIGRATION}/pause`, { headers: api.headers, data: {} }), 200, "POST /pause");
   // Measured: the pause step reads `blocked: recheck_pending` until the check runs again during it.
   await runSourceChecks(api);
