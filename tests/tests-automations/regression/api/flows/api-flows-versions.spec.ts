@@ -3,6 +3,10 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { describeFlowReadback } from "../../../../helpers/flows/describe-flow-readback";
 import { describeResponseDetail } from "../../../../helpers/flows/describe-response-detail";
+import {
+  describeBusyRetries,
+  retryBusyDatabase,
+} from "../../../../helpers/flows/retry-busy-database";
 
 // The versions sub-family (`{flow_id}/versions/`), hidden from /openapi.json — five
 // operations no spec drove and no document described. Spec doc:
@@ -65,12 +69,14 @@ test.describe("Flows API — versions", () => {
   //                  POST 11-17 ms — the client was not waiting for the commit
   //   1.13.0.dev14   10/10 answered 200, POST 321-344 ms — now it is
   //
-  // Quarantined at triage of e2e-qa#28: recurrent flake (2026-10-07, 2026-11-05), the
-  // activate call answers 503 on a first attempt. Lifting it (drop `test.fixme`, restore
-  // `@stable`) is #2400's deliverable.
-  test.fixme(
+  // Quarantined in #2401 for #2400, and restored on its measured cause: under parallel
+  // writes, activate answers `503 "The database is busy. Please retry the request."`
+  // (SQLite lock contention; activate is the one flow write route without the server's
+  // own lock retry). Step 6 retries that one answer the way Langflow's client does —
+  // see the spec doc's *Known product gap — activate answers `503`*.
+  test(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
-    { tag: ["@api", "@workspace"] },
+    { tag: ["@stable", "@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -181,8 +187,27 @@ test.describe("Flows API — versions", () => {
       });
 
       await test.step("activating v1 returns the FLOW with v1's graph live", async () => {
-        const res = await request.post(`${base}${v1.id}/activate`, { headers });
-        expect(res.status()).toBe(200);
+        // Only the busy 503 is retried, at most 3 times; any other answer reaches the
+        // assertion as it came (#2400).
+        const { response: res, retries } = await retryBusyDatabase(() =>
+          request.post(`${base}${v1.id}/activate`, { headers }),
+        );
+        for (const retry of retries) {
+          test.info().annotations.push({
+            type: "busy-retry",
+            description: `activate attempt ${retry.attempt} answered 503 database busy (Retry-After ${retry.retryAfter ?? "absent"}, waited ${retry.delayMs} ms)`,
+          });
+        }
+        // Built ONLY when this is about to fail, so a green run reads no body.
+        const diagnosis =
+          res.status() === 200
+            ? undefined
+            : [
+                `POST ${base}${v1.id}/activate -> ${res.status()}`,
+                await describeResponseDetail(res),
+                describeBusyRetries(retries),
+              ].join("; ");
+        expect(res.status(), diagnosis).toBe(200);
         const flow = await res.json();
         expect(flow.id).toBe(flowId);
         expect(flow.data.nodes).toEqual([]);
