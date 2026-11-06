@@ -110,9 +110,10 @@ the flow and the target version, then writes the auto-snapshot and the new graph
 savepoint. When that write meets another connection's commit, SQLite answers `database
 is locked`. A read-then-write upgrade fails at once and never waits on `busy_timeout`,
 as #1225 measured. The route turns the error into `503 {"detail": "The database is
-busy. Please retry the request."}` with `Retry-After: 1`. The `503` is raised inside the
-savepoint and the session rolls back, so sending activate again is safe and cannot
-leave a second snapshot. The branch is in `1.13.0.dev35` and `1.14.0.dev18`.
+busy. Please retry the request."}` with `Retry-After: 1`. The lock error rolls the
+savepoint back, the `503` is raised after it, and the session dependency rolls back on
+that `HTTPException`, so sending activate again is safe and cannot leave a second
+snapshot. The branch is in `1.13.0.dev35` and `1.14.0.dev18`.
 
 **Activate has no in-server lock retry.** Flow create, `PATCH` and delete (single and
 bulk) run their transaction through `run_with_lock_retry` (`lock_retry.py`), which
@@ -143,8 +144,8 @@ on any `503` waits a fixed 700 ms and sends it once more. A second failure shows
 2. Test 1 itself, 30 times on 2 workers with retries off, while the rest of `api/flows/`
    ran beside it on 4 workers (repeated 4 times). Step 6 retries as the UI does (below).
    The second row is a local copy of `1.14.0.dev18` whose activate runs through
-   `run_with_lock_retry`, with the acting user detached first as `flows.py` does (the
-   retry's rollback expires it). Each row is two runs, each on a fresh database:
+   `run_with_lock_retry`, with the acting user detached first as `flows.py`'s `PATCH`
+   and delete routes do (the retry's rollback expires it). Each row is two runs, each on a fresh database:
 
    | `1.14.0.dev18` | lifecycles that failed | passed with no retry |
    |---|---|---|
@@ -180,7 +181,7 @@ exactly as far as the product's own client does.
 **Why the quarantine stays.** At the load above, the UI's single retry still fails most of
 the time, and the daily would see it again as a recurrent flake. The fix is upstream:
 activate should run its transaction through `run_with_lock_retry`, with the acting user
-detached first, as its siblings do. The quarantine is lifted when that reaches the
+detached first, as the `PATCH` and delete routes do. The quarantine is lifted when that reaches the
 nightly (see *Validation criterion*).
 
 ---
@@ -290,8 +291,9 @@ test, deleted by id in `afterEach` (versions go with the flow).
 
 ## Validation criterion *(required)*
 
-Both tests pass three consecutive times at `--retries=0 --workers=1`, with the
-activation asserted on **three** observables (the returned flow state, the auto-
+Each test passes three consecutive times at `--retries=0 --workers=1` (test 1 once its
+#2400 quarantine is lifted; until then it is validated with `test.fixme` removed locally,
+idle), with the activation asserted on **three** observables (the returned flow state, the auto-
 snapshot entry with its exact description, and `GET /flows/{id}` agreeing), the
 ignored `name` asserted as absent, and the declared coverage — all five `versions`
 operations plus the CRUD/PUT calls issued — matching what the fixture recorded. Zero
@@ -307,11 +309,13 @@ that stops failing is the defect this suite exists to catch, inverted. Both read
 are absent from `apiCoverage.declare` on purpose: the gate fails a declaration the
 test never issues, so declaring them would redden every green run.
 
-For the activate retry (#2400), each branch is shown to fail when it should:
+For the activate retry (#2400), each branch is shown to fail when it should, in the spec
+or in the helper's unit tests:
 
 - an activate whose retry is busy too fails step 6, with the `detail` and the retry in
   the message (reached for real under the load above);
-- an activate that answers any other non-`200` fails at once, without retrying;
+- an activate that answers any other non-`200` fails at once, without retrying (shown in
+  the spec with a `404`; a non-busy `503` is pinned by the unit tests);
 - the helper's unit tests pin the retry rule (`retry-busy-database.test.ts`).
 
 **Lifting the quarantine (#2400).** When the nightly's activate runs through
@@ -327,7 +331,7 @@ as the local patch did, before the tag comes back.
 - `src/backend/base/langflow/api/router.py` — the `flow_version_router` include; the endpoint module is hidden from the schema.
 - `src/backend/base/langflow/api/v1/flow_version.py` — the five operations, and `_get_user_flow`, whose `detail: "Flow not found"` is the only reachable 404 in the collection route. Activate's `except SQLAlchemyError` branch is where the busy `503` comes from (#2400).
 - `src/backend/base/langflow/services/database/lock_retry.py` — `is_database_lock_error`, which decides that `503`, and `run_with_lock_retry`, which the sibling flow routes use and activate does not.
-- `src/backend/base/langflow/api/v1/flows.py` — the sibling routes (create, `PATCH`, delete) that run through `run_with_lock_retry` and detach the acting user (`UserRead.model_validate`) before they do.
+- `src/backend/base/langflow/api/v1/flows.py` — the sibling routes (create, `PATCH`, delete) that run through `run_with_lock_retry`; `PATCH` and delete detach the acting user (`UserRead.model_validate`) first, create captures its id.
 - `src/frontend/src/hooks/flows/use-restore-version.ts` — the UI's restore: one retry on a `503` after `RETRY_BUSY_MS = 700`, the contract `retryBusyDatabase` follows.
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_new_flow`, which flushes without committing (`LE-2598`).
 - `src/backend/base/langflow/api/utils/core.py` — `DbSession`, the auto-commit-at-teardown session dependency.
