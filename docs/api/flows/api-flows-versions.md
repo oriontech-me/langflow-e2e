@@ -159,8 +159,8 @@ does, because the retry's rollback expires it):
 
 | `1.14.0.dev18` | runs that needed a client retry | runs that exhausted all 3 |
 |---|---|---|
-| as published | 9 / 30 (30 retries) | **2 / 30** |
-| activate in `run_with_lock_retry` (local patch) | 2 / 30 (4 retries) | **0 / 30** |
+| as published | 9 / 30 (15 retries) | **2 / 30** |
+| activate in `run_with_lock_retry` (local patch) | 2 / 30 (2 retries) | **0 / 30** |
 
 Two consequences:
 
