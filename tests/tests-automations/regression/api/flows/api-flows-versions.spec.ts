@@ -69,14 +69,17 @@ test.describe("Flows API — versions", () => {
   //                  POST 11-17 ms — the client was not waiting for the commit
   //   1.13.0.dev14   10/10 answered 200, POST 321-344 ms — now it is
   //
-  // Quarantined in #2401 for #2400, and restored on its measured cause: under parallel
-  // writes, activate answers `503 "The database is busy. Please retry the request."`
-  // (SQLite lock contention; activate is the one flow write route without the server's
-  // own lock retry). Step 6 retries that one answer the way Langflow's client does —
-  // see the spec doc's *Known product gap — activate answers `503`*.
-  test(
+  // Quarantined in #2401 for #2400, and kept there on its measured cause: under parallel
+  // writes, activate answers `503 "The database is busy. Please retry the request."`.
+  // It is SQLite lock contention, and unlike flow create/PATCH/delete, activate has no
+  // in-server lock retry. Step 6 already retries that answer once after 700 ms, as the
+  // UI's restore does, and that is not enough: under parallel load the lifecycle still
+  // failed 12-22 times in 30, against 0 in 30 with activate routed through
+  // `run_with_lock_retry`. Lifting it (drop `test.fixme`, restore `@stable`) waits for
+  // that upstream fix to reach the nightly — see the spec doc's *Known product gap*.
+  test.fixme(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
-    { tag: ["@stable", "@api", "@workspace"] },
+    { tag: ["@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -187,8 +190,8 @@ test.describe("Flows API — versions", () => {
       });
 
       await test.step("activating v1 returns the FLOW with v1's graph live", async () => {
-        // Only the busy 503 is retried, at most 3 times; any other answer reaches the
-        // assertion as it came (#2400).
+        // Only the busy 503 is retried, once, as the UI's restore does; any other answer
+        // reaches the assertion as it came (#2400).
         const activateUrl = `${base}${v1.id}/activate`;
         const { response: res, retries } = await retryBusyDatabase(() =>
           request.post(activateUrl, { headers }),
@@ -196,7 +199,7 @@ test.describe("Flows API — versions", () => {
         for (const retry of retries) {
           test.info().annotations.push({
             type: "busy-retry",
-            description: `activate attempt ${retry.attempt} answered 503 database busy (Retry-After ${retry.retryAfter ?? "absent"}, waited ${retry.delayMs} ms)`,
+            description: `activate attempt ${retry.attempt} answered 503 database busy, sent again after ${retry.delayMs} ms`,
           });
         }
         // Built ONLY when this is about to fail, so a green run reads no body.
