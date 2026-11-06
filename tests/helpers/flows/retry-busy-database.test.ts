@@ -5,24 +5,22 @@ import assert from "node:assert/strict";
 import {
   DATABASE_BUSY_DETAIL,
   MAX_BUSY_RETRIES,
+  RETRY_BUSY_MS,
   describeBusyRetries,
   isDatabaseBusy,
-  retryAfterMs,
   retryBusyDatabase,
   type ResponseLike,
 } from "./retry-busy-database";
 
-function response(status: number, body: unknown, headers: Record<string, string> = {}): ResponseLike {
+function response(status: number, body: unknown): ResponseLike {
   return {
     status: () => status,
-    headers: () => headers,
     text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
   };
 }
 
-/** `null` sends no `Retry-After` header at all. */
-const busy = (retryAfter: string | null = "1") =>
-  response(503, { detail: DATABASE_BUSY_DETAIL }, retryAfter === null ? {} : { "retry-after": retryAfter });
+const busy = () => response(503, { detail: DATABASE_BUSY_DETAIL });
+const migrationPause = () => response(503, { detail: "This instance is being migrated." });
 
 /** Answers the queued responses in order and counts the calls. */
 function scripted(...answers: ResponseLike[]) {
@@ -40,9 +38,15 @@ function scripted(...answers: ResponseLike[]) {
   };
 }
 
+test("the retry is the UI's: once, after 700 ms", () => {
+  // use-restore-version.ts: RETRY_BUSY_MS = 700, one more activate.
+  assert.equal(RETRY_BUSY_MS, 700);
+  assert.equal(MAX_BUSY_RETRIES, 1);
+});
+
 test("only a 503 carrying the exact busy detail is retryable", async () => {
   assert.equal(await isDatabaseBusy(busy()), true);
-  assert.equal(await isDatabaseBusy(response(503, { detail: "This instance is being migrated." })), false);
+  assert.equal(await isDatabaseBusy(migrationPause()), false);
   assert.equal(await isDatabaseBusy(response(503, { detail: `${DATABASE_BUSY_DETAIL} ` })), false);
   assert.equal(await isDatabaseBusy(response(500, { detail: DATABASE_BUSY_DETAIL })), false);
   assert.equal(await isDatabaseBusy(response(200, { detail: DATABASE_BUSY_DETAIL })), false);
@@ -54,23 +58,11 @@ test("only a 503 carrying the exact busy detail is retryable", async () => {
 test("a body that cannot be read is not retryable, and does not throw", async () => {
   const unreadable: ResponseLike = {
     status: () => 503,
-    headers: () => ({}),
     text: async () => {
       throw new Error("No data found for resource with given identifier");
     },
   };
   assert.equal(await isDatabaseBusy(unreadable), false);
-});
-
-test("Retry-After in seconds, a 1 s default, and a 5 s cap", () => {
-  assert.equal(retryAfterMs("1"), 1000);
-  assert.equal(retryAfterMs("0"), 0);
-  assert.equal(retryAfterMs("2.5"), 2500);
-  assert.equal(retryAfterMs("60"), 5000);
-  assert.equal(retryAfterMs(undefined), 1000);
-  assert.equal(retryAfterMs(""), 1000);
-  assert.equal(retryAfterMs("-1"), 1000);
-  assert.equal(retryAfterMs("Wed, 21 Oct 2026 07:28:00 GMT"), 1000);
 });
 
 test("a first answer that is not busy is used as is, with no wait", async () => {
@@ -83,56 +75,40 @@ test("a first answer that is not busy is used as is, with no wait", async () => 
   assert.deepEqual(s.waits, []);
 });
 
-test("busy answers are retried until a different answer comes back", async () => {
+test("a busy answer is sent again once, after 700 ms", async () => {
   const ok = response(200, { id: "f" });
-  const s = scripted(busy("1"), busy(null), ok);
+  const s = scripted(busy(), ok);
   const result = await retryBusyDatabase(s.send, { sleep: s.sleep });
   assert.equal(result.response, ok);
-  assert.equal(s.calls, 3);
-  assert.deepEqual(s.waits, [1000, 1000]);
-  assert.deepEqual(result.retries, [
-    { attempt: 1, retryAfter: "1", delayMs: 1000 },
-    { attempt: 2, retryAfter: undefined, delayMs: 1000 },
-  ]);
-});
-
-test("a different error after a busy answer is returned, not retried", async () => {
-  const refused = response(500, { detail: "Database error while activating version. Please try again." });
-  const s = scripted(busy(), refused, response(200, {}));
-  const result = await retryBusyDatabase(s.send, { sleep: s.sleep });
-  assert.equal(result.response, refused);
   assert.equal(s.calls, 2);
+  assert.deepEqual(s.waits, [700]);
+  assert.deepEqual(result.retries, [{ attempt: 1, delayMs: 700 }]);
 });
 
-test(`retries stop after ${MAX_BUSY_RETRIES} and the last busy answer is returned`, async () => {
-  const last = busy();
-  const s = scripted(busy(), busy(), busy(), last, response(200, {}));
+test("a second busy answer is returned, not retried", async () => {
+  const second = busy();
+  const s = scripted(busy(), second, response(200, {}));
   const result = await retryBusyDatabase(s.send, { sleep: s.sleep });
-  assert.equal(MAX_BUSY_RETRIES, 3);
-  assert.equal(s.calls, MAX_BUSY_RETRIES + 1);
-  assert.equal(result.response, last);
-  assert.equal(result.retries.length, MAX_BUSY_RETRIES);
+  assert.equal(s.calls, 2);
+  assert.equal(result.response, second);
+  assert.equal(result.retries.length, 1);
   assert.equal(await isDatabaseBusy(result.response), true);
 });
 
-test("maxRetries 0 sends once", async () => {
-  const s = scripted(busy(), response(200, {}));
-  const result = await retryBusyDatabase(s.send, { sleep: s.sleep, maxRetries: 0 });
+test("a first 503 that is not the busy one is returned at once", async () => {
+  // The UI would retry this one; the helper is narrower so the assertion sees it.
+  const pause = migrationPause();
+  const s = scripted(pause, response(200, {}));
+  const result = await retryBusyDatabase(s.send, { sleep: s.sleep });
+  assert.equal(result.response, pause);
   assert.equal(s.calls, 1);
-  assert.deepEqual(result.retries, []);
+  assert.deepEqual(s.waits, []);
 });
 
 test("the description names every retry", () => {
   assert.equal(describeBusyRetries([]), "no busy retry");
   assert.equal(
-    describeBusyRetries([{ attempt: 1, retryAfter: "1", delayMs: 1000 }]),
-    "1 busy retry: attempt 1 busy (Retry-After 1, waited 1000 ms)",
-  );
-  assert.match(
-    describeBusyRetries([
-      { attempt: 1, retryAfter: "1", delayMs: 1000 },
-      { attempt: 2, retryAfter: undefined, delayMs: 1000 },
-    ]),
-    /^2 busy retries: attempt 1 .*; attempt 2 busy \(Retry-After absent, waited 1000 ms\)$/,
+    describeBusyRetries([{ attempt: 1, delayMs: 700 }]),
+    "1 busy retry (attempt 1 busy, waited 700 ms)",
   );
 });
