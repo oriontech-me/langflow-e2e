@@ -189,8 +189,9 @@ test.describe("Flows API — versions", () => {
       await test.step("activating v1 returns the FLOW with v1's graph live", async () => {
         // Only the busy 503 is retried, at most 3 times; any other answer reaches the
         // assertion as it came (#2400).
+        const activateUrl = `${base}${v1.id}/activate`;
         const { response: res, retries } = await retryBusyDatabase(() =>
-          request.post(`${base}${v1.id}/activate`, { headers }),
+          request.post(activateUrl, { headers }),
         );
         for (const retry of retries) {
           test.info().annotations.push({
@@ -203,7 +204,7 @@ test.describe("Flows API — versions", () => {
           res.status() === 200
             ? undefined
             : [
-                `POST ${base}${v1.id}/activate -> ${res.status()}`,
+                `POST ${activateUrl} -> ${res.status()}`,
                 await describeResponseDetail(res),
                 describeBusyRetries(retries),
               ].join("; ");
