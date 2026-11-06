@@ -607,7 +607,7 @@
    },
    "upstreamBugCount": 74,
    "specCounts": {
-    "specs": 41,
+    "specs": 42,
     "stable": 38
    }
   },
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-11-05",
+ "refreshed": "2026-11-06",
  "refreshWindow": {
-  "testHealthSince": "2026-09-21",
+  "testHealthSince": "2026-09-22",
   "days": 45
  }
 }
