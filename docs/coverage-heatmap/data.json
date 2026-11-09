@@ -568,7 +568,7 @@
   },
   {
    "area": "12 Flow lifecycle",
-   "residualRisk": 4.4,
+   "residualRisk": 4.2,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
@@ -583,11 +583,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 2,
+    "chronicFlaky": 1,
     "stableSpecs": 38,
-    "penalty": 0.021
+    "penalty": 0.011
    },
-   "mitigation": 0.78,
+   "mitigation": 0.79,
    "checklistBullets": 26,
    "bulletStates": {
     "x": 26
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-11-06",
+ "refreshed": "2026-11-09",
  "refreshWindow": {
-  "testHealthSince": "2026-09-22",
+  "testHealthSince": "2026-09-25",
   "days": 45
  }
 }
