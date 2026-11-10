@@ -69,17 +69,19 @@ test.describe("Flows API — versions", () => {
   //                  POST 11-17 ms — the client was not waiting for the commit
   //   1.13.0.dev14   10/10 answered 200, POST 321-344 ms — now it is
   //
-  // Quarantined in #2401 for #2400, and kept there on its measured cause: under parallel
-  // writes, activate answers `503 "The database is busy. Please retry the request."`.
-  // It is SQLite lock contention, and unlike flow create/PATCH/delete, activate has no
-  // in-server lock retry. Step 6 already retries that answer once after 700 ms, as the
-  // UI's restore does, and that is not enough: under parallel load the lifecycle still
-  // failed 12-22 times in 30, against 0 in 30 with activate routed through
-  // `run_with_lock_retry`. Lifting it (drop `test.fixme`, restore `@stable`) waits for
-  // that upstream fix to reach the nightly — see the spec doc's *Known product gap*.
-  test.fixme(
+  // Quarantined in #2401 for #2400: under parallel writes, activate answers
+  // `503 "The database is busy. Please retry the request."`. It is SQLite lock
+  // contention, and unlike flow create/PATCH/delete, activate has no in-server lock
+  // retry. Step 6 retries that answer once after 700 ms, as the UI's restore does, and
+  // the quarantine was lifted on that retry rather than on an upstream fix. On the daily
+  // the defect only ever flaked: both occurrences failed the first attempt with no retry
+  // inside step 6, and Playwright's test retry passed. A stress load (the whole
+  // `api/flows/` folder beside a 30-run burst) still fails it 12-22 times in 30, so a
+  // recurrence is the same contention and #2400 owns it until 10 clean dailies — see
+  // the spec doc's *Known product gap*.
+  test(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
-    { tag: ["@api", "@workspace"] },
+    { tag: ["@stable", "@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
