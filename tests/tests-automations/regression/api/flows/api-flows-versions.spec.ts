@@ -3,6 +3,10 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { describeFlowReadback } from "../../../../helpers/flows/describe-flow-readback";
 import { describeResponseDetail } from "../../../../helpers/flows/describe-response-detail";
+import {
+  describeBusyRetries,
+  retryBusyDatabase,
+} from "../../../../helpers/flows/retry-busy-database";
 
 // The versions sub-family (`{flow_id}/versions/`), hidden from /openapi.json — five
 // operations no spec drove and no document described. Spec doc:
@@ -52,22 +56,27 @@ test.describe("Flows API — versions", () => {
     return flow;
   }
 
-  // `@stable` was restored (#1777). The daily's auto-removal took it on 2026-09-09 when
-  // step 1 below read `404 {"detail":"Flow not found"}` on a flow its own `POST` had
-  // just returned `201` for. Verdict was PRODUCT — `LE-2598`, every write route taking
-  // `DbSession` answering its 2xx before the commit — so the tag is restored on the
-  // upstream fix (`langflow#15078`, nightly from 1.13.0.dev14) and not on a green run:
-  // the defect never reproduced idle. Measured for THIS spec's own sequence, with a
-  // 300 ms gated delay between `session_scope`'s `yield` and its `commit`, control and
-  // mutation in the same process:
+  // History: `@stable` was restored once (#1777). The daily's auto-removal took it on
+  // 2026-09-09 when step 1 below read `404 {"detail":"Flow not found"}` on a flow its
+  // own `POST` had just returned `201` for. Verdict was PRODUCT — `LE-2598`, every write
+  // route taking `DbSession` answering its 2xx before the commit — so the tag was
+  // restored on the upstream fix (`langflow#15078`, nightly from 1.13.0.dev14) and not
+  // on a green run: the defect never reproduced idle. Measured for THIS spec's own
+  // sequence, with a 300 ms gated delay between `session_scope`'s `yield` and its
+  // `commit`, control and mutation in the same process:
   //
   //   1.13.0.dev12   0/10 first reads answered 200, all 10 `{"detail":"Flow not found"}`,
   //                  POST 11-17 ms — the client was not waiting for the commit
   //   1.13.0.dev14   10/10 answered 200, POST 321-344 ms — now it is
   //
-  // Quarantined at triage of e2e-qa#28: recurrent flake (2026-10-07, 2026-11-05), the
-  // activate call answers 503 on a first attempt. Lifting it (drop `test.fixme`, restore
-  // `@stable`) is #2400's deliverable.
+  // Quarantined in #2401 for #2400, and kept there on its measured cause: under parallel
+  // writes, activate answers `503 "The database is busy. Please retry the request."`.
+  // It is SQLite lock contention, and unlike flow create/PATCH/delete, activate has no
+  // in-server lock retry. Step 6 already retries that answer once after 700 ms, as the
+  // UI's restore does, and that is not enough: under parallel load the lifecycle still
+  // failed 12-22 times in 30, against 0 in 30 with activate routed through
+  // `run_with_lock_retry`. Lifting it (drop `test.fixme`, restore `@stable`) waits for
+  // that upstream fix to reach the nightly — see the spec doc's *Known product gap*.
   test.fixme(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
     { tag: ["@api", "@workspace"] },
@@ -181,8 +190,28 @@ test.describe("Flows API — versions", () => {
       });
 
       await test.step("activating v1 returns the FLOW with v1's graph live", async () => {
-        const res = await request.post(`${base}${v1.id}/activate`, { headers });
-        expect(res.status()).toBe(200);
+        // Only the busy 503 is retried, once, as the UI's restore does; any other answer
+        // reaches the assertion as it came (#2400).
+        const activateUrl = `${base}${v1.id}/activate`;
+        const { response: res, retries } = await retryBusyDatabase(() =>
+          request.post(activateUrl, { headers }),
+        );
+        for (const retry of retries) {
+          test.info().annotations.push({
+            type: "busy-retry",
+            description: `activate attempt ${retry.attempt} answered 503 database busy, sent again after ${retry.delayMs} ms`,
+          });
+        }
+        // Built ONLY when this is about to fail, so a green run reads no body.
+        const diagnosis =
+          res.status() === 200
+            ? undefined
+            : [
+                `POST ${activateUrl} -> ${res.status()}`,
+                await describeResponseDetail(res),
+                describeBusyRetries(retries),
+              ].join("; ");
+        expect(res.status(), diagnosis).toBe(200);
         const flow = await res.json();
         expect(flow.id).toBe(flowId);
         expect(flow.data.nodes).toEqual([]);
