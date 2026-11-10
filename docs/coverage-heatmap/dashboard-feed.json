@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-11-09",
+ "refreshed": "2026-11-10",
  "refreshWindow": {
-  "testHealthSince": "2026-09-25",
+  "testHealthSince": "2026-09-26",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
