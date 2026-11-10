@@ -4,8 +4,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DATABASE_BUSY_DETAIL,
-  MAX_BUSY_RETRIES,
-  RETRY_BUSY_MS,
   describeBusyRetries,
   isDatabaseBusy,
   retryBusyDatabase,
@@ -38,12 +36,6 @@ function scripted(...answers: ResponseLike[]) {
   };
 }
 
-test("the retry is the UI's: once, after 700 ms", () => {
-  // use-restore-version.ts: RETRY_BUSY_MS = 700, one more activate.
-  assert.equal(RETRY_BUSY_MS, 700);
-  assert.equal(MAX_BUSY_RETRIES, 1);
-});
-
 test("only a 503 carrying the exact busy detail is retryable", async () => {
   assert.equal(await isDatabaseBusy(busy()), true);
   assert.equal(await isDatabaseBusy(migrationPause()), false);
@@ -75,6 +67,9 @@ test("a first answer that is not busy is used as is, with no wait", async () => 
   assert.deepEqual(s.waits, []);
 });
 
+// 700 ms and a single retry are copied from the UI's use-restore-version.ts
+// (RETRY_BUSY_MS, one more activate). These tests pin the helper's behaviour with
+// literals; nothing here reads the frontend, so a change upstream is not detected.
 test("a busy answer is sent again once, after 700 ms", async () => {
   const ok = response(200, { id: "f" });
   const s = scripted(busy(), ok);
