@@ -1737,7 +1737,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 106 | 95 | 5 | 4 | 2 |
+| `api/flows/` — REST API | 106 | 96 | 4 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1762,7 +1762,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
 | `instance-migration/` — Instance Migration | 22 | 2 | 18 | 0 | 2 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **834** | **700 (84%)** | **80 (10%)** | **14 (2%)** | **40 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **834** | **701 (84%)** | **79 (9%)** | **14 (2%)** | **40 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1778,7 +1778,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 803 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 804 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1887,6 +1887,7 @@
 - [x] PUT merges into the flow instead of replacing it → `api-flows-put-and-bulk-delete.spec.ts`
 - [x] bulk DELETE removes exactly the ids it is given → `api-flows-put-and-bulk-delete.spec.ts`
 - [x] bulk DELETE of an unknown id reports zero, not an error → `api-flows-put-and-bulk-delete.spec.ts`
+- [x] versions lifecycle: create, list, read, activate with auto-snapshot, delete → `api-flows-versions.spec.ts`
 - [x] unknown version ids are refused with distinct messages → `api-flows-versions.spec.ts`
 - [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
 - [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`
@@ -2651,7 +2652,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 5 | 2 |
+| `api/flows/` — REST API | 4 | 2 |
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
