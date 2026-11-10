@@ -11,9 +11,10 @@ Product defect against step 1, **fixed**: #1777 / `LE-2598`, upstream `langflow#
 in the nightly from `1.13.0.dev14` — see *Known product defect* below. It is why
 `@stable` was off, and the measurement that brought it back is there too.
 
-Product gap against step 6, **open upstream, not filed**: #2400 — activate answers a busy
+Product gap against step 6, **open, not filed upstream**: #2400 — activate answers a busy
 `503` under write contention. Test 1 was quarantined for it and is back in the daily
-with step 6 retrying as the UI does; see *Known product gap* below.
+with step 6 retrying as the UI does; #2400 stays open as the gap's owner while that is
+observed (*Known product gap* below).
 
 ---
 
@@ -123,6 +124,9 @@ on `main`, `release-1.13.0`, `release-1.13.2` or `release-1.14.0`. Neither do th
 versions routes (`POST versions/`, `DELETE versions/{id}`), nor the flows `PUT`,
 `batch` and `upload` routes (checked on `1.14.0.dev18`). Steps 2, 3, 4 and 8 of test 1
 are therefore exposed too, but the measurements below never caught one of them failing.
+They have no retry and their assertions print only the status, so a `503` on one of
+them reads as a bare `expected 201/204, received 503`: that is the same contention and
+belongs to #2400, not a new defect.
 
 **What a person sees.** The UI's restore (`use-restore-version.ts`) sends activate, and
 on any `503` waits a fixed 700 ms and sends it once more. A second failure shows
@@ -185,13 +189,26 @@ detached first, as the `PATCH` and delete routes do. Nothing guarantees that cha
 upstream code knows the contention (its own comment calls it "busy, ask again") and
 answered it with the `503` and the UI's single retry, so the request would be a
 consistency improvement, not a defect report, and no ticket is filed. Waiting on it left
-the activate path with no coverage in any lane for an unbounded time. What is known
-about the daily's own load is that both failures came with **no** retry, and the daily
-has never run step 6 with it. The stress load above is far heavier, and at that load the
-single retry still loses most of the time; that is the risk taken. If the activate
-`503` recurs on a daily, the auto-removal takes `@stable` as for any hard failure, and
-step 6's message names the busy `detail` and the retry, so the triage reads it as this
-issue without re-measuring. The fix above stays the remedy if it does.
+the activate path with no coverage in any lane for an unbounded time.
+
+What the daily has shown is a **flake**, never a red test: both occurrences failed the
+first attempt with no retry inside step 6, and Playwright's test retry, which re-runs the
+whole lifecycle, passed. Step 6's retry now absorbs a single busy answer inside the
+attempt, so the daily should flake less, not more. The stress load above is far heavier,
+and at that load the single retry still loses most of the time; that is the risk taken.
+This lift was tried once before on the same branch of work (`8ab84f936`) and reverted
+(`ae3bd4aaf`) on that stress measurement; it is made now on the daily's record instead.
+
+**What happens if it recurs.** It most likely shows as a flake again, which the
+`@stable` auto-removal does not touch: that acts only on a test that failed every
+attempt. A recurrent flake follows the triage rule instead, and the quarantine comes
+back by PR. #2400 stays open for that reason, so triage dedup finds an owner: it closes
+after **10 consecutive dailies** with test 1 neither failed nor flaky in
+`reports/daily-history.jsonl`. A recurrence before that re-quarantines the test and
+leaves #2400 open on the upstream fix, without a third lift. Step 6's message names the
+busy `detail` and the retry, and a green run that needed the retry carries a
+`busy-retry` annotation in its JSON report, so either case reads as this gap without
+re-measuring.
 
 ---
 
@@ -211,7 +228,9 @@ far as the product's own client does (*Known product gap* above).
 **Before that, `@stable` was restored after `LE-2598`.** The daily's auto-removal took it in `67b6fc39` on
 2026-09-09; it is restored on the upstream fix being in
 `langflowai/langflow-nightly:latest` and re-validated there — never on a test-side
-change, which is what #1777's *Deliverables* forbid. The evidence is the ordering
+change, which is what #1777's *Deliverables* forbid for that defect. The rule is
+scoped to a wrong success like `LE-2598`'s `2xx` before the commit, which a test-side
+change could only hide; it is why #2400's honest `503` could be treated differently. The evidence is the ordering
 measurement above, not the burst: un-forced, `dev12` and `dev14` both answer 10/10.
 
 **Test 2 keeps `@stable`, and not because it is immune — it is exposed to the same
@@ -303,8 +322,9 @@ test, deleted by id in `afterEach` (versions go with the flow).
 
 ## Validation criterion *(required)*
 
-Each test passes three consecutive times at `--retries=0 --workers=1`, with the activation asserted on **three** observables (the returned flow state, the auto-
-snapshot entry with its exact description, and `GET /flows/{id}` agreeing), the
+Each test passes three consecutive times at `--retries=0 --workers=1`, with the
+activation asserted on **three** observables (the returned flow state, the
+auto-snapshot entry with its exact description, and `GET /flows/{id}` agreeing), the
 ignored `name` asserted as absent, and the declared coverage — all five `versions`
 operations plus the CRUD/PUT calls issued — matching what the fixture recorded. Zero
 flows left behind.
@@ -330,8 +350,15 @@ or in the helper's unit tests:
   together with a non-busy `503`);
 - the helper's unit tests pin the retry rule (`retry-busy-database.test.ts`).
 
+Those three runs are idle, so they never reach the busy branch: the retry path is
+covered by the unit tests and by the load runs above, not by this criterion. Last run
+on `1.14.0.dev22` (local nightly container): 2 passed, three runs out of three, zero
+`🚨 Backend Error`; activating v2 instead of v1 failed test 1 on the `nodes`
+deep-equality.
+
 **If the activate `503` recurs (#2400).** Test 1 is back on step 6's retry alone, so a
-recurrence on a daily is the risk taken, not a new defect. If upstream later routes
+recurrence on a daily is the risk taken, not a new defect; *What happens if it recurs*
+above has the rule and when #2400 closes. If upstream later routes
 activate through `run_with_lock_retry`, re-run the side-by-side burst of *Known product
 gap* against that nightly. The fix holds when both columns match the local patch: the
 lifecycle passes 30 of 30, **and** at least 29 of 30 pass with no retry. The first number
