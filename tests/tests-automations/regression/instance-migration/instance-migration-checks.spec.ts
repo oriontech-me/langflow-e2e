@@ -167,6 +167,24 @@ async function plantUndecryptableCredential(): Promise<string> {
   return name;
 }
 
+/**
+ * A locked step renders no body at all: its title is muted and "Finish the steps above
+ * first." exists only in an `sr-only` span, for screen readers (upstream `index.tsx`).
+ * So what a user sees is the absence of the step's form, and what assistive technology
+ * reads is the notice; both are asserted, and neither alone.
+ */
+async function expectShut(card: Locator): Promise<void> {
+  await expect(card.getByRole("textbox"), "a locked step shows no form").toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Test and save" })).toHaveCount(0);
+  await expect(card, "the screen-reader notice of a locked step").toContainText(STEPS_ABOVE_FIRST);
+}
+
+/** The step's form is there, and the locked notice is gone. */
+async function expectOpen(card: Locator): Promise<void> {
+  await expect(card.getByRole("button", { name: "Test and save" })).toBeVisible();
+  await expect(card).not.toContainText(STEPS_ABOVE_FIRST);
+}
+
 function stepCard(page: Page, id: string): Locator {
   return page.getByTestId(`migration-step-${id}`);
 }
@@ -216,8 +234,14 @@ test.describe("Instance migration — Check this instance gates the version, sor
   });
 
   test.afterEach(async () => {
-    resetInstanceMigration();
+    // A failed reset must not skip the cleanups: the lane's reset never repairs the
+    // source, so an undecryptable credential left behind would block every later spec.
     const errors: string[] = [];
+    try {
+      resetInstanceMigration();
+    } catch (error) {
+      errors.push(`reset: ${String(error)}`);
+    }
     for (const cleanup of cleanups.reverse()) {
       try {
         await cleanup();
@@ -350,8 +374,7 @@ test.describe("Instance migration — Check this instance gates the version, sor
 
       await test.step("The next step on the page stays shut", async () => {
         const next = stepCard(page, "connect_target");
-        await expect(next).toContainText(STEPS_ABOVE_FIRST);
-        await expect(next.getByRole("button", { name: "Test and save" })).toHaveCount(0);
+        await expectShut(next);
       });
 
       await test.step("A Fix these finding cannot be accepted over the API", async () => {
@@ -366,9 +389,10 @@ test.describe("Instance migration — Check this instance gates the version, sor
       await test.step("With destinations and key saved, the pause is still refused: the finding is all that is in the way", async () => {
         await saveDestinations(api, lane);
         await verifySecretKey(api, lane);
-        expect(await stateOf("connect_target")).toBe("done");
-        expect(await stateOf("secret_key")).toBe("done");
-        expect(await stateOf("pause")).toBe("locked (earlier_step)");
+        const state = await getMigration(api);
+        expect(stepOf(state, "connect_target").state).toBe("done");
+        expect(stepOf(state, "secret_key").state).toBe("done");
+        expect(stepOf(state, "pause")).toMatchObject({ state: "locked", reason: "earlier_step" });
         const pause = await api.request.post(`${MIGRATION}/pause`, { headers: api.headers, data: {} });
         await expectStatus(pause, 409, "POST /pause");
         expect(await pause.json()).toEqual({ detail: { code: "locked", reason: "earlier_step" } });
@@ -393,7 +417,7 @@ test.describe("Instance migration — Check this instance gates the version, sor
 
       await test.step("Accept it on the page: the page posts the acceptance", async () => {
         await openMigrationPage(page);
-        await expect(next).toContainText(STEPS_ABOVE_FIRST);
+        await expectShut(next);
         const posted = page.waitForResponse(
           (r) => r.request().method() === "POST" && new URL(r.url()).pathname === `${MIGRATION}/accepted-findings`,
         );
@@ -414,7 +438,8 @@ test.describe("Instance migration — Check this instance gates the version, sor
           problems: finding?.problems,
           accepted_by: "langflow",
         });
-        expect(String(accepted[0].accepted_at)).not.toBe("");
+        expect(typeof accepted[0].accepted_at, "accepted_at is recorded").toBe("string");
+        expect(Number.isNaN(Date.parse(String(accepted[0].accepted_at))), "accepted_at is a time").toBe(false);
         expect((finding?.problems ?? []).join("\n"), "the acceptance names the planted knowledge base").toContain(kbName);
         expect(state.blocking_findings).toEqual([]);
         expect(await stateOf("check_source")).toBe("done");
@@ -422,7 +447,7 @@ test.describe("Instance migration — Check this instance gates the version, sor
 
         await expect(row).toContainText("Accepted by langflow on ");
         await expect(page.getByTestId("migration-checks-summary")).toContainText(NO_FINDING);
-        await expect(next.getByRole("button", { name: "Test and save" })).toBeVisible();
+        await expectOpen(next);
       });
 
       await test.step("Withdraw it on the page: the page deletes the acceptance and the step shuts again", async () => {
@@ -439,8 +464,7 @@ test.describe("Instance migration — Check this instance gates the version, sor
         expect(state.record.accepted_findings).toEqual([]);
         expect(state.blocking_findings).toEqual(["source: knowledge bases"]);
         expect(await stateOf("check_source")).toBe("blocked (blocking_findings)");
-        await expect(next).toContainText(STEPS_ABOVE_FIRST);
-        await expect(next.getByRole("button", { name: "Test and save" })).toHaveCount(0);
+        await expectShut(next);
       });
     },
   );
