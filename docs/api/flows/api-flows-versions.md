@@ -314,14 +314,18 @@ or in the helper's unit tests:
 
 - an activate whose retry is busy too fails step 6, with the `detail` and the retry in
   the message (reached for real under the load above);
-- an activate that answers any other non-`200` fails at once, without retrying (shown in
-  the spec with a `404`; a non-busy `503` is pinned by the unit tests);
+- an activate that answers any other non-`200` fails at once, without retrying (shown by
+  a forced failure, activate pointed at an unknown version id, which answered `404` with
+  no retry; no committed step sends activate there, so the unit tests are what pin it,
+  together with a non-busy `503`);
 - the helper's unit tests pin the retry rule (`retry-busy-database.test.ts`).
 
 **Lifting the quarantine (#2400).** When the nightly's activate runs through
 `run_with_lock_retry`: drop `test.fixme`, restore `@stable`, and re-run the side-by-side
-burst of *Known product gap* against that nightly. The lifecycle must pass 30 of 30 there,
-as the local patch did, before the tag comes back.
+burst of *Known product gap* against that nightly. The tag comes back only when both
+columns match the local patch: the lifecycle passes 30 of 30, **and** at least 29 of 30
+pass with no retry. The first number alone counts step 6's own retry, which could carry
+a partial server fix over the bar; the second is the server's behaviour on its own.
 
 ---
 
