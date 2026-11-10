@@ -46,7 +46,7 @@ The page picks its toast from this field (langflow#15766, #2291): `revoked` → 
 `connections.toast.revokeFailed`, anything else → `connections.toast.revokedLocally`. The `not_applicable` toast is
 already asserted by `connections-row-actions.spec.ts`. This file asserts the `failed` one:
 *"Credential removed from Langflow, but provider revocation failed. Revoke the token in the provider's settings."*
-The superuser revokes the throwaway user's `xapp-` row from the page's **Other users** view (a tab until `1.14.0.dev22`, an option of the *Owner* select `connections-owner-filter` from `1.14.0.dev23` — langflow-ai/langflow#16254; chosen by version through `tests/helpers/integrations/connections-owner-view.ts`, #2409). In OSS a superuser may
+The superuser revokes the throwaway user's `xapp-` row from the page's **Other users** view (a tab up to and including `1.14.0.dev22`, an option of the *Owner* select `connections-owner-filter` from `1.14.0.dev23` — langflow-ai/langflow#16254; chosen by version through `tests/helpers/integrations/connections-owner-view.ts`, #2409). In OSS a superuser may
 revoke another user's row (#2300), so the page spends one superuser write and the user's own bucket pays for the rest.
 
 **Not reachable:** `revoked` and `unsupported` need a row with an OAuth binding (Google → `revoked`, Microsoft →

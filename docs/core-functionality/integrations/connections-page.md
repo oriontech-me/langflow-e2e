@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connections-page.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev23`) and 1.13.x (`1.13.1`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev23`, `1.14.0.dev22`) and 1.13.x (`1.13.1`)
 
 Owning issue: #1969 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order in the #1971 comment). Seeds through `tests/helpers/integrations/` from #1966. The
@@ -122,10 +122,11 @@ written:
 - **What `Manage providers` holds** (the OAuth provider registrations saved from
   Settings, langflow-ai/langflow#16251) is not asserted: this file only pins that the tab
   exists for a superuser. Coverage of that panel is a separate decision (#2409).
-- **`1.14.0.dev22`'s four-tab shape is not a side of its own.** The version gate
-  (`tests/helpers/integrations/connections-owner-view.ts`, floor `1.14.0.dev23`) reads it
-  as the tab shape, so test 1 fails there on the fourth tab. No lane runs that build any
-  more, and a third branch for one nightly would be code nothing exercises.
+- **`1.14.0.dev22` is a side of its own, and a live one.** On 2026-11-10 the nightly
+  image's `latest` tag and PyPI both still resolved to it (`1.14.0.dev23` was published
+  only as per-architecture image tags), and the PR lane failed on it. For switching the
+  ownership view it is the tab shape (`connections-owner-view.ts`, floor `1.14.0.dev23`);
+  test 1's tab LIST adds `Manage providers` from `1.14.0.dev22` on its own floor.
 - **Deleting a user removes that user's connections** (measured: the row is gone from
   the superuser's list afterwards), although the model's comment warns that SQLite does
   not enforce the foreign key's `ON DELETE CASCADE`. The teardown deletes the second
@@ -211,7 +212,9 @@ promises.
    - **from `1.14.0.dev23`**: the tablist reads exactly `Connections`, `Manage providers`
      with `Connections` selected; the Owner select reads `Mine`; opened, its options read
      exactly `Mine`, `Instance`, `Other users`; `Escape` closes it, still on `Mine`;
-   - **before**: the tablist reads exactly `Mine`, `Instance`, `Other users`, `Mine`
+   - **`1.14.0.dev22`**: the tablist reads exactly `Mine`, `Instance`, `Other users`,
+     `Manage providers`, `Mine` selected;
+   - **1.13.x**: the tablist reads exactly `Mine`, `Instance`, `Other users`, `Mine`
      selected.
 5. Seed **S** (user-owned, planted credential) before opening the page; its row is listed
    under `Mine`. Type into `connections-search` a sentinel no connection can match →
@@ -262,8 +265,7 @@ promises.
 ## Validation criterion *(required)*
 
 All three tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.14.0.dev23` and against `1.13.1` (the two sides of the ownership-view version
-gate) — and once more **beside the other four connection specs on the same
+`1.14.0.dev23`, `1.14.0.dev22` and `1.13.1` (the three page shapes) — and once more **beside the other four connection specs on the same
 instance**, since test 1's empty copy is decided by what else is listed — with: the nav
 entry, the title, the heading, the subtitle and the no-match copy asserted **verbatim**; seeded row A asserted **cell by column**, its scopes as the
 count **and** the exact `sr-only` list, and its Account cell as exactly two lines (the

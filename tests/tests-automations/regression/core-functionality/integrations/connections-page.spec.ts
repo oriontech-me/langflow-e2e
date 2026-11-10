@@ -21,6 +21,7 @@ import {
   servedOwnerFilter,
   showOwnerView,
 } from "../../../../helpers/integrations/connections-owner-view";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 import {
   navigateSettingsPages,
   settingsNavEntry,
@@ -59,6 +60,10 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
   // "Manage providers" (langflow#16251). The side is decided by the served version
   // (connections-owner-view.ts), never by what the page renders (#2409).
   const TABS_WITH_OWNER_FILTER = ["Connections", "Manage providers"];
+  // 1.14.0.dev22 alone kept the ownership tabs AND added "Manage providers"
+  // (langflow#16251). It is a real side, not history: on 2026-11-10 both the
+  // nightly image's `latest` tag and PyPI still resolved to it (#2409).
+  const MANAGE_PROVIDERS_SINCE = "1.14.0.dev22";
   const COLUMNS = ["Connection", "Owner", "Account", "Status", "Scopes", "Last check", "Actions"];
   const GOOGLE_SCOPE = "https://www.googleapis.com/auth/";
 
@@ -205,7 +210,8 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
           await expect(page.getByRole("option")).toHaveCount(0);
           await expectOwnerView(page, true, "Mine");
         } else {
-          await expect(tabs).toHaveText([...OWNER_VIEWS]);
+          const withProviders = await servedVersionAtLeast(request, MANAGE_PROVIDERS_SINCE);
+          await expect(tabs).toHaveText(withProviders ? [...OWNER_VIEWS, "Manage providers"] : [...OWNER_VIEWS]);
           await expectOwnerView(page, false, "Mine");
         }
       });

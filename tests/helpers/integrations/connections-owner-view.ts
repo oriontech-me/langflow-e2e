@@ -17,9 +17,9 @@ import { servedVersion, versionAtLeast } from "../other/served-version";
  * the select: probing the DOM would pass a 1.14 build that lost the filter by
  * accident (the reasoning of `served-version.ts`).
  *
- * `1.14.0.dev22` alone carried the old tabs plus `Manage providers`; it is not a
- * side of its own here — no lane runs it any more — and is read as the tab shape,
- * which it was.
+ * `1.14.0.dev22` alone carried the old tabs plus `Manage providers`. For the
+ * ownership view it IS the tab shape, so it is read as such here; a spec asserting
+ * the tab LIST adds `Manage providers` from that version itself.
  *
  * Known blind spot, shared with `served-version.ts`: a SOURCE build of
  * `release-1.14.0` declares plain `1.14.0`, which ranks above `dev23`, so a
