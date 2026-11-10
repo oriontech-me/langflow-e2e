@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connections-page.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev23`) and 1.13.x (`1.13.1`)
 
 Owning issue: #1969 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order in the #1971 comment). Seeds through `tests/helpers/integrations/` from #1966. The
@@ -41,14 +41,14 @@ written:
 |---|---|
 | Settings nav | the account menu (`user-profile-settings` → `menu_settings_button`) lands on `/settings/general`; `sidebar-nav-Connections` is an `<a href="/settings/connections">` reading *Connections* (icon `Plug`), among ten `sidebar-nav-*` entries, and carries `data-active="true"` once its page is open. The page renders no `settings_menu_header` |
 | The page | document title `Connections \| Langflow`; heading *Connections*; subtitle *"Third-party accounts (like Google, Microsoft 365 and Slack) that your flows use to act on your behalf. Tokens stay on the server and are never shown here."* (langflow#15825, 2026-10-16, all 8 locales; until then *"Accounts your flows act through. Tokens stay on the server; only metadata is shown here."*); `add-connection` reads *Add connection* |
-| Tabs | a `role=tablist` named *Connection views* holding three `role=tab` (no testid): `Mine` (selected by default), `Instance`, `Other users` — the last rendered for a superuser only (source; the UI here is always the superuser) |
-| Search | `connections-search`, placeholder *Search name, handle, or account*; filters **client-side** (no request), matching the display name, the handle `<provider_key>/<name>`, the account display and the account id; the value is kept across a tab switch |
+| Ownership views | **Three shapes.** On 1.13.x a `role=tablist` named *Connection views* holds three `role=tab` (no testid): `Mine` (selected by default), `Instance`, `Other users`. `1.14.0.dev22` alone added a fourth, `Manage providers` (langflow-ai/langflow#16251, merged into `release-1.14.0` on 2026-11-07). **From `1.14.0.dev23`** (langflow-ai/langflow#16254, *"replace connection and trigger tabs with filters"*, merged 2026-11-08) the tablist holds `Connections` (selected) and `Manage providers`, and the three views are the `role=option`s (no testid) of an **Owner** select — a `role=combobox` button labelled *Owner*, `data-testid="connections-owner-filter"`, reading the chosen option (`Mine` by default). `Other users` and `Manage providers` are rendered for a superuser only (source; the UI here is always the superuser). No 1.13.x line carries either change. The `Manage providers` panel (OAuth provider registrations) is not exercised here |
+| Search | `connections-search`, placeholder *Search name, handle, or account*; filters **client-side** (no request), matching the display name, the handle `<provider_key>/<name>`, the account display and the account id; the value is kept across a switch of ownership view |
 | Columns | `Connection` · `Owner` · `Account` · `Status` · `Scopes` · `Last check` · `Actions` (the last `sr-only`) |
 | A seeded `ready` row | `E2E <name>` over the handle `google/<name>` · `You` · the account display over *The signed-in user* · `Ready` · `2 scopes` plus an `sr-only` `gmail.send, drive.file` · an `sr-only` `Not checked` plus `Never` |
 | Status cell | `ready` → `Ready`, no action; `pending` → `Pending` + `authorize-<name>` reading *Authorize*; `expired` → `Expired` + *Reconnect*; `revoked` → `Revoked` + *Reconnect*; `error` → `Error` + a reason line (source only — not reachable, see below) |
 | Owner cell | `You` for one's own row, `Instance` for an instance row, `Other user` for another user's (whose `owner_id` is in a tooltip, `Owner ID: <id>`) — `Shared` until langflow#15263 |
 | Account cell | two lines. First, the account display (or its id); with no account, *Account unavailable* when the connection holds a credential and *Not signed in yet* when it does not. Second, since langflow#15263 (`1.13.0.dev21`), the connection's `executing_identity.identity` as a muted subtitle — *The signed-in user* (`user_delegated`), *A bot* (`bot`), *A service account* (`service`) — on **every** row, pending included, since the identity is always set |
-| Empty view | `connections-empty`, the table not rendered, `add-connection` still in the page header. **Five copies since langflow#15263** (`1.13.0.dev21`), chosen by `getEmptyMessage` in this order: no connection visible at all → *"No connections yet."*; the tab has rows but the search hides them all → *"No connections match your search."*; the tab itself is empty → *"No instance connections yet."* / *"No connections from other users yet."* / *"No connections in this tab yet."* |
+| Empty view | `connections-empty`, the table not rendered, `add-connection` still in the page header. **Five copies since langflow#15263** (`1.13.0.dev21`), chosen by `getEmptyMessage` in this order: no connection visible at all → *"No connections yet."*; the tab has rows but the search hides them all → *"No connections match your search."*; the tab itself is empty → *"No instance connections yet."* / *"No connections from other users yet."* / *"No connections in this tab yet."* — the last one reads *"No connections match this owner filter."* from `1.14.0.dev23` (`connections.emptyMine`, langflow-ai/langflow#16254). None of the per-view copies is asserted here |
 
 ### Where the measurement disagrees with the issue
 
@@ -116,8 +116,16 @@ written:
 - **A credential planted already past its expiry reads `ready` until a check runs**:
   status is persisted and re-evaluated by `/test` and `/health`, never derived at read
   time. So the `expired` state is asserted after the check, not at creation.
-- **A regular user gets no `Other users` tab** (upstream's second unit test). Not
-  reachable here: the UI is always the `auto_login` superuser.
+- **A regular user gets no `Other users` view** (upstream's second unit test) — no tab on
+  1.13.x, no option in the Owner select from `1.14.0.dev23` — and no `Manage providers`
+  tab. Not reachable here: the UI is always the `auto_login` superuser.
+- **What `Manage providers` holds** (the OAuth provider registrations saved from
+  Settings, langflow-ai/langflow#16251) is not asserted: this file only pins that the tab
+  exists for a superuser. Coverage of that panel is a separate decision (#2409).
+- **`1.14.0.dev22`'s four-tab shape is not a side of its own.** The version gate
+  (`tests/helpers/integrations/connections-owner-view.ts`, floor `1.14.0.dev23`) reads it
+  as the tab shape, so test 1 fails there on the fourth tab. No lane runs that build any
+  more, and a third branch for one nightly would be code nothing exercises.
 - **Deleting a user removes that user's connections** (measured: the row is gone from
   the superuser's list afterwards), although the model's comment warns that SQLite does
   not enforce the foreign key's `ON DELETE CASCADE`. The teardown deletes the second
@@ -196,8 +204,15 @@ promises.
    connection*. The copy is the page's promise about the secret, so a rewording is a
    change to assert, not to tolerate: langflow#15825 reworded it on 2026-10-16 and the
    test went red on `1.13.0.dev47` until this was updated (#2295).
-4. The tablist *Connection views* holds `Mine`, `Instance` and `Other users`, with `Mine`
-   selected.
+4. The three ownership views are offered, with `Mine` shown. Which shape to expect is
+   decided by the version the instance declares (`GET /api/v1/version`, floor
+   `1.14.0.dev23`), never by what the page renders, so a build on either side that
+   drifts still fails (#2409):
+   - **from `1.14.0.dev23`**: the tablist reads exactly `Connections`, `Manage providers`
+     with `Connections` selected; the Owner select reads `Mine`; opened, its options read
+     exactly `Mine`, `Instance`, `Other users`; `Escape` closes it, still on `Mine`;
+   - **before**: the tablist reads exactly `Mine`, `Instance`, `Other users`, `Mine`
+     selected.
 5. Seed **S** (user-owned, planted credential) before opening the page; its row is listed
    under `Mine`. Type into `connections-search` a sentinel no connection can match →
    `connections-empty` reads *"No connections match your search."*, no table is rendered,
@@ -221,7 +236,10 @@ promises.
    lines — *Not signed in yet*, then *A bot*; *No scopes granted*. (P is seeded as a bot
    so the two rows' subtitles differ: a subtitle that did not follow the connection's
    identity would fail one of them.)
-5. `Mine` holds A and P, and neither C nor F.
+5. `Mine` holds A and P, and neither C nor F. Steps 5–8 switch the ownership view with
+   the tab on 1.13.x and with the Owner select from `1.14.0.dev23`, asserting the switch
+   landed (tab selected / select reads the view) before reading rows; the title keeps the
+   word *tab* so the test's history stays joined.
 6. `Instance` holds C, whose Owner reads `Instance`, and none of A, P or F.
 7. `Other users` holds F, whose Owner reads `Other user`, and none of A, P or C
    (langflow#15182).
@@ -244,12 +262,13 @@ promises.
 ## Validation criterion *(required)*
 
 All three tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev47` — and once more **beside the other four connection specs on the same
+`1.14.0.dev23` and against `1.13.1` (the two sides of the ownership-view version
+gate) — and once more **beside the other four connection specs on the same
 instance**, since test 1's empty copy is decided by what else is listed — with: the nav
 entry, the title, the heading, the subtitle and the no-match copy asserted **verbatim**; seeded row A asserted **cell by column**, its scopes as the
 count **and** the exact `sr-only` list, and its Account cell as exactly two lines (the
 account display, then *The signed-in user*) — while row P's reads *Not signed in yet*
-then *A bot*; each of the three tabs asserted to **hold** its
+then *A bot*; each of the three ownership views asserted to **hold** its
 own seeded row and **not** to hold the other three; the three search probes each
 asserted as *"the other row is gone"*, never as a total; and the `Pending`, `Expired` and
 `Revoked` badges each asserted with the exact label of their inline action. After the
@@ -260,13 +279,14 @@ user is gone from `GET /api/v1/users/`.
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login, with the
+- A running Langflow **1.13** or **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login, with the
   default rate limits (login 5/minute per client IP, connection writes 30/minute per
   user).
 - `src/frontend/src/pages/SettingsPage/index.tsx` — the `Connections` nav entry and its
   `/settings/connections` route.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/index.tsx` — the subtitle,
-  the three tabs and the superuser-only `Other users`, the tab filter (`viewOf`), the
+  the tabs, the Owner select and its superuser-only `Other users` option, the
+  superuser-only `Manage providers` tab, the owner filter (`ownerFilter`), the
   search filter and its fields, and the single empty state.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/ConnectionsTable.tsx`
   — the row testid, the columns, `ownerKindOf`, and the account, scope and last-check
@@ -292,6 +312,9 @@ user is gone from `GET /api/v1/users/`.
   `tests/helpers/auth/throwaway-user.ts` and `tests/helpers/ui/go-to-settings.ts` —
   seeding, teardown, the second user (its one login and its asynchronous delete) and the
   Settings navigation.
+- `tests/helpers/integrations/connections-owner-view.ts` — which side of `1.14.0.dev23`
+  the instance is on, and switching the ownership view on either side (on
+  `tests/helpers/other/served-version.ts`).
 - The upstream paths resolve on `release-1.13.0` and not on `main`, so the
   doc-dependency guard reports a `::notice::`. No provider key, no model, no network
   egress.
