@@ -73,11 +73,12 @@ test.describe("Flows API — versions", () => {
   // `503 "The database is busy. Please retry the request."`. It is SQLite lock
   // contention, and unlike flow create/PATCH/delete, activate has no in-server lock
   // retry. Step 6 retries that answer once after 700 ms, as the UI's restore does, and
-  // the quarantine was lifted on that retry rather than on an upstream fix: the daily's
-  // two failures came with no retry at all, and the daily's own result with the retry
-  // is the measurement still missing. A stress load (the whole `api/flows/` folder
-  // beside a 30-run burst) still fails it 12-22 times in 30, so a recurrence is read as
-  // the same contention — see the spec doc's *Known product gap*.
+  // the quarantine was lifted on that retry rather than on an upstream fix. On the daily
+  // the defect only ever flaked: both occurrences failed the first attempt with no retry
+  // inside step 6, and Playwright's test retry passed. A stress load (the whole
+  // `api/flows/` folder beside a 30-run burst) still fails it 12-22 times in 30, so a
+  // recurrence is the same contention and #2400 owns it until 10 clean dailies — see
+  // the spec doc's *Known product gap*.
   test(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
     { tag: ["@stable", "@api", "@workspace"] },
