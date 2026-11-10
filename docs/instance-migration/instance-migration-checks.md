@@ -30,8 +30,8 @@ Owning issue: #2350 (Wave 11). Tracker: #2357.
 - **"Naming both versions" holds on the page, not in the answer.** An older version answers `422 {"detail": {"code": "version_older", "source_version": "1.14.0.dev22"}}`, so the API names only the **source**. The page reads *"Older than this instance. Use 1.14.0.dev22 or newer. Preview builds of that version count as older."* under the field, and the field still holds the version the admin typed. The spec asserts both as measured.
 - **A malformed version is refused, never read as `0.0.0`.** `not-a-version` and the empty string both answer `422 {"detail": {"code": "version_invalid"}}`; the page reads *"Enter a version such as 1.14.0.dev22."*. A refused version changes nothing: the step stays `current` and no check runs.
 - **The admin's paste is accepted.** `Langflow v1.14.0.dev22` runs the check against `1.14.0.dev22` (`version` check: *"source and target both run Langflow 1.14.0.dev22"*). `99.0.0` runs it too, and the `version` check says the target is newer and that the instance *"cannot confirm that 99.0.0 was released"*.
-- **Not every later step is refused while a finding is open, and the spec does not claim it is.** With a finding open, `PUT /destinations` answers `200` and `POST /secret-key/verify` answers `200`, and both steps then read `done`. The first route that refuses is the **pause** (`409 {"code": "locked", "reason": "earlier_step"}`), then the backup confirmation the same way. Those are the routes that change the instance, and none of them can run while a finding is open *(code: `_require_unlocked` / `_require_reached` guard `pause`, `backup`, the copies, `check_target` and `start_target`; nothing guards `connect_target` or `secret_key`)*. The page hides those two steps instead: *Where your data goes* reads *"Finish the steps above first."* with no form. So "the next step cannot be started" is asserted on the page for *Where your data goes*, and over the API on the pause, with destinations and key already saved so that the finding is the only thing in the way.
-- **An acceptance lapses when the finding changes.** It is stored with the check's `summary` and `problems`, and only matches a finding with the same ones *(code: `_blocking_findings`)*. Measured by accident during the scouting: a second knowledge base moved the summary from *"1 of 2"* to *"1 of 3"*, the acceptance stopped counting, and the page read *"Changed since langflow accepted it. Review it again."*. Test 4 relies on the converse, that an unchanged finding keeps its acceptance.
+- **Not every later step is refused while a finding is open, and the spec does not claim it is.** With a finding open, `PUT /destinations` answers `200` and `POST /secret-key/verify` answers `200`, and both steps then read `done`. The first route that refuses is the **pause** (`409 {"code": "locked", "reason": "earlier_step"}`), then the backup confirmation the same way. Those are the routes that change the instance, and none of them can run while a finding is open *(code: `_require_unlocked` / `_require_reached` guard `pause`, `backup`, the copies, `check_target` and `start_target`; nothing guards `connect_target` or `secret_key`)*. The page hides those two steps instead. A locked step renders no body at all: *Where your data goes* shows its muted title and no form, and *"Finish the steps above first."* exists only in an `sr-only` span for screen readers *(code: `index.tsx`; measured: no visible paragraph carries the words, a visible `<p>` assertion failed 3 runs out of 3)*. So "the next step cannot be started" is asserted on the page for *Where your data goes*, and over the API on the pause, with destinations and key already saved so that the finding is the only thing in the way.
+- **An acceptance lapses when the finding changes, and the server and the page disagree on what a change is.** The server stores the acceptance with the check's `summary` and `problems`, and only matches a finding with the same ones *(code: `_blocking_findings`)*. The page marks it lapsed only when the **summary** differs *(code: `acceptanceOf` in `catalog.ts`)*. Measured by accident during the scouting: a second knowledge base moved the summary from *"1 of 2"* to *"1 of 3"*, the acceptance stopped counting, and the page read *"Changed since langflow accepted it. Review it again."*. A change in `problems` with the same summary (another knowledge base failing instead, the count unchanged) would block on the server while the page still shows the box ticked *(code, not observed)*. Test 4 relies on the converse, that an unchanged finding keeps its acceptance.
 
 ---
 
@@ -54,7 +54,7 @@ None is `@stable`: nothing runs `@instance-migration` on a cron (#1010).
 - **Each test starts and ends with `resetInstanceMigration()`.** What a test plants on the source it removes itself, after the reset, in reverse order: the store file gets its mode back before its knowledge base is deleted (a `chmod 000` store is deleted with `200` once readable again), and the corrupted variable is deleted over the API (measured `204`).
 - *Where your data goes* and *Hand over the secret key* are walked over the API by `saveDestinations()` and `verifySecretKey()`, split out of `prepareBeforePause()` in `migration-walk.ts`, which keeps its behaviour.
 - No provider key and no model. The knowledge bases are created with an embedding provider named and never used.
-- A check run takes ~30 s idle. The page's `POST /checks` is an NDJSON stream whose response event fires only with its first event, ~30 s after the click (measured), so the spec waits for it on the check's whole budget, not on a 30 s one.
+- A check run took ~29–43 s here on `1.14.0.dev22`, against the ~16–22 s `migration-walk.ts` recorded on `1.14.0.dev14`. The page's `POST /checks` is an NDJSON stream whose response event fired only with its first event, 30.7 s after the click, with the check done 43 s after it (one measured run). A 30 s wait lost that race, so the spec waits for it on the check's whole budget.
 
 ---
 
@@ -75,7 +75,7 @@ None is `@stable`: nothing runs `@instance-migration` on a cron (#1010).
 2. Open the page, type the source's version and run the check. The summary reads *"Problems that stop the move: 2"*.
 3. **Fix these** (`migration-group-fix`) holds exactly `source: credentials`, with no accept checkbox. **Fix or accept** (`migration-group-decide`) holds exactly `source: knowledge bases`, with its checkbox unchecked. **Read these** (`migration-group-read`) holds exactly `embedding models`. **Passed** (`migration-group-passed`) holds the other nine, and every check of the report appears in exactly one group.
 4. The API agrees: `blocking_findings` is `["source: credentials", "source: knowledge bases"]` (the warning does not block), and `check_source` is `blocked: blocking_findings`.
-5. *Where your data goes* reads *"Finish the steps above first."* and has no *Test and save* button.
+5. *Where your data goes* shows no form (no text field, no *Test and save* button), and its screen-reader notice reads *"Finish the steps above first."*. Both are asserted: the notice alone is invisible, and the missing form alone could be a page that failed to load.
 6. Accepting `source: credentials` over the API is refused, `400 not_acceptable`.
 7. Save the destinations and verify the secret key over the API (both `200`). The pause step is still `locked: earlier_step`, and `POST /pause` answers `409 {"code": "locked", "reason": "earlier_step"}`.
 
@@ -84,9 +84,9 @@ None is `@stable`: nothing runs `@instance-migration` on a cron (#1010).
 1. Plant the unreadable knowledge base only, and run the check over the API. `blocking_findings` is `["source: knowledge bases"]`.
 2. Open the page. Tick the checkbox in `migration-check-source: knowledge bases`. The page sends `POST /api/v1/migration/accepted-findings` (`200`).
 3. The record's `accepted_findings` holds one entry: `name` `source: knowledge bases`, the check's own `summary` and `problems` (the planted knowledge base's name among them), `accepted_by` `langflow` and an `accepted_at`. `blocking_findings` is empty, `check_source` is `done` and `connect_target` is `current`.
-4. The page reads *"Accepted by langflow on …"* under the finding and *"Nothing stops the move."* in the summary, and *Where your data goes* shows its *Test and save* button.
+4. The page reads *"Accepted by langflow on …"* under the finding and *"Nothing stops the move."* in the summary, and *Where your data goes* shows its form (*Test and save*) with no locked notice.
 5. Untick the checkbox. The page sends `DELETE /api/v1/migration/accepted-findings?name=…` (`200`).
-6. `accepted_findings` is empty, `blocking_findings` is `["source: knowledge bases"]` again, `check_source` is `blocked`, and *Where your data goes* reads *"Finish the steps above first."* again.
+6. `accepted_findings` is empty, `blocking_findings` is `["source: knowledge bases"]` again, `check_source` is `blocked`, and *Where your data goes* is shut again (no form, the screen-reader notice back).
 
 ### Test 4 — running the check twice on an unchanged instance produces the same findings, and an acceptance carries over
 
@@ -106,7 +106,7 @@ Each test is forced to fail once:
 - test 1: expecting `version_invalid` for `1.0.0` fails on the code the server sends;
 - test 2: not planting the credential fails on the **Fix these** group being absent;
 - test 3: skipping the click on the checkbox fails on the empty `accepted_findings`;
-- test 4: planting a knowledge base with no model between the two runs fails the comparison on `embedding models`.
+- test 4: planting a knowledge base with no model between the two runs fails the comparison (`embedding models` turns `warn`, and the `source: knowledge bases` count moves with it).
 
 ---
 
@@ -132,6 +132,6 @@ Each test is forced to fail once:
 | `src/frontend/src/pages/SettingsPage/pages/MigrationPage/catalog.ts` | `groupChecks`: failing and acceptable → *Fix or accept*, failing and not → *Fix these*, `warn` → *Read these* |
 
 - **Langflow API**: the routes above, plus `GET /api/v1/migration`, `PUT /api/v1/migration/destinations`, `POST /api/v1/migration/secret-key/verify`, `POST /api/v1/migration/pause`, `POST` / `GET` / `DELETE /api/v1/knowledge_bases/`, `POST` / `DELETE /api/v1/variables/`, `GET /api/v1/users/whoami`.
-- **Test ids**: `migration-target-version`, `migration-run-checks`, `migration-checks-summary`, `migration-group-fix`, `migration-group-decide`, `migration-group-read`, `migration-group-passed`, `migration-check-<check name>`, `migration-step-check_source`, `migration-step-connect_target`, `migration-step-pause`. The version error is found by its id, `migration-target-version-error`, which the field names in `aria-describedby`.
+- **Test ids**: `migration-target-version`, `migration-run-checks`, `migration-checks-summary`, `migration-group-fix`, `migration-group-decide`, `migration-group-read`, `migration-group-passed`, `migration-check-<check name>`, `migration-step-check_source`, `migration-step-connect_target`. The version error is found by its id, `migration-target-version-error`, which the field names in `aria-describedby`.
 - **The lane**: `scripts/start-langflow-instance-migration.sh`, `scripts/reset-langflow-instance-migration.sh`, `tests/helpers/instance-migration/instance-migration-lane.ts`, `tests/helpers/instance-migration/migration-walk.ts`, and `docker exec` on the source container for the store file's mode and the variable's ciphertext.
 - **No provider key, no model.**
