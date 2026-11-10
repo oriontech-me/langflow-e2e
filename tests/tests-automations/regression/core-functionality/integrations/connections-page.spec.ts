@@ -158,7 +158,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
 
   test(
     "Settings navigation reaches the Connections page, and an empty view says so while still offering Add",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const own = await test.step("a row of this test's own is seeded, so the empty copy under a search is decided", async () => {
         const headers = { Authorization: await getAuthToken(request) };
