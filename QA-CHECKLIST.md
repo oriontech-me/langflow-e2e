@@ -1679,7 +1679,7 @@
 > `@instance-migration` lane (`./scripts/start-langflow-instance-migration.sh`,
 > #2347). Tracker: #2357.
 
-> **None of 25.1–25.5 can be `@stable`** — nothing runs `@instance-migration` on a cron
+> **None of 25.1–25.6 can be `@stable`** — nothing runs `@instance-migration` on a cron
 > (#1010). Lane contract: `docs/instance-migration/instance-migration-lane.md`. 25.0 is
 > the exception: it asserts the **default** build, so it runs on the normal lane.
 
@@ -1722,6 +1722,13 @@
 - [-] The migration router running in the source (read inside the container, since it is not in OpenAPI) guards every route but `GET /migration/pause` with `get_current_active_superuser`; each of those routes answers a regular user `403 {"detail":"The user doesn't have enough privileges"}` and a client with no credentials `403 {"detail":"No authentication credentials provided"}` — the database download included — and none of the attempts changes `migration.json`, the step states or the pause → `instance-migration/instance-migration-authorization.spec.ts`
 - [-] During a pause a regular user's `GET /api/v1/migration/pause` answers exactly `{"paused":true}` (no secret, destination, source path or check name), their `DELETE` and `POST` of the pause answer `403` and leave it paused with the record unchanged, and a client with no credentials cannot read it (`403`) → `instance-migration/instance-migration-authorization.spec.ts`
 - [-] A regular user signed in through the form has no *Migration* entry in Settings with the feature on (the superuser, as a control, has it); `/settings/migration` opened directly stays on its address, shows *Only admins can move this instance.* and no step, and the page sends no migration request but `GET /api/v1/migration/pause` → `instance-migration/instance-migration-authorization.spec.ts`
+
+#### 25.6 *Check this instance* (#2350)
+
+- [-] The target version gate: an older version answers `422 version_older` naming the source's version (the page: *"Older than this instance. Use <source> or newer."*, the field keeping the typed one), a malformed or empty one `422 version_invalid` (*"Enter a version such as <source>."*), and neither runs a check; `99.0.0` and the admin's paste `Langflow v<source>` run it → `instance-migration/instance-migration-checks.spec.ts`
+- [-] Planted findings land in their groups — an undecryptable credential under *Fix these* with no accept checkbox (`400 not_acceptable` over the API), an unreadable knowledge base under *Fix or accept*, a knowledge base with no model under *Read these* (`warn`, not blocking), the other nine under *Passed* — and with destinations and key saved the pause still answers `409 locked: earlier_step` while *Where your data goes* shows no form (its locked notice is screen-reader only) → `instance-migration/instance-migration-checks.spec.ts`
+- [-] Ticking *Accept* posts `/accepted-findings`, records name, summary, problems, `accepted_by` and `accepted_at`, and opens the next step; unticking deletes it and blocks again; a second check on an unchanged instance reports every check identically and keeps the acceptance → `instance-migration/instance-migration-checks.spec.ts`
+- [ ] An acceptance lapses when its finding changes: the server compares summary and problems, the page only the summary (*"Changed since … accepted it. Review it again."*) — measured once while scouting, not asserted
 
 ---
 

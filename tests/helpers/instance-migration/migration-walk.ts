@@ -182,6 +182,18 @@ export async function prepareBeforePause(
     );
   }
 
+  await saveDestinations(api, lane);
+  await verifySecretKey(api, lane);
+  const pause = stepOf(await getMigration(api), "pause");
+  must(pause.state === "current", `the pause step is ${pause.state} (${pause.reason}) after the steps before it, not current`);
+}
+
+/**
+ * "Where your data goes": the lane's database, pgvector and bucket, each asserted to test
+ * ok. The server takes them whatever the first step says (measured, #2350), so a spec can
+ * save them while a finding is still open.
+ */
+export async function saveDestinations(api: MigrationApi, lane: InstanceMigrationLane): Promise<void> {
   const destinations = await api.request.put(`${MIGRATION}/destinations`, {
     headers: api.headers,
     data: {
@@ -201,7 +213,10 @@ export async function prepareBeforePause(
   for (const part of ["database", "vectors", "files"]) {
     must(results?.[part]?.ok === true, `the ${part} destination does not test ok: ${JSON.stringify(results?.[part])}`);
   }
+}
 
+/** "Hand over the secret key": the fingerprint of the lane's key. */
+export async function verifySecretKey(api: MigrationApi, lane: InstanceMigrationLane): Promise<void> {
   await expectStatus(
     await api.request.post(`${MIGRATION}/secret-key/verify`, {
       headers: api.headers,
@@ -210,8 +225,6 @@ export async function prepareBeforePause(
     200,
     "POST /secret-key/verify",
   );
-  const pause = stepOf(await getMigration(api), "pause");
-  must(pause.state === "current", `the pause step is ${pause.state} (${pause.reason}) after the steps before it, not current`);
 }
 
 /** Every step before the backup: check, destinations, secret key, pause, and the check again during it. */
