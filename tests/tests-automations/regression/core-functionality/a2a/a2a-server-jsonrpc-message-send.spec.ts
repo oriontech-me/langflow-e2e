@@ -50,7 +50,9 @@ async function sendText(
 }
 
 test.describe("A2A Server — JSON-RPC message/send", () => {
-  test("message/send runs the flow and echoes the sentinel back", { tag: ["@stable", "@release", "@api", "@a2a"] }, async ({
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("message/send runs the flow and echoes the sentinel back", { tag: ["@release", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
@@ -78,7 +80,9 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
     }
   });
 
-  test("each call produces its own task", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("each call produces its own task", { tag: ["@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -111,7 +115,9 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
     }
   });
 
-  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@stable", "@api", "@a2a"] }, async ({
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };

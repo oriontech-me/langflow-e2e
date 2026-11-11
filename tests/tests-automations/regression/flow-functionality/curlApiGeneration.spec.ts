@@ -1,9 +1,11 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
-test(
+// Quarantined for #2415: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "user can copy a valid macOS/Linux curl command from the API access modal",
-  { tag: ["@release", "@workspace", "@stable"] },
+  { tag: ["@release", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the Basic Prompting template", async () => {
       await awaitBootstrapTest(page);

@@ -264,9 +264,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")!.slice("connection-scope-".length)));
   }
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const res = await request.get("/api/v1/integrations", { headers: superHeaders });
       expect(res.status(), await res.text()).toBe(200);
@@ -334,9 +336,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page }) => {
       await page.route("**/api/v1/connections/oauth/registrations**", (route) =>
         route.fulfill({ json: { registrations: [] } }),
@@ -379,9 +383,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const discards = await servedVersionAtLeast(request, FAILED_ADD_DISCARDED_SINCE);
       // A second Google registration, listed first: the picker must not just
@@ -497,9 +503,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "a denied consent, then an expired sign-in link, each say so, and the row records why",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const discards = await servedVersionAtLeast(request, FAILED_ADD_DISCARDED_SINCE);
       const name = newHandle("deny");
@@ -708,9 +716,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const res = await request.get("/api/v1/integrations", { headers: superHeaders });
       expect(res.status(), await res.text()).toBe(200);

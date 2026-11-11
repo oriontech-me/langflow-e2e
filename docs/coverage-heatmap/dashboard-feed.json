@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-11-09",
+ "refreshed": "2026-11-11",
  "refreshWindow": {
-  "testHealthSince": "2026-09-25",
+  "testHealthSince": "2026-09-27",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,7 +40,7 @@
   "cappedByProduct": 2,
   "bullets": 826,
   "bulletsAutomatedUnwatched": 128,
-  "residualRiskTotal": 99.2
+  "residualRiskTotal": 101.4
  },
  "areas": [
   {
@@ -107,11 +107,11 @@
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 2,
-   "residualRisk": 6.8,
+   "residualRisk": 7,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.73,
+   "mitigation": 0.72,
    "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
@@ -135,9 +135,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 37,
-    "penalty": 0
+    "penalty": 0.01
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -151,7 +151,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": -0.6,
+    "residualRisk": -0.4,
     "rank": 2,
     "direction": "improved"
    },
@@ -260,9 +260,69 @@
    "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
   },
   {
+   "key": "memory-base",
+   "label": "20 Memory Base",
+   "rank": 5,
+   "residualRisk": 6.4,
+   "inherentRisk": 16,
+   "probability": 4,
+   "impact": 4,
+   "mitigation": 0.6,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
+   },
+   "bullets": {
+    "total": 16,
+    "validated": 16,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 4,
+    "stable": 4
+   },
+   "testHealth": {
+    "chronicHardFailures": 2,
+    "chronicFlaky": 0,
+    "stableSpecs": 4,
+    "penalty": 0.2
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 3,
+    "residualRisk": 8,
+    "inherentRisk": 8,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -1.6,
+    "rank": -2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2832
+   ],
+   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
+  },
+  {
    "key": "graph-engine",
    "label": "12.6 Build / graph engine",
-   "rank": 5,
+   "rank": 6,
    "residualRisk": 5.6,
    "inherentRisk": 20,
    "probability": 4,
@@ -305,7 +365,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 2,
+    "rank": 1,
     "direction": "improved"
    },
    "isNew": false,
@@ -319,7 +379,7 @@
   {
    "key": "security",
    "label": "NEW security",
-   "rank": 6,
+   "rank": 7,
    "residualRisk": 5.4,
    "inherentRisk": 15,
    "probability": 3,
@@ -365,7 +425,7 @@
    },
    "delta": {
     "residualRisk": -9.6,
-    "rank": -5,
+    "rank": -6,
     "direction": "improved"
    },
    "isNew": false,
@@ -377,7 +437,7 @@
   {
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
-   "rank": 7,
+   "rank": 8,
    "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
@@ -424,7 +484,7 @@
    },
    "delta": {
     "residualRisk": -0.1,
-    "rank": 3,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -434,9 +494,68 @@
    "rationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
   },
   {
+   "key": "playground",
+   "label": "9 Playground / chat",
+   "rank": 9,
+   "residualRisk": 5,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "mitigation": 0.75,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "bullets": {
+    "total": 70,
+    "validated": 70,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 24,
+    "stable": 24
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 3,
+    "stableSpecs": 24,
+    "penalty": 0.05
+   },
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "previous": {
+    "rank": 12,
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": 0.3,
+    "rank": 3,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "The user's main verification loop; SSE streaming"
+  },
+  {
    "key": "a2a",
    "label": "16 A2A",
-   "rank": 8,
+   "rank": 10,
    "residualRisk": 4.9,
    "inherentRisk": 12,
    "probability": 3,
@@ -480,7 +599,7 @@
    },
    "delta": {
     "residualRisk": -1.4,
-    "rank": -2,
+    "rank": -4,
     "direction": "improved"
    },
    "isNew": false,
@@ -491,125 +610,6 @@
     2838
    ],
    "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
-  },
-  {
-   "key": "memory-base",
-   "label": "20 Memory Base",
-   "rank": 9,
-   "residualRisk": 4.8,
-   "inherentRisk": 16,
-   "probability": 4,
-   "impact": 4,
-   "mitigation": 0.7,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 9.3,
-    "weightedChurn": 1.74
-   },
-   "bullets": {
-    "total": 16,
-    "validated": 16,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 4,
-    "stable": 4
-   },
-   "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 4,
-    "penalty": 0.1
-   },
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 2,
-    "2026": 6
-   },
-   "previous": {
-    "rank": 3,
-    "residualRisk": 8,
-    "inherentRisk": 8,
-    "mitigation": 0
-   },
-   "delta": {
-    "residualRisk": -3.2,
-    "rank": -6,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [
-    2832
-   ],
-   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
-  },
-  {
-   "key": "playground",
-   "label": "9 Playground / chat",
-   "rank": 10,
-   "residualRisk": 4.6,
-   "inherentRisk": 20,
-   "probability": 5,
-   "impact": 4,
-   "mitigation": 0.77,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 5,
-    "churnQuintile": 5,
-    "fragility": 4,
-    "weightedBugs": 60.9,
-    "weightedChurn": 2.88
-   },
-   "bullets": {
-    "total": 70,
-    "validated": 70,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 24,
-    "stable": 24
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 2,
-    "stableSpecs": 24,
-    "penalty": 0.033
-   },
-   "upstreamBugsByYear": {
-    "2023": 2,
-    "2024": 40,
-    "2025": 49,
-    "2026": 13
-   },
-   "previous": {
-    "rank": 12,
-    "residualRisk": 4.7,
-    "inherentRisk": 20,
-    "mitigation": 0.77
-   },
-   "delta": {
-    "residualRisk": -0.1,
-    "rank": 2,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "The user's main verification loop; SSE streaming"
   },
   {
    "key": "component-config",

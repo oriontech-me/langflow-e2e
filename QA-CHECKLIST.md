@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-10
+> **Last updated:** 2026-11-11
 
 ---
 
@@ -1612,7 +1612,7 @@
 - [x] Toggling it in the UI produces the direction-specific toast, flips the switch **and** the API agrees. The menu item itself is a plain `role=menuitem` with no state, but it contains a `role=switch` (`unattended-<name>`) whose `aria-checked` IS the state — the "not programmatically readable" premise measured the wrapper, not the switch → core-functionality/integrations/connections-row-actions.spec.ts
 - [x] `PATCH allow_non_interactive` through the API is reflected on the switch after a reload — upstream's *"show state set through the API too"*, verbatim → core-functionality/integrations/connections-row-actions.spec.ts
 - [x] `Rename` (a native `window.prompt` prefilled with the current name) updates the row and the API together; `Delete` stays locked until `Revoke` removes the credential; `Revoke` moves the badge to `Revoked` and the status agrees, with the toast chosen from the response's `provider_revocation` — `not_applicable` for a pasted token, so the page says the token may still be valid at the provider (#2291); `Delete` removes the row and the id is gone from a re-read of the list — not from a follow-up `GET` on the item path, which answers `404` for a live connection too → core-functionality/integrations/connections-row-actions.spec.ts
-- [x] `provider_revocation` per reachable credential — `not_applicable` for a `pending` row, a pasted Google token and a repeat revoke; `failed` for a pasted Slack app-level token (`xapp-`), which `auth.revoke` refuses with or without egress — and the page shows `failed` as its own toast (*"…but provider revocation failed…"*) on another user's row revoked from the **Other users** tab. `revoked` and `unsupported` need an OAuth binding only the callback writes (#2301). `DELETE` of a `ready` row (accepted, revoking first) against the page's locked *Delete* is already pinned by the lifecycle and row-actions specs → api/connections/api-connections-surface-details.spec.ts
+- [x] `provider_revocation` per reachable credential — `not_applicable` for a `pending` row, a pasted Google token and a repeat revoke; `failed` for a pasted Slack app-level token (`xapp-`), which `auth.revoke` refuses with or without egress — and the page shows `failed` as its own toast (*"…but provider revocation failed…"*) on another user's row revoked from the **Other users** view (a tab until `1.14.0.dev23`, the Owner select since — #2409). `revoked` and `unsupported` need an OAuth binding only the callback writes (#2301). `DELETE` of a `ready` row (accepted, revoking first) against the page's locked *Delete* is already pinned by the lifecycle and row-actions specs → api/connections/api-connections-surface-details.spec.ts
 - [x] `Check credential` (`POST /test`) stamps `health_checked_at` and moves *Last check* off `Never` — **not** asserted: that `healthy` proves a working credential, since the endpoint answered `healthy` for a planted fake token with no provider configured → core-functionality/integrations/connections-row-actions.spec.ts
 - [x] A non-interactive caller resolves a user's connection only with the owner's opt-in, and an instance connection regardless of its own flag — a webhook run (off → on → off, the last refused on the very next run), a resumed v2 HITL job (the same job resolved it before the pause and is refused after the resume) and a KB connector ingest (`403` `non-interactive-opt-in-required` before any run exists; with the opt-in on, past the principal to `scope-missing`) — each contrasted with the interactive Playground build resolving the same row. The public, MCP, A2A and v2-host cells this bullet used to hold are § 24.7 → api/connections/api-connections-resolution-non-interactive.spec.ts
 - [x] An owned connection shadows an instance connection with the same handle, and a refused owned row never falls back to it (the instance row resolves only once the owned row is gone); a Slack app-level token (`xapp-`) is refused `listener-only` in an interactive build and in a webhook run with the opt-in on. That an instance row ignores the opt-in rests on a decision record still `proposed` upstream — recorded in the spec doc → api/connections/api-connections-resolution-non-interactive.spec.ts
@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 803 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 763 `test()` calls carrying the `@stable` tag, distributed across 287 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1828,11 +1828,7 @@
 - [x] a public MCP project resolves no connection for an anonymous caller → `api-connections-resolution-entry-points.spec.ts`
 - [x] a public A2A agent resolves no connection for an anonymous caller → `api-connections-resolution-entry-points.spec.ts`
 - [x] an A2A agent behind an API key resolves no connection either — both sub-paths run as the anonymous family → `api-connections-resolution-entry-points.spec.ts`
-- [x] a webhook run resolves the owner's connection only while the opt-in is on, and the instance connection either way → `api-connections-resolution-non-interactive.spec.ts`
-- [x] a resumed HITL run is refused the job owner's connection without the opt-in, though the same job resolved it before the pause → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a KB connector ingest fails closed without the opt-in, before any ingestion run exists → `api-connections-resolution-non-interactive.spec.ts`
-- [x] an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it → `api-connections-resolution-non-interactive.spec.ts`
-- [x] a Slack app-level token is refused outside the trigger listener, interactive or not → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a planted token reaches no client response across the connection's lifecycle, and scope coverage describes the request rather than the credential → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a hyphenated name does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
@@ -1840,13 +1836,11 @@
 - [x] status_reason stays null on every status a client can drive the connection into → `api-connections-secret-boundary.spec.ts`
 - [x] the provider filter lists that provider's rows and no other → `api-connections-surface-details.spec.ts`
 - [x] revoke reports what happened at the provider: nothing to revoke, or a revocation that failed → `api-connections-surface-details.spec.ts`
-- [x] the page says the provider revocation failed when Slack refuses the token → `api-connections-surface-details.spec.ts`
 - [x] the deployment snapshot names each connection the project's flows need, with the union of their scopes → `api-connections-surface-details.spec.ts`
 - [x] the KB connector catalog names a provider and its scopes for every connector that needs a credential → `api-connections-surface-details.spec.ts`
 - [x] creating, revoking and deleting a connection writes no global variable → `api-connections-surface-details.spec.ts`
 - [x] on this lane's deployment context no capability is filtered, and none could be → `api-connections-surface-details.spec.ts`
 - [x] every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain → `api-integrations-manifest.spec.ts`
-- [x] every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id → `api-integrations-manifest.spec.ts`
 - [x] a provider's enabled flag and connection count are derived from its connections, and only its own → `api-integrations-manifest.spec.ts`
 - [x] the manifest and the effective policy agree that the instance is unrestricted → `api-integrations-manifest.spec.ts`
 - [x] every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared → `api-integrations-manifest.spec.ts`
@@ -2136,7 +2130,6 @@
 
 #### core-functionality/a2a/
 - [x] an approved send_to_agent call resumes the run and executes the published agent → `a2a-client-agent-as-tool.spec.ts`
-- [x] External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires → `a2a-client-agent-external.spec.ts`
 - [x] the Internal dropdown lists a locally published agent and calling it runs that flow → `a2a-client-agent-internal.spec.ts`
 - [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
 - [x] card overrides change exactly what the card advertises → `a2a-server-agent-card.spec.ts`
@@ -2145,16 +2138,8 @@
 - [x] a flow without chat input and output cannot be published → `a2a-server-agent-tab-publish.spec.ts`
 - [x] publishing from the Agent tab serves a card at the advertised URL → `a2a-server-agent-tab-publish.spec.ts`
 - [x] the card editor changes what the API serves → `a2a-server-agent-tab-publish.spec.ts`
-- [x] the Try it panel round-trips a sentinel over the published endpoint → `a2a-server-agent-tab-try-it.spec.ts`
-- [x] the api-key gate follows the project the flow lives in → `a2a-server-auth-apikey.spec.ts`
 - [x] discovery lists only agent-typed, A2A-enabled flows → `a2a-server-discovery.spec.ts`
 - [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
-- [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
-- [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
-- [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
-- [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
-- [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
-- [x] a task id is invisible to another flow → `a2a-server-tasks-lifecycle.spec.ts`
 - [x] cancelling a running task moves it to canceled → `a2a-server-tasks-lifecycle.spec.ts`
 
 #### core-functionality/auth/
@@ -2178,23 +2163,15 @@
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/integrations/
-- [x] the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in → `connection-oauth-wizard.spec.ts`
-- [x] with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL → `connection-oauth-wizard.spec.ts`
-- [x] the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection → `connection-oauth-wizard.spec.ts`
-- [x] a denied consent, then an expired sign-in link, each say so, and the row records why → `connection-oauth-wizard.spec.ts`
 - [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
 - [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
-- [x] the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need → `connection-oauth-wizard.spec.ts`
-- [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
-- [x] the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4 → `connector-node-picker.spec.ts`
 - [x] every <provider.label> action in the manifest lands on the canvas with an unbound connection field → `connector-node-picker.spec.ts`
 - [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
 - [x] a trigger refuses a connection its flow's owner does not own → `connector-node-picker.spec.ts`
 - [x] the requirement line follows the node's inputs → `connector-node-picker.spec.ts`
-- [x] an empty list says how to get a connection, and Refresh fetches a new one → `connector-node-picker.spec.ts`
 - [x] a list that fails to load says so → `connector-node-picker.spec.ts`
 - [x] picking a connection binds its handle, a reload keeps it, and Clear unbinds it → `connector-node-picker.spec.ts`
 - [x] a handle that outlived its connection is shown as not found → `connector-node-picker.spec.ts`
@@ -2276,7 +2253,6 @@
 - [x] page opens with its description and the available provider count → `model-provider-modal-actions.spec.ts`
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
-- [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
@@ -2299,7 +2275,6 @@
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when a line is longer than the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should ingest a server-side folder through the folder connector and read its chunks back → `memory-base-ingestion.spec.ts`
-- [x] should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back → `memory-base-ingestion.spec.ts`
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal is scoped to the current flow → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
@@ -2361,11 +2336,6 @@
 - [x] rejecting a Human Input pause routes only the reject branch → `human-input-pause-resume.spec.ts`
 - [x] a suspended Human Input run survives a page reload and completes on approval → `human-input-pause-resume.spec.ts`
 - [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
-- [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
-- [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
-- [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
-- [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
-- [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
 - [x] the audio button is disabled in a browser without speech recognition → `playground-audio-input.spec.ts`
 - [x] a click starts speech recognition and a second click stops it → `playground-audio-input.spec.ts`
 - [x] the final transcript is appended to the text already in the input → `playground-audio-input.spec.ts`
@@ -2388,8 +2358,6 @@
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
 - [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
 - [x] selecting messages in the log table and deleting them must reduce the row count → `playground-message-logs.spec.ts`
-- [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
-- [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
 - [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
@@ -2399,7 +2367,6 @@
 - [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
 - [x] a session renamed in the playground is the session its messages are stored under → `playground-session-id.spec.ts`
 - [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
-- [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
 - [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
@@ -2441,10 +2408,6 @@
 - [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 
 #### flow-functionality/
-- [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
-- [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
-- [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
-- [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
 - [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] connecting two compatible components creates exactly one edge → `canvas-connect-components.spec.ts`
 - [x] connecting the same compatible pair twice does not duplicate the edge → `canvas-connect-components.spec.ts`
@@ -2465,7 +2428,6 @@
 - [x] deleting one of two sticky notes leaves the other in place → `canvas-sticky-note-delete.spec.ts`
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
-- [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] dropping a collection file imports every flow it contains → `dragAndDrop.spec.ts`
 - [x] dropping a single flow file imports that flow → `dragAndDrop.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
@@ -2503,7 +2465,6 @@
 - [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
-- [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
@@ -2539,7 +2500,6 @@
 - [x] a client reported as available is offered, while the others stay disabled → `mcp-server-install.spec.ts`
 - [x] project MCP settings round-trip through GET and PATCH → `mcp-server-project-config.spec.ts`
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
-- [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
 - [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`

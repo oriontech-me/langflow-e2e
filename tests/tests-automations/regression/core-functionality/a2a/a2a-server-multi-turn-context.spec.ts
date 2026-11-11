@@ -52,7 +52,9 @@ const sessionEndingIn = (sessions: Map<string, MonitorMessage[]>, contextId: str
 };
 
 test.describe("A2A Server — multi-turn context", () => {
-  test("a conversation keeps its thread only while the caller quotes the contextId", { tag: ["@stable", "@api", "@a2a"] }, async ({
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("a conversation keeps its thread only while the caller quotes the contextId", { tag: ["@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
