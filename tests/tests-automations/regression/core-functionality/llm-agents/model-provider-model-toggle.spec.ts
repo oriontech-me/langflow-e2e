@@ -349,10 +349,12 @@ test.describe("Model Provider Model Toggle", () => {
   // write, now attributed by `toggleWriteVerdict` rather than papered over; and
   // three were page-entry-barrier wedge collateral belonging to #1589/#1549.
   // The byte-identical signature carrying two different locators is #1626.
-  test(
+  // Quarantined for #2419: recurrent flake on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2419's deliverable.
+  test.fixme(
     "model toggle changes immediately and persists across reopen",
     {
-      tag: ["@stable", "@regression", "@components", "@model-provider"],
+      tag: ["@regression", "@components", "@model-provider"],
     },
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");

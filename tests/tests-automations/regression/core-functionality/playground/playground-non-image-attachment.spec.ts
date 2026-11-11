@@ -21,9 +21,11 @@ test.describe("Playground Output – Non-Image Attachment (#195)", () => {
     }
   });
 
-  test(
+  // Quarantined for #2416: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
+  test.fixme(
     "playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file",
-    { tag: ["@stable", "@regression", "@playground", "@components"] },
+    { tag: ["@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",

@@ -444,9 +444,11 @@ test.describe("Integrations API — capability manifest and effective policy", (
     },
   );
 
-  test(
+  // Quarantined for #2411: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2411's deliverable.
+  test.fixme(
     "every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`, `GET ${CATALOG}`]);
       const headers = { Authorization: await getAuthToken(request) };

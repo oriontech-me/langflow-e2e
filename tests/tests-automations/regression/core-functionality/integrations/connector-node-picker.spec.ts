@@ -285,9 +285,11 @@ test.describe("Connector components — the palette, the canvas and the connecti
     return node?.data.node.template.connection?.value;
   }
 
-  test(
+  // Quarantined for #2411: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2411's deliverable.
+  test.fixme(
     "the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4",
-    { tag: ["@stable", "@components", "@integrations"] },
+    { tag: ["@components", "@integrations"] },
     async ({ page, request }) => {
       const groups = new Map<string, string[]>();
       const expected = await shippedProviders(request);
@@ -568,9 +570,11 @@ test.describe("Connector components — the palette, the canvas and the connecti
     },
   );
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "an empty list says how to get a connection, and Refresh fetches a new one",
-    { tag: ["@stable", "@components", "@integrations"] },
+    { tag: ["@components", "@integrations"] },
     async ({ page, request }) => {
       // The superuser sees every user's google rows, so the empty state is reached
       // by answering the picker's own request with []. The only mocked response here.

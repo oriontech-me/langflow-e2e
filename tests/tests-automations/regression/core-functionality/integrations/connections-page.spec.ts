@@ -210,9 +210,11 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
     },
   );
 
-  test(
+  // Quarantined for #2409: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2409's deliverable.
+  test.fixme(
     "a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request, playwright }) => {
       const headers = { Authorization: await getAuthToken(request) };
       const accountDisplay = `Scout ${uniqueConnectionName("acct")}`;

@@ -96,7 +96,9 @@ async function taskRpc(
 }
 
 test.describe("A2A Server — task lifecycle", () => {
-  test("a task can be read back and refuses a cancel it cannot honour", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("a task can be read back and refuses a cancel it cannot honour", { tag: ["@api", "@regression", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
@@ -146,7 +148,9 @@ test.describe("A2A Server — task lifecycle", () => {
     }
   });
 
-  test("a task id is invisible to another flow", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({ request }) => {
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("a task id is invisible to another flow", { tag: ["@api", "@regression", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 

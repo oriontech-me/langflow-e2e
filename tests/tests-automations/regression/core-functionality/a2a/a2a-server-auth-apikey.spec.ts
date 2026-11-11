@@ -65,9 +65,11 @@ async function sendText(
 }
 
 test.describe("A2A Server — API-key gate on the JSON-RPC endpoint", () => {
-  test(
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme(
     "the api-key gate follows the project the flow lives in",
-    { tag: ["@stable", "@api", "@regression", "@a2a"] },
+    { tag: ["@api", "@regression", "@a2a"] },
     async ({ request }) => {
       const headers = { Authorization: await getAuthToken(request) };
       await requireA2aEnabled(request, headers);

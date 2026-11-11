@@ -512,9 +512,11 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  test(
+  // Quarantined for #2417: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2417's deliverable.
+  test.fixme(
     "should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",

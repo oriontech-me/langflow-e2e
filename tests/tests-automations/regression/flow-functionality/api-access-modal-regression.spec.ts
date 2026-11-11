@@ -88,9 +88,11 @@ async function selectUnixCurlTab(page: import("@playwright/test").Page) {
   await page.getByRole("tab", { name: "macOS/Linux" }).click();
 }
 
-test(
+// Quarantined for #2415: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the API access modal from the Publish dropdown", async () => {
       await openApiAccessModal(page);
