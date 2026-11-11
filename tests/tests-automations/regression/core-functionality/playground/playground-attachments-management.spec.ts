@@ -89,7 +89,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
+  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+  // or is serial behind a sibling that does, with the same cause.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
   test.fixme(
     "playground must keep the remaining preview when one of two attachments is removed",
@@ -122,7 +124,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
+  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+  // or is serial behind a sibling that does, with the same cause.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
   test.fixme(
     "playground must render both attached images in the user message after sending",
@@ -158,7 +162,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
+  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+  // or is serial behind a sibling that does, with the same cause.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
   test.fixme(
     "playground input must return to empty state after removing the only attachment",
@@ -198,7 +204,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
+  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+  // or is serial behind a sibling that does, with the same cause.
   // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
   test.fixme(
     "playground swap flow must send only the second image when the first is removed before attaching the second",

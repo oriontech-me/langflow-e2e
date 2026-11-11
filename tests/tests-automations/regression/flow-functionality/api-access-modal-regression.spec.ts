@@ -121,7 +121,9 @@ test.fixme(
   },
 );
 
-// Quarantined for #2415: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+// Quarantined for #2415: serial sibling skipped behind a quarantined test on daily 2026-11-11
+// (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+// or is serial behind a sibling that does, with the same cause.
 // Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
 test.fixme(
   "API access modal switches the displayed snippet when changing language tabs",
@@ -159,7 +161,9 @@ test.fixme(
   },
 );
 
-// Quarantined for #2415: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+// Quarantined for #2415: serial sibling skipped behind a quarantined test on daily 2026-11-11
+// (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+// or is serial behind a sibling that does, with the same cause.
 // Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
 test.fixme(
   "API access modal embeds the current flow ID in the generated run endpoint URL",
@@ -188,7 +192,9 @@ test.fixme(
   },
 );
 
-// Quarantined for #2415: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+// Quarantined for #2415: serial sibling skipped behind a quarantined test on daily 2026-11-11
+// (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+// or is serial behind a sibling that does, with the same cause.
 // Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
 test.fixme(
   "API access modal closes cleanly via Escape and via the close button",
