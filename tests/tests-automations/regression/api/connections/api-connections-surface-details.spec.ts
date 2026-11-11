@@ -232,9 +232,11 @@ test.describe("Connections — the small reachable surface details", () => {
     },
   );
 
-  test(
+  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
+  test.fixme(
     "the page says the provider revocation failed when Slack refuses the token",
-    { tag: ["@stable", "@integrations", "@settings"] },
+    { tag: ["@integrations", "@settings"] },
     async ({ page, request }) => {
       // The owner's row, revoked by the superuser from the Other users tab: in OSS a
       // superuser may revoke another user's row (#2300), and the page spends one

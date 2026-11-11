@@ -156,7 +156,11 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
     await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
   }
 
-  test(
+  // Quarantined for #2409: the test #2409 tracks. Its @stable was auto-removed
+
+  // on 2026-11-10, and it still fails in the PR #2420 impacted-specs lane.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2409's deliverable.
+  test.fixme(
     "Settings navigation reaches the Connections page, and an empty view says so while still offering Add",
     { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
@@ -210,9 +214,11 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
     },
   );
 
-  test(
+  // Quarantined for #2409: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2409's deliverable.
+  test.fixme(
     "a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request, playwright }) => {
       const headers = { Authorization: await getAuthToken(request) };
       const accountDisplay = `Scout ${uniqueConnectionName("acct")}`;

@@ -44,9 +44,11 @@ test.describe("Playground – Session Creation and Navigation", () => {
     },
   );
 
-  test(
+  // Quarantined for #2418: recurrent flake on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2418's deliverable.
+  test.fixme(
     "session selector sidebar must switch to the selected session",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);

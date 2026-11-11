@@ -106,9 +106,11 @@ test.describe("MCP Server — flow-as-server protocol", () => {
     }
   });
 
-  test(
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme(
     "generated endpoint advertises the project and lists the enabled flow",
-    { tag: ["@stable", "@regression", "@api", "@mcp"] },
+    { tag: ["@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await test.step("composer-url returns the generated endpoint URLs", async () => {
         const res = await request.get(

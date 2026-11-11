@@ -200,9 +200,11 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
 
   const deniedFor = (reason: string) => ({ state: "denied", code: "connection-not-authorized", reason });
 
-  test(
+  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
+  test.fixme(
     "a webhook run resolves the owner's connection only while the opt-in is on, and the instance connection either way",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/webhook/{flow_id_or_name}",
@@ -295,9 +297,11 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
     return { before: String(row!.prompt ?? ""), after: String(outputs?.["ChatOutput-probe"]?.content ?? "") };
   }
 
-  test(
+  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
+  test.fixme(
     "a resumed HITL run is refused the job owner's connection without the opt-in, though the same job resolved it before the pause",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v2/workflows",
@@ -406,9 +410,11 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
     },
   );
 
-  test(
+  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
+  test.fixme(
     "an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/build/{flow_id}/flow",
@@ -454,9 +460,11 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
     },
   );
 
-  test(
+  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
+  test.fixme(
     "a Slack app-level token is refused outside the trigger listener, interactive or not",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/connections",

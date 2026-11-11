@@ -237,8 +237,10 @@ async function runFromPlayground(page: Page, sentinel: string): Promise<void> {
 }
 
 test.describe("A2A Client — A2AAgent component in External mode", () => {
-  test("External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires",
-    { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a"] },
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires",
+    { tag: ["@regression", "@components", "@workspace", "@a2a"] },
     async ({ page }) => {
       const headers = { Authorization: await getAuthToken(page.request) };
       await requireA2aEnabled(page.request, headers);

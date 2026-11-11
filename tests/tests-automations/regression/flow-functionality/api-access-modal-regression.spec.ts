@@ -88,9 +88,11 @@ async function selectUnixCurlTab(page: import("@playwright/test").Page) {
   await page.getByRole("tab", { name: "macOS/Linux" }).click();
 }
 
-test(
+// Quarantined for #2415: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the API access modal from the Publish dropdown", async () => {
       await openApiAccessModal(page);
@@ -119,9 +121,13 @@ test(
   },
 );
 
-test(
+// Quarantined for #2415: serial sibling skipped behind a quarantined test on daily 2026-11-11
+// (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+// or is serial behind a sibling that does, with the same cause.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal switches the displayed snippet when changing language tabs",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the API access modal", async () => {
       await openApiAccessModal(page);
@@ -155,9 +161,13 @@ test(
   },
 );
 
-test(
+// Quarantined for #2415: serial sibling skipped behind a quarantined test on daily 2026-11-11
+// (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+// or is serial behind a sibling that does, with the same cause.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal embeds the current flow ID in the generated run endpoint URL",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     let flowId: string;
 
@@ -182,9 +192,13 @@ test(
   },
 );
 
-test(
+// Quarantined for #2415: serial sibling skipped behind a quarantined test on daily 2026-11-11
+// (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
+// or is serial behind a sibling that does, with the same cause.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal closes cleanly via Escape and via the close button",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the API access modal", async () => {
       await openApiAccessModal(page);

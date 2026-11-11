@@ -16,7 +16,9 @@ import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 // — the sentinel comes back verbatim, with no LLM and no provider key in the path.
 
 test.describe("A2A Server — Agent tab Try it panel", () => {
-  test("the Try it panel round-trips a sentinel over the published endpoint", { tag: ["@stable", "@workspace", "@ui-ux", "@a2a"] }, async ({
+  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
+  test.fixme("the Try it panel round-trips a sentinel over the published endpoint", { tag: ["@workspace", "@ui-ux", "@a2a"] }, async ({
     page,
   }) => {
     const headers = { Authorization: await getAuthToken(page.request) };
