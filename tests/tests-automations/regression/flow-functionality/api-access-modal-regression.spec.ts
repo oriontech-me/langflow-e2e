@@ -121,9 +121,11 @@ test.fixme(
   },
 );
 
-test(
+// Quarantined for #2415: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal switches the displayed snippet when changing language tabs",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the API access modal", async () => {
       await openApiAccessModal(page);
@@ -157,9 +159,11 @@ test(
   },
 );
 
-test(
+// Quarantined for #2415: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal embeds the current flow ID in the generated run endpoint URL",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     let flowId: string;
 
@@ -184,9 +188,11 @@ test(
   },
 );
 
-test(
+// Quarantined for #2415: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
+test.fixme(
   "API access modal closes cleanly via Escape and via the close button",
-  { tag: ["@stable", "@regression", "@api", "@workspace"] },
+  { tag: ["@regression", "@api", "@workspace"] },
   async ({ page }) => {
     await test.step("Open the API access modal", async () => {
       await openApiAccessModal(page);

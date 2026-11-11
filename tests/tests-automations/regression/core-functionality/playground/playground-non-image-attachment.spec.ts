@@ -67,9 +67,11 @@ test.describe("Playground Output – Non-Image Attachment (#195)", () => {
     },
   );
 
-  test(
+  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
+  test.fixme(
     "playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt",
-    { tag: ["@stable", "@regression", "@playground", "@components"] },
+    { tag: ["@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",

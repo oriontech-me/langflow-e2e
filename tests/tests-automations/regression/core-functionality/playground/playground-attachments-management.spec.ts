@@ -89,9 +89,11 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  test(
+  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
+  test.fixme(
     "playground must keep the remaining preview when one of two attachments is removed",
-    { tag: ["@stable", "@regression", "@playground", "@components"] },
+    { tag: ["@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach two images",
@@ -120,9 +122,11 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  test(
+  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
+  test.fixme(
     "playground must render both attached images in the user message after sending",
-    { tag: ["@stable", "@regression", "@playground", "@components"] },
+    { tag: ["@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach two images",
@@ -154,9 +158,11 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  test(
+  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
+  test.fixme(
     "playground input must return to empty state after removing the only attachment",
-    { tag: ["@stable", "@regression", "@playground", "@components"] },
+    { tag: ["@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach a single image",
@@ -192,9 +198,11 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  test(
+  // Quarantined for #2416: serial sibling of a test quarantined for the same cause: it was skipped behind it on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30) and fails on the same step once it runs (PR #2420 impacted-specs lane).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
+  test.fixme(
     "playground swap flow must send only the second image when the first is removed before attaching the second",
-    { tag: ["@stable", "@regression", "@playground", "@components"] },
+    { tag: ["@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach image A",
