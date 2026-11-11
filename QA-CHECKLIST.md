@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 763 `test()` calls carrying the `@stable` tag, distributed across 287 spec
+> 766 `test()` calls carrying the `@stable` tag, distributed across 287 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1836,6 +1836,7 @@
 - [x] status_reason stays null on every status a client can drive the connection into → `api-connections-secret-boundary.spec.ts`
 - [x] the provider filter lists that provider's rows and no other → `api-connections-surface-details.spec.ts`
 - [x] revoke reports what happened at the provider: nothing to revoke, or a revocation that failed → `api-connections-surface-details.spec.ts`
+- [x] the page says the provider revocation failed when Slack refuses the token → `api-connections-surface-details.spec.ts`
 - [x] the deployment snapshot names each connection the project's flows need, with the union of their scopes → `api-connections-surface-details.spec.ts`
 - [x] the KB connector catalog names a provider and its scopes for every connector that needs a credential → `api-connections-surface-details.spec.ts`
 - [x] creating, revoking and deleting a connection writes no global variable → `api-connections-surface-details.spec.ts`
@@ -2165,6 +2166,8 @@
 #### core-functionality/integrations/
 - [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
 - [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
+- [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
+- [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
