@@ -339,10 +339,10 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("Model Provider Model Toggle", () => {
   // History: the quarantine was LIFTED once (#1696), with `test.fixme` removed and
-  // `@stable` restored, and it is re-quarantined below for #2419. It was first quarantined at the triage of daily #1694 after failing 6
-  // of 30 dailies under 4 signatures, and reading each run's own artifacts
-  // resolved those into causes rather than one flake: two occurrences
-  // (2026-09-01, 2026-09-03) were `navigateSettingsPages` reporting a hop that
+  // `@stable` restored, and it is re-quarantined below for #2419. It was first
+  // quarantined at the triage of daily #1694 after failing 6 of 30 dailies under
+  // 4 signatures, and reading each run's own artifacts resolved those into
+  // causes rather than one flake: two occurrences (2026-09-01, 2026-09-03) were `navigateSettingsPages` reporting a hop that
   // never had a chance instead of the hop that broke, and that is what this
   // issue fixes; one (2026-08-31) was the bare `provider-item-*` wait, already
   // closed by #1648 after that daily; one (2026-09-01) was the persistence
