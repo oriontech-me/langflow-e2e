@@ -6,6 +6,7 @@ import { createFlow } from "../../../../helpers/flows/create-flow";
 import { type CreatedProject, createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
+import { servedOwnerFilter, showOwnerView } from "../../../../helpers/integrations/connections-owner-view";
 import {
   type ConnectionRead,
   type CreateConnectionOptions,
@@ -232,13 +233,12 @@ test.describe("Connections — the small reachable surface details", () => {
     },
   );
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "the page says the provider revocation failed when Slack refuses the token",
-    { tag: ["@integrations", "@settings"] },
+    { tag: ["@stable", "@integrations", "@settings"] },
     async ({ page, request }) => {
-      // The owner's row, revoked by the superuser from the Other users tab: in OSS a
+      // The owner's row, revoked by the superuser from the Other users view (a tab
+      // until 1.14.0.dev23, the Owner select since — #2409): in OSS a
       // superuser may revoke another user's row (#2300), and the page spends one
       // superuser write where seeding there would spend three.
       const slack = await plant(request, "toast_slack", {
@@ -248,9 +248,9 @@ test.describe("Connections — the small reachable surface details", () => {
       });
       const row = page.getByTestId(`connection-row-${slack.name}`);
 
-      await test.step("the owner's row is on the Other users tab", async () => {
+      await test.step("the owner's row is in the Other users view", async () => {
         await page.goto("/settings/connections");
-        await page.getByRole("tab", { name: "Other users" }).click();
+        await showOwnerView(page, await servedOwnerFilter(request), "Other users");
         await page.getByTestId("connections-search").fill(slack.name);
         await expect(row, `the seeded row ${slack.name}`).toBeVisible({ timeout: 30000 });
         await expect(row.getByText("Ready", { exact: true })).toBeVisible();

@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-connections-surface-details.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev9`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev23`)
 
 Owning issue: #2305 (Dedicated Integrations, batch 2). Seven behaviours that are shipped and reachable but too small
 for a spec of their own. Each one either gets an assertion here, is already asserted elsewhere (and this doc says
@@ -46,7 +46,7 @@ The page picks its toast from this field (langflow#15766, #2291): `revoked` → 
 `connections.toast.revokeFailed`, anything else → `connections.toast.revokedLocally`. The `not_applicable` toast is
 already asserted by `connections-row-actions.spec.ts`. This file asserts the `failed` one:
 *"Credential removed from Langflow, but provider revocation failed. Revoke the token in the provider's settings."*
-The superuser revokes the throwaway user's `xapp-` row from the page's **Other users** tab. In OSS a superuser may
+The superuser revokes the throwaway user's `xapp-` row from the page's **Other users** view (a tab up to and including `1.14.0.dev22`, an option of the *Owner* select `connections-owner-filter` from `1.14.0.dev23` — langflow-ai/langflow#16254; chosen by version through `tests/helpers/integrations/connections-owner-view.ts`, #2409). In OSS a superuser may
 revoke another user's row (#2300), so the page spends one superuser write and the user's own bucket pays for the rest.
 
 **Not reachable:** `revoked` and `unsupported` need a row with an OAuth binding (Google → `revoked`, Microsoft →
@@ -185,7 +185,7 @@ that created it, and `afterAll` disposes the user, which removes anything left.
 **Test 3 — the page says when the provider revocation failed.** *(Tags `@stable` `@integrations` `@settings`: the only
 browser test in the file.)*
 1. The owner creates an `xapp-` Slack row.
-2. The superuser opens `/settings/connections`, the **Other users** tab, and searches the row's name.
+2. The superuser opens `/settings/connections`, the **Other users** view, and searches the row's name.
 3. *Revoke* answers `200` with `provider_revocation: failed`. The `revokeFailed` toast shows its exact copy, and the
    row's badge reads *Revoked*.
 4. The owner's list agrees: `revoked`, `has_credentials: false`.

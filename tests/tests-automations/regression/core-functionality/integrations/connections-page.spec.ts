@@ -14,6 +14,15 @@ import {
 } from "../../../../helpers/integrations/create-connection";
 import { retryAfterMs } from "../../../../helpers/integrations/delete-connection";
 import {
+  connectionViews,
+  expectOwnerView,
+  OWNER_VIEWS,
+  ownerFilter,
+  servedOwnerFilter,
+  showOwnerView,
+} from "../../../../helpers/integrations/connections-owner-view";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
+import {
   navigateSettingsPages,
   settingsNavEntry,
 } from "../../../../helpers/ui/go-to-settings";
@@ -46,6 +55,15 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
   // One of five empty copies since langflow#15263 (1.13.0.dev21): the one a search
   // reads when the tab has rows and the search hides them all.
   const NO_MATCHES = "No connections match your search.";
+  // From 1.14.0.dev23 (langflow#16254) the ownership views are the options of an
+  // Owner select and the tablist holds "Connections" plus the superuser-only
+  // "Manage providers" (langflow#16251). The side is decided by the served version
+  // (connections-owner-view.ts), never by what the page renders (#2409).
+  const TABS_WITH_OWNER_FILTER = ["Connections", "Manage providers"];
+  // 1.14.0.dev22 alone kept the ownership tabs AND added "Manage providers"
+  // (langflow#16251). It is a real side, not history: on 2026-11-10 both the
+  // nightly image's `latest` tag and PyPI still resolved to it (#2409).
+  const MANAGE_PROVIDERS_SINCE = "1.14.0.dev22";
   const COLUMNS = ["Connection", "Owner", "Account", "Status", "Scopes", "Last check", "Actions"];
   const GOOGLE_SCOPE = "https://www.googleapis.com/auth/";
 
@@ -145,24 +163,9 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
     return (await cell(page, row, "Account")).locator(":scope > div > span");
   }
 
-  function tab(page: Page, name: string): Locator {
-    return page
-      .getByRole("tablist", { name: "Connection views" })
-      .getByRole("tab", { name, exact: true });
-  }
-
-  async function openTab(page: Page, name: string): Promise<void> {
-    await tab(page, name).click();
-    await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
-  }
-
-  // Quarantined for #2409: the test #2409 tracks. Its @stable was auto-removed
-
-  // on 2026-11-10, and it still fails in the PR #2420 impacted-specs lane.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2409's deliverable.
-  test.fixme(
+  test(
     "Settings navigation reaches the Connections page, and an empty view says so while still offering Add",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const own = await test.step("a row of this test's own is seeded, so the empty copy under a search is decided", async () => {
         const headers = { Authorization: await getAuthToken(request) };
@@ -192,10 +195,25 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
         await expect(page.getByTestId("add-connection")).toHaveText("Add connection");
       });
 
-      await test.step("three views, with Mine selected", async () => {
-        const tablist = page.getByRole("tablist", { name: "Connection views" });
-        await expect(tablist.getByRole("tab")).toHaveText(["Mine", "Instance", "Other users"]);
-        await expect(tab(page, "Mine")).toHaveAttribute("aria-selected", "true");
+      await test.step("the superuser's three ownership views, with Mine shown", async () => {
+        const tabs = connectionViews(page).getByRole("tab");
+        if (await servedOwnerFilter(request)) {
+          await expect(tabs).toHaveText(TABS_WITH_OWNER_FILTER);
+          await expect(connectionViews(page).getByRole("tab", { name: "Connections", exact: true })).toHaveAttribute(
+            "aria-selected",
+            "true",
+          );
+          await expectOwnerView(page, true, "Mine");
+          await ownerFilter(page).click();
+          await expect(page.getByRole("option")).toHaveText([...OWNER_VIEWS]);
+          await page.keyboard.press("Escape");
+          await expect(page.getByRole("option")).toHaveCount(0);
+          await expectOwnerView(page, true, "Mine");
+        } else {
+          const withProviders = await servedVersionAtLeast(request, MANAGE_PROVIDERS_SINCE);
+          await expect(tabs).toHaveText(withProviders ? [...OWNER_VIEWS, "Manage providers"] : [...OWNER_VIEWS]);
+          await expectOwnerView(page, false, "Mine");
+        }
       });
 
       await test.step("a view with nothing to show reads its empty copy, drops the table and still offers Add", async () => {
@@ -214,13 +232,12 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
     },
   );
 
-  // Quarantined for #2409: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2409's deliverable.
-  test.fixme(
+  test(
     "a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request, playwright }) => {
       const headers = { Authorization: await getAuthToken(request) };
+      const filter = await servedOwnerFilter(request);
       const accountDisplay = `Scout ${uniqueConnectionName("acct")}`;
       const rowOf = (connection: CreatedConnection) =>
         page.getByTestId(`connection-row-${connection.name}`);
@@ -297,7 +314,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
       });
 
       await test.step("Mine holds the superuser's own rows, and neither the instance row nor the other user's", async () => {
-        await expect(tab(page, "Mine")).toHaveAttribute("aria-selected", "true");
+        await expectOwnerView(page, filter, "Mine");
         await expect(rowOf(mine)).toBeVisible();
         await expect(rowOf(pending)).toBeVisible();
         await expect(rowOf(instance)).toHaveCount(0);
@@ -305,8 +322,8 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
       });
 
       await test.step("Instance holds the instance row, owned by the instance, and none of the others", async () => {
-        await openTab(page, "Instance");
-        // The held row first: once it renders, the tab's filter has run, so the
+        await showOwnerView(page, filter, "Instance");
+        // The held row first: once it renders, the view's filter has run, so the
         // absences below cannot pass on a view that has not switched yet.
         await expect(rowOf(instance)).toBeVisible();
         await expect(await cell(page, rowOf(instance), "Owner")).toHaveText("Instance");
@@ -316,7 +333,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
       });
 
       await test.step("Other users holds the other user's private row, owned by Other user, and none of the superuser's (langflow#15182)", async () => {
-        await openTab(page, "Other users");
+        await showOwnerView(page, filter, "Other users");
         await expect(rowOf(theirs)).toBeVisible();
         // "Shared" until langflow#15263 — nobody had shared it.
         await expect(await cell(page, rowOf(theirs), "Owner")).toHaveText("Other user");
@@ -326,7 +343,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
       });
 
       await test.step("search keeps the row its name, handle or account matches and drops the other", async () => {
-        await openTab(page, "Mine");
+        await showOwnerView(page, filter, "Mine");
         const search = page.getByTestId("connections-search");
         // Ordered so every probe flips which row is shown: a probe that left the
         // previous result standing would pass on a search that ignored the input.
