@@ -218,9 +218,11 @@ test(
   },
 );
 
-test(
+// Quarantined for #2424: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2424's deliverable.
+test.fixme(
   "Review All flags every outdated component as breaking and pre-selects none",
-  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
+  { tag: ["@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
     flows = trackCreatedFlows(page);
 

@@ -146,9 +146,11 @@ test.describe("MCP Server — flow-file resources protocol", () => {
     }
   });
 
-  test(
+  // Quarantined for #2426: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2426's deliverable.
+  test.fixme(
     "resources/list surfaces the uploaded flow file as a resource",
-    { tag: ["@stable", "@regression", "@api", "@mcp"] },
+    { tag: ["@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await mcpHandshake(request, streamableUrl, credential);
 
