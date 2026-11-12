@@ -4,11 +4,13 @@ import {
   deleteApiKey,
 } from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { createFlow } from "../../../../helpers/flows/create-flow";
 import {
-  createRunnableChatFlowViaApi,
-  type RunnableChatFlow,
-} from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+  type CreatedProject,
+  createProjectViaApi,
+} from "../../../../helpers/flows/create-project-via-api";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { servedProjectResourcesFollowMcpVisibility } from "../../../../helpers/mcp/mcp-resource-visibility";
 import {
   type McpTransportCredential,
   mcpCall,
@@ -20,24 +22,27 @@ import {
  * resources, re-scoped from §13.1; see docs/mcp/server/mcp-server-resources.md).
  *
  * Companion to mcp-server-protocol.spec.ts (which covers §14.1 tools and notes
- * resources/list is empty for a file-less flow). Langflow exposes a flow's
- * uploaded files as MCP resources: a file uploaded into a project flow appears
- * in resources/list and is readable via resources/read by its URI. This spec
- * speaks the real MCP protocol to the project's generated streamable endpoint:
- *   T1 — resources/list surfaces the uploaded file as a resource (name + URI).
- *   T2 — resources/read returns that file's content (per-run sentinel).
+ * resources/list is empty for a file-less flow). Langflow exposes the uploaded
+ * files of a project's MCP-exposed flows as MCP resources: such a file appears in
+ * resources/list and is readable via resources/read by its URI. This spec speaks
+ * the real MCP protocol to the generated streamable endpoint of a project it
+ * creates, holding two flows with one uploaded file each — `exposed`
+ * (`mcp_enabled: true`) and `hidden` (`mcp_enabled: false`):
+ *   T1 — resources/list surfaces the exposed file (name + URI) and, on a build
+ *        carrying langflow-ai/langflow#16127, not the hidden one.
+ *   T2 — resources/read returns the exposed file's content (per-run sentinel)
+ *        and, on such a build, refuses the hidden one.
+ *
+ * #16127 (`1.14.0.dev23` / `1.13.2rc0`) scoped project resources to
+ * `mcp_enabled` flows; before it every flow of the project was listed, and this
+ * spec's flow — created through the API, so `mcp_enabled: false` — was never
+ * exposed, which is what turned T1 red on the daily of 2026-11-11 (#2426).
  *
  * The client side (§13.1) is NOT covered — the MCPTools component / v2 client
  * API expose tools only, no resource surface exists to test.
  *
- * Promotion (#948, nightly 1.12.0.dev4): T1 (resources/list) is `@stable` after
- * repeated clean --retries=0 runs + a force-failure check. T2 (resources/read)
- * is NOT promoted — it hits a live Langflow regression on 1.12.x: the server
- * throws `AttributeError: 'str' object has no attribute 'hex'` because
- * handle_read_resource compares the UUID `Flow.id` column to the raw string URI
- * segment without converting it to UUID (mcp_utils.py). Filed upstream as
- * LE-2012; see docs/upstream-bugs/UPSTREAM-BUG-mcp-resources-read-uuid-hex.log.
- * T2 is kept as a live regression guard and will be promoted once LE-2012 lands.
+ * T1 is `@stable` (#948; quarantine of #2426 lifted). T2 is not: it was held
+ * back by LE-2012 on 1.12.x and its promotion is outside #2426's scope.
  */
 
 // A resource read can arrive base64-encoded (blob), and on 1.11.0 the blob is
@@ -59,9 +64,18 @@ function decodedContentContainsSentinel(
   return false;
 }
 
-// Shared project MCP surface is instance-wide; run serially so a sibling
-// project-MCP spec can't race this one, and so T2 can rely on T1's ordering.
-test.describe.configure({ mode: "serial" });
+interface FlowWithFile {
+  flowId: string;
+  /** The stored, server-assigned (timestamp-prefixed) file name. */
+  fileName: string;
+  /** `/api/v1/files/download/{flowId}/{fileName}` — the resource URI's path. */
+  resourcePath: string;
+  sentinel: string;
+}
+
+const runId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const uriPath = (uri: string) => decodeURIComponent(new URL(uri).pathname);
 
 test.describe("MCP Server — flow-file resources protocol", () => {
   let authorization: string;
@@ -69,13 +83,13 @@ test.describe("MCP Server — flow-file resources protocol", () => {
   // authenticates every other API call here (#1522).
   let credential: McpTransportCredential;
   let apiKeyId: string;
-  let projectId: string;
+  let project: CreatedProject | undefined;
   let streamableUrl: string;
-  let flow: RunnableChatFlow;
-  let uploadedName: string;
-  let expectedResourcePath: string;
-  let resourceUri: string;
-  const sentinel = `mcp-res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const flowIds: string[] = [];
+  let exposed: FlowWithFile;
+  let hidden: FlowWithFile;
+  // Whether the instance carries #16127, decided from its declared version.
+  let visibilityEnforced: boolean;
 
   test.beforeAll(async ({ request }) => {
     authorization = await getAuthToken(request);
@@ -87,142 +101,211 @@ test.describe("MCP Server — flow-file resources protocol", () => {
     credential = { apiKey: created.key };
     apiKeyId = created.id;
 
-    // Create the flow first, then scope to the project it actually lives in
-    // (its folder_id), so resources/list on that project is guaranteed to
-    // include this flow's file — instead of assuming projects[0].
-    flow = await createRunnableChatFlowViaApi(request, headers);
+    visibilityEnforced = await servedProjectResourcesFollowMcpVisibility(request);
 
-    const flowRes = await request.get(`/api/v1/flows/${flow.flowId}`, { headers });
-    expect(flowRes.ok()).toBeTruthy();
-    projectId = ((await flowRes.json()).folder_id as string) ?? "";
-    if (!projectId) {
-      const projectsRes = await request.get("/api/v1/projects/", { headers });
-      const projects = await projectsRes.json();
-      const list = Array.isArray(projects) ? projects : projects.folders ?? [];
-      expect(list.length).toBeGreaterThan(0);
-      projectId = list[0].id;
-    }
-    streamableUrl = `/api/v1/mcp/project/${projectId}/streamable`;
+    // A project of its own: in the shared default project another spec's PATCH
+    // of the MCP settings could flip `hidden` on and fake a product change.
+    project = await createProjectViaApi(request, headers, {
+      namePrefix: "e2emcpres",
+      description: "MCP flow-file resources (#2426)",
+    });
+    streamableUrl = `/api/v1/mcp/project/${project.projectId}/streamable`;
 
-    // Upload a small text file carrying the per-run sentinel into the flow.
-    const uploadRes = await request.post(
-      `/api/v1/files/upload/${flow.flowId}`,
-      {
+    const flowWithFile = async (role: string): Promise<FlowWithFile> => {
+      const flowId = await createFlow(
+        request,
+        {
+          name: `MCP resources ${role} ${runId()}`,
+          description: "Holds one uploaded file for the MCP resources spec",
+          data: { nodes: [], edges: [] },
+          is_component: false,
+          folder_id: project!.projectId,
+        },
+        { headers },
+      );
+      flowIds.push(flowId);
+
+      const sentinel = `mcp-res-${role}-${runId()}`;
+      const uploadRes = await request.post(`/api/v1/files/upload/${flowId}`, {
         headers,
         multipart: {
           file: {
-            name: "resource-note.txt",
+            name: `resource-${role}.txt`,
             mimeType: "text/plain",
             buffer: Buffer.from(sentinel, "utf-8"),
           },
         },
-      },
-    );
-    expect(uploadRes.ok(), `upload failed: ${uploadRes.status()}`).toBeTruthy();
-    // The server prepends a timestamp to the stored name — capture the real one.
-    const filePath = (await uploadRes.json()).file_path as string;
-    uploadedName = filePath.split("/").pop() ?? "";
-    expect(uploadedName, "upload response must carry a stored file name").toBeTruthy();
+      });
+      expect(uploadRes.ok(), `upload into the ${role} flow failed: ${uploadRes.status()}`).toBeTruthy();
+      // The server prepends a timestamp to the stored name — capture the real
+      // one. Only the name is taken: `file_path` carries the storage folder
+      // (`flow-<id>/` since LE-3242), which the resource URI does not.
+      const filePath = (await uploadRes.json()).file_path as string;
+      const fileName = filePath.split("/").pop() ?? "";
+      expect(fileName, "upload response must carry a stored file name").toBeTruthy();
+      return {
+        flowId,
+        fileName,
+        resourcePath: `/api/v1/files/download/${flowId}/${fileName}`,
+        sentinel,
+      };
+    };
 
-    expectedResourcePath = `/api/v1/files/download/${flow.flowId}/${uploadedName}`;
-    // handle_read_resource only consumes the URI's last two path segments, so a
-    // host built from the test's base URL is accepted regardless of the host the
-    // server uses in the listed URI.
-    const baseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:7860/";
-    resourceUri = new URL(expectedResourcePath, baseUrl).toString();
+    exposed = await flowWithFile("exposed");
+    hidden = await flowWithFile("hidden");
+
+    // Both states are written, so the control does not rest on the API's
+    // creation default for `mcp_enabled`.
+    const patchRes = await request.patch(`/api/v1/mcp/project/${project.projectId}`, {
+      headers,
+      data: {
+        settings: [
+          {
+            id: exposed.flowId,
+            mcp_enabled: true,
+            action_name: `e2e_res_exposed_${Date.now().toString(36)}`,
+            action_description: "E2E MCP resources (exposed)",
+          },
+          {
+            id: hidden.flowId,
+            mcp_enabled: false,
+            action_name: `e2e_res_hidden_${Date.now().toString(36)}`,
+            action_description: "E2E MCP resources (hidden)",
+          },
+        ],
+      },
+    });
+    expect(patchRes.ok(), `PATCH mcp/project answered ${patchRes.status()}: ${await patchRes.text()}`).toBe(true);
   });
 
   test.afterAll(async ({ request }) => {
     // Playwright forbids reusing the beforeAll request here; use this hook's own.
-    if (flow?.flowId) {
-      await deleteFlow(request, flow.flowId, {
-        headers: { Authorization: authorization },
-      }).catch(() => {});
+    const headers = { Authorization: authorization };
+    const failures: string[] = [];
+    for (const id of flowIds) {
+      await deleteFlow(request, id, { headers }).catch((e) => failures.push(`flow ${id}: ${e}`));
+    }
+    if (project) {
+      await project.deleteProject(request).catch((e) => failures.push(`project ${project?.projectId}: ${e}`));
     }
     if (apiKeyId) {
-      await deleteApiKey(request, apiKeyId, {
-        Authorization: authorization,
-      }).catch(() => {});
+      await deleteApiKey(request, apiKeyId, headers).catch((e) => failures.push(`api key ${apiKeyId}: ${e}`));
     }
+    expect(failures, `teardown left state behind: ${failures.join(" | ")}`).toEqual([]);
   });
 
-  // Quarantined for #2426: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2426's deliverable.
-  test.fixme(
+  /** Records, on the report, that a #16127 assertion was not applicable. */
+  function noteVisibilityNotEnforced(what: string) {
+    test.info().annotations.push({
+      type: "not-applicable",
+      description:
+        `${what}: this build predates langflow-ai/langflow#16127 (< 1.14.0.dev23 / < 1.13.2rc0), ` +
+        "where a project MCP server lists every flow's files by design.",
+    });
+  }
+
+  test(
     "resources/list surfaces the uploaded flow file as a resource",
-    { tag: ["@regression", "@api", "@mcp"] },
+    { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await mcpHandshake(request, streamableUrl, credential);
 
-      // resources/list can lag a moment behind the upload — poll until this
-      // flow's file appears, matching on its exact URI path (the project list
-      // also contains other flows' files, so a generic count is not enough).
+      // resources/list can lag a moment behind the upload — poll until the
+      // exposed flow's file appears, matching on its exact URI path, and keep
+      // the response that proved it.
+      let listed: Array<{ name: string; uri: string }> = [];
       let matched: { name: string; uri: string } | undefined;
-      await expect
-        .poll(
-          async () => {
-            // Re-dialled inside `mcpCall`, around the POST only: a dropped socket is
-            // retried once, a non-2xx answer is never re-sent.
-            const resp = await mcpCall(request, streamableUrl, credential, "resources/list", {}, 2, {
-              retryDroppedConnection: true,
-            });
-            const resources = (resp.result?.resources ?? []) as Array<{
-              name: string;
-              uri: string;
-            }>;
-            matched = resources.find(
-              (r) =>
-                decodeURIComponent(new URL(r.uri).pathname) ===
-                expectedResourcePath,
-            );
-            return Boolean(matched);
-          },
-          { timeout: 30000, intervals: [500, 1000, 3000] },
-        )
-        .toBeTruthy();
 
-      expect(matched?.name).toBe(uploadedName);
+      await test.step("the exposed flow's file is listed under its download URI", async () => {
+        await expect
+          .poll(
+            async () => {
+              // Re-dialled inside `mcpCall`, around the POST only: a dropped socket is
+              // retried once, a non-2xx answer is never re-sent.
+              const resp = await mcpCall(request, streamableUrl, credential, "resources/list", {}, 2, {
+                retryDroppedConnection: true,
+              });
+              listed = (resp.result?.resources ?? []) as Array<{ name: string; uri: string }>;
+              matched = listed.find((r) => uriPath(r.uri) === exposed.resourcePath);
+              return Boolean(matched);
+            },
+            {
+              timeout: 30000,
+              intervals: [500, 1000, 3000],
+              message: `resources/list never listed ${exposed.resourcePath}`,
+            },
+          )
+          .toBeTruthy();
+        expect(matched?.name).toBe(exposed.fileName);
+      });
+
+      await test.step("the hidden flow's file is absent from the same response", async () => {
+        if (!visibilityEnforced) {
+          noteVisibilityNotEnforced("the hidden-file absence check was not run");
+          return;
+        }
+        // Both files were uploaded before the first poll, so the response that
+        // lists the exposed one is past any listing lag for the hidden one.
+        const hiddenPrefix = `/api/v1/files/download/${hidden.flowId}/`;
+        const leaked = listed.filter((r) => uriPath(r.uri).startsWith(hiddenPrefix)).map((r) => r.uri);
+        expect(
+          leaked,
+          "a project MCP server listed a file of a flow that is not mcp_enabled (langflow-ai/langflow#16127)",
+        ).toEqual([]);
+      });
     },
   );
 
-  // NOT @stable — resources/read is broken on Langflow 1.12.x (LE-2012): the
-  // server raises AttributeError 'str' has no attribute 'hex' (UUID column vs
-  // raw string URI segment in handle_read_resource). Kept as a live regression
-  // guard; promote to @stable once the upstream fix lands.
-  // Quarantined for #2426: serial sibling of the resources/list test quarantined on daily
-  // 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31); it now runs and fails with "Resource not
-  // found or access denied". Lifting it (drop `test.fixme`) is #2426's deliverable.
-  test.fixme(
+  // NOT @stable — held back by LE-2012 on 1.12.x (resources/read raised
+  // AttributeError 'str' has no attribute 'hex'); it passes on 1.14.0.dev25, but
+  // promotion is outside #2426's scope. Kept as a regression guard.
+  test(
     "resources/read returns the uploaded file content by URI",
     { tag: ["@regression", "@api", "@mcp"] },
     async ({ request }) => {
+      // handle_read_resource only consumes the URI's last two path segments, so a
+      // host built from the test's base URL is accepted regardless of the host the
+      // server uses in the listed URI.
+      const baseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:7860/";
+
       await mcpHandshake(request, streamableUrl, credential);
 
-      const resp = await mcpCall(
-        request,
-        streamableUrl,
-        credential,
-        "resources/read",
-        { uri: resourceUri },
-        3,
-      );
+      await test.step("the exposed flow's file is served with its content", async () => {
+        const resp = await mcpCall(request, streamableUrl, credential, "resources/read", {
+          uri: new URL(exposed.resourcePath, baseUrl).toString(),
+        }, 3);
 
-      expect(resp.error, JSON.stringify(resp.error)).toBeUndefined();
-      const contents = (resp.result?.contents ?? []) as Array<{
-        uri: string;
-        text?: string;
-        blob?: string;
-      }>;
-      expect(contents.length).toBeGreaterThan(0);
+        expect(resp.error, JSON.stringify(resp.error)).toBeUndefined();
+        const contents = (resp.result?.contents ?? []) as Array<{
+          uri: string;
+          text?: string;
+          blob?: string;
+        }>;
+        expect(contents.length).toBeGreaterThan(0);
 
-      const content = contents[0];
-      expect(decodeURIComponent(new URL(content.uri).pathname)).toBe(
-        expectedResourcePath,
-      );
-      expect(
-        decodedContentContainsSentinel(content.text ?? content.blob, sentinel),
-        "resource content must contain the uploaded sentinel",
-      ).toBe(true);
+        const content = contents[0];
+        expect(uriPath(content.uri)).toBe(exposed.resourcePath);
+        expect(
+          decodedContentContainsSentinel(content.text ?? content.blob, exposed.sentinel),
+          "resource content must contain the uploaded sentinel",
+        ).toBe(true);
+      });
+
+      await test.step("the hidden flow's file is refused", async () => {
+        if (!visibilityEnforced) {
+          noteVisibilityNotEnforced("the hidden-file read refusal was not checked");
+          return;
+        }
+        const resp = await mcpCall(request, streamableUrl, credential, "resources/read", {
+          uri: new URL(hidden.resourcePath, baseUrl).toString(),
+        }, 4);
+
+        expect(
+          resp.result,
+          `a project MCP server served a file of a flow that is not mcp_enabled: ${JSON.stringify(resp.result)}`,
+        ).toBeUndefined();
+        expect(resp.error?.message).toBe("Resource not found or access denied");
+      });
     },
   );
 });
