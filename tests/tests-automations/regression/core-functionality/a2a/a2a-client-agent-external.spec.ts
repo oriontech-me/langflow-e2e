@@ -8,7 +8,7 @@ import { requireA2aEnabled } from "../../../../helpers/a2a/require-a2a-enabled";
 // never a response. Lives in `helpers/api/` since #2243 — it first lived with the
 // RBAC helpers, which needed it first.
 import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
-import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { createRunnableChatFlowInPublicProject } from "../../../../helpers/a2a/create-public-runnable-flow";
 import { createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -35,6 +35,11 @@ import { separateOverlappingNodes } from "../../../../helpers/ui/separate-overla
 // the connector SSRF policy, which lets a literal loopback host through by default
 // (`connector_ssrf_allow_loopback`) — the reason this row of the scope doc, once
 // parked as blocked, is reachable at all.
+//
+// The target starts in a project created with an EXPLICIT auth_type "none": the
+// public card is the negative control for the restricted one. Since 1.14.0.dev23
+// (#16186) the default project is "apikey" under AUTO_LOGIN, so a target left there
+// already reads "Requires an API key" (#2412).
 
 const A2A_SEARCH_TERM = "A2A";
 const A2A_ADD_BUTTON = "add-component-button-a2a-agent";
@@ -237,10 +242,8 @@ async function runFromPlayground(page: Page, sentinel: string): Promise<void> {
 }
 
 test.describe("A2A Client — A2AAgent component in External mode", () => {
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires",
-    { tag: ["@regression", "@components", "@workspace", "@a2a"] },
+  test("External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires",
+    { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a"] },
     async ({ page }) => {
       const headers = { Authorization: await getAuthToken(page.request) };
       await requireA2aEnabled(page.request, headers);
@@ -250,7 +253,7 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
       const sentinel = `a2a-external-${randomUUID()}`;
       const keyedSentinel = `a2a-external-keyed-${randomUUID()}`;
 
-      const target = await createRunnableChatFlowViaApi(page.request, headers);
+      const target = await createRunnableChatFlowInPublicProject(page.request, headers, { namePrefix: "a2a-external-public" });
       let callerFlowId: string | null = null;
       let project: Awaited<ReturnType<typeof createProjectViaApi>> | undefined;
       let apiKey: Awaited<ReturnType<typeof createApiKey>> | undefined;
@@ -405,9 +408,10 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
             console.warn(`⚠️ caller flow cleanup failed: ${e}`),
           );
         }
+        // The target (wherever it moved) and the public project it started in.
         await target
-          .deleteFlow()
-          .catch((e) => console.warn(`⚠️ target flow cleanup failed: ${e}`));
+          .cleanup()
+          .catch((e) => console.warn(`⚠️ target flow / public project cleanup failed: ${e}`));
         if (apiKey) {
           await deleteApiKey(page.request, apiKey.id, headers).catch((e) =>
             console.warn(`⚠️ API key cleanup failed: ${e}`),

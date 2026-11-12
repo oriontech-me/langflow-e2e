@@ -2,7 +2,7 @@ import { expect } from "@playwright/test";
 import { test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { requireA2aEnabled } from "../../../../helpers/a2a/require-a2a-enabled";
-import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { createRunnableChatFlowInPublicProject } from "../../../../helpers/a2a/create-public-runnable-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 
 // Spec doc: docs/core-functionality/a2a/a2a-server-agent-tab-try-it.md
@@ -14,17 +14,20 @@ import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 //
 // The flow is a Chat Input -> Chat Output passthrough, so the reply is deterministic
 // — the sentinel comes back verbatim, with no LLM and no provider key in the path.
+//
+// It lives in a project created with an EXPLICIT auth_type "none", so the agent is
+// public and the panel sends with no key. Since 1.14.0.dev23 (#16186) the default
+// project is "apikey" under AUTO_LOGIN; the panel then asks for a key this spec does
+// not fill (#2412). That restricted variant is #2433.
 
 test.describe("A2A Server — Agent tab Try it panel", () => {
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("the Try it panel round-trips a sentinel over the published endpoint", { tag: ["@workspace", "@ui-ux", "@a2a"] }, async ({
+  test("the Try it panel round-trips a sentinel over the published endpoint", { tag: ["@stable", "@workspace", "@ui-ux", "@a2a"] }, async ({
     page,
   }) => {
     const headers = { Authorization: await getAuthToken(page.request) };
     await requireA2aEnabled(page.request, headers);
 
-    const flow = await createRunnableChatFlowViaApi(page.request, headers);
+    const flow = await createRunnableChatFlowInPublicProject(page.request, headers, { namePrefix: "a2a-tryit" });
     const sentinel = `a2a-try-it-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     try {
@@ -83,7 +86,7 @@ test.describe("A2A Server — Agent tab Try it panel", () => {
         await expect(page.getByRole("button", { name: "Reset" })).toBeVisible();
       });
     } finally {
-      await flow.deleteFlow();
+      await flow.cleanup();
     }
   });
 });

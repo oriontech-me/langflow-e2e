@@ -1,6 +1,7 @@
 # A2A Server — multi-turn context: a conversation keeps its thread
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412) · first
+promoted on 1.12.x (`1.12.0.dev18`)
 
 **Issue:** #1247 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T5**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -76,9 +77,14 @@ Then, in `GET /api/v1/monitor/messages?flow_id={flowId}`:
   instead of failing on a `404`.
 - **No LLM, no provider key, no external network.** The flow is the Chat Input →
   Chat Output passthrough from `tests/assets/flows/chat-io-ok-trace-fixture.json`
-  via `createRunnableChatFlowViaApi()`; the echo is what makes the stored-text
-  assertions deterministic.
-- Auto-login superuser (`getAuthToken()`).
+  via `createRunnableChatFlowInPublicProject()`; the echo is what makes the
+  stored-text assertions deterministic.
+- Auto-login superuser (`getAuthToken()`). The flow lives in a project of its own
+  created with an **explicit** `auth_type: "none"`, so the turns are sent with no
+  `x-api-key`. Explicit because from `1.14.0.dev23` (also `release-1.13.2` /
+  `1.13.3`, upstream #16186 + #16151) the default project and every new one are
+  `apikey` under `AUTO_LOGIN=true`, and a flow left there answers `401` (#2412 —
+  the full account is in `a2a-server-jsonrpc-message-send.md`).
 
 ---
 
@@ -101,7 +107,7 @@ not express without sharing state.
 
 **`a conversation keeps its thread only while the caller quotes the contextId`**
 1. `requireA2aEnabled(request, headers)`.
-2. `createRunnableChatFlowViaApi()` → `flowId`; `PATCH` it to
+2. `createRunnableChatFlowInPublicProject()` → `flowId`; `PATCH` it to
    `{ flow_type: "agent", a2a_enabled: true }`.
 3. Turn 1: `postA2AJsonRpc(message/send)` with sentinel A and **no** `contextId` →
    assert `completed`, capture `contextId` and the task `id`.
@@ -113,7 +119,7 @@ not express without sharing state.
    `session_id` and assert: exactly two sessions; the one ending in `:${ctx1}`
    holds sentinels A and B (each as `User` + `Machine`); the one ending in
    `:${ctx3}` holds only sentinel C.
-7. `finally`: delete the flow by id.
+7. `finally`: delete the flow by id, then its project (`cleanup()`).
 
 ---
 

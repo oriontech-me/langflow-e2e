@@ -1,6 +1,7 @@
 # A2A Client — the `A2AAgent` component in External mode: calling an agent by its URL
 
-**Last validated:** Langflow 1.12.x (`1.12.5`) and 1.13.x (nightly `1.13.0.dev34`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412), 1.13.x
+(nightly `1.13.0.dev34`) and 1.12.x (`1.12.5`)
 
 **Issue:** #1855 (toolbar under the app header: #2182) · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C2**) ·
 **Follows:** #1354 (C1, Internal mode) · **Jira:** epic `LE-1588`, regression `LE-1845`
@@ -101,8 +102,16 @@ that makes 4 mean something.
   the two coincide at `http://localhost:7860` — `daily-stable.yml` forwards that port
   into its job container precisely so `PLAYWRIGHT_BASE_URL` stays on it.
 - **No LLM, no provider key, no external network** — A is the Chat Input → Chat
-  Output passthrough (`createRunnableChatFlowViaApi()`); B holds `A2AAgent` → `Chat
-  Output`.
+  Output passthrough (`createRunnableChatFlowInPublicProject()`); B holds
+  `A2AAgent` → `Chat Output`.
+- **A starts in a project created with an explicit `auth_type: "none"` (#2412).**
+  Assertion 1 is the negative control and needs A public. Until `1.14.0.dev22` the
+  default project was unrestricted under `AUTO_LOGIN=true`. From `1.14.0.dev23`
+  (also `release-1.13.2` / `1.13.3`), upstream #16186 + #16151 make the default
+  project and every new one `apikey` there, so A's card in the default project
+  already reads `Requires an API key` and assertion 1 fails. That is an intended
+  policy change, not a regression; the full account is in
+  `a2a-server-jsonrpc-message-send.md`.
 - Auto-login superuser: the two flows, the project and the API key share one owner,
   which is the only owner whose key the A2A gate accepts.
 
@@ -114,7 +123,8 @@ that makes 4 mean something.
 - **A's name must be unique per run** — assertion 1 matches it in the viewer.
 - **B stays in the default project while A moves.** External mode is not
   folder-scoped (unlike C1's Internal dropdown); only A's project decides its card's
-  security.
+  security. B's own project being `apikey` on `1.14.0.dev23`+ changes nothing: B is
+  run from the playground, never through its A2A endpoint.
 
 ---
 
@@ -123,7 +133,8 @@ that makes 4 mean something.
 One test. Every flow, key and project it creates is deleted in `finally`.
 
 1. `requireA2aEnabled(request, headers)`.
-2. Create flow **A** via `createRunnableChatFlowViaApi()`; `PATCH` it to
+2. Create flow **A** via `createRunnableChatFlowInPublicProject()` (its own
+   project, `auth_type: "none"`); `PATCH` it to
    `{ name: <unique>, flow_type: "agent", a2a_enabled: true }`.
 3. Create, up front, the project the restricted half needs (`createProjectViaApi` with
    `auth_settings: { auth_type: "apikey" }`) and an API key for the owner
@@ -164,10 +175,11 @@ One test. Every flow, key and project it creates is deleted in `finally`.
     `popover-anchor-input-api_key` with the owner's key. Fill
     `textarea_str_input_value` with a second sentinel.
 16. Run from the playground and assert assertion 5.
-17. `finally`, each guarded: leave the editor; delete B, then A, then the API key,
-    then the project — after its flow is gone, since a project holding flows is a
-    different delete path and `deleteProject` also removes the key the backend issues
-    for an `auth_settings` project.
+17. `finally`, each guarded: leave the editor; delete B, then A and its public
+    project (`cleanup()`), then the API key, then the restricted project — after its
+    flow is gone, since a project holding flows is a different delete path and
+    `deleteProject` also removes the key the backend issues for an `auth_settings`
+    project.
 
 ---
 
