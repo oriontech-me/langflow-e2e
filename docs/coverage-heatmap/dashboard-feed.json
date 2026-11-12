@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-11-11",
+ "refreshed": "2026-11-12",
  "refreshWindow": {
-  "testHealthSince": "2026-09-27",
+  "testHealthSince": "2026-09-28",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,7 +40,7 @@
   "cappedByProduct": 2,
   "bullets": 826,
   "bulletsAutomatedUnwatched": 128,
-  "residualRiskTotal": 101.4
+  "residualRiskTotal": 101.8
  },
  "areas": [
   {
@@ -435,9 +435,68 @@
    "rationale": "SSRF/secret exposure; not a checklist area at all"
   },
   {
+   "key": "playground",
+   "label": "9 Playground / chat",
+   "rank": 8,
+   "residualRisk": 5.2,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "mitigation": 0.74,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "bullets": {
+    "total": 70,
+    "validated": 70,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 24,
+    "stable": 22
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 3,
+    "stableSpecs": 22,
+    "penalty": 0.055
+   },
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "previous": {
+    "rank": 12,
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": 0.5,
+    "rank": 4,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "The user's main verification loop; SSE streaming"
+  },
+  {
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
-   "rank": 8,
+   "rank": 9,
    "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
@@ -484,7 +543,7 @@
    },
    "delta": {
     "residualRisk": -0.1,
-    "rank": 2,
+    "rank": 1,
     "direction": "improved"
    },
    "isNew": false,
@@ -492,65 +551,6 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
-  },
-  {
-   "key": "playground",
-   "label": "9 Playground / chat",
-   "rank": 9,
-   "residualRisk": 5,
-   "inherentRisk": 20,
-   "probability": 5,
-   "impact": 4,
-   "mitigation": 0.75,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 5,
-    "churnQuintile": 5,
-    "fragility": 4,
-    "weightedBugs": 60.9,
-    "weightedChurn": 2.88
-   },
-   "bullets": {
-    "total": 70,
-    "validated": 70,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 24,
-    "stable": 24
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 3,
-    "stableSpecs": 24,
-    "penalty": 0.05
-   },
-   "upstreamBugsByYear": {
-    "2023": 2,
-    "2024": 40,
-    "2025": 49,
-    "2026": 13
-   },
-   "previous": {
-    "rank": 12,
-    "residualRisk": 4.7,
-    "inherentRisk": 20,
-    "mitigation": 0.77
-   },
-   "delta": {
-    "residualRisk": 0.3,
-    "rank": 3,
-    "direction": "worsened"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "The user's main verification loop; SSE streaming"
   },
   {
    "key": "a2a",
@@ -580,12 +580,12 @@
    },
    "specs": {
     "specs": 11,
-    "stable": 11
+    "stable": 6
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 11,
+    "stableSpecs": 6,
     "penalty": 0
    },
    "upstreamBugsByYear": {
@@ -698,12 +698,12 @@
    },
    "specs": {
     "specs": 42,
-    "stable": 38
+    "stable": 35
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 1,
-    "stableSpecs": 38,
+    "stableSpecs": 35,
     "penalty": 0.011
    },
    "upstreamBugsByYear": {
@@ -730,9 +730,67 @@
    "rationale": "Cannot create/save/import a flow = product unusable"
   },
   {
+   "key": "rest-api",
+   "label": "1 REST API / endpoints",
+   "rank": 13,
+   "residualRisk": 4.1,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.73,
+   "mitigationBulletDerived": 0.75,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 2,
+    "weightedBugs": 9.5,
+    "weightedChurn": 2.61
+   },
+   "bullets": {
+    "total": 106,
+    "validated": 96,
+    "automatedUnwatched": 4,
+    "partial": 3,
+    "flaky": 1,
+    "empty": 2
+   },
+   "specs": {
+    "specs": 47,
+    "stable": 46
+   },
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 1,
+    "stableSpecs": 46,
+    "penalty": 0.016
+   },
+   "upstreamBugsByYear": {
+    "2024": 10,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 14,
+    "residualRisk": 4.4,
+    "inherentRisk": 20,
+    "mitigation": 0.78
+   },
+   "delta": {
+    "residualRisk": -0.3,
+    "rank": 1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
+   "platformItems": [],
+   "rationale": "'Flow as an API' is the advertised deploy path"
+  },
+  {
    "key": "model-providers",
    "label": "7 Model providers",
-   "rank": 13,
+   "rank": 14,
    "residualRisk": 4,
    "inherentRisk": 16,
    "probability": 4,
@@ -779,7 +837,7 @@
    },
    "delta": {
     "residualRisk": 0.1,
-    "rank": 2,
+    "rank": 1,
     "direction": "worsened"
    },
    "isNew": false,
@@ -787,64 +845,6 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "Core providers only (OpenAI/Anthropic/Gemini) after the bundle exclusion; external APIs and keys"
-  },
-  {
-   "key": "rest-api",
-   "label": "1 REST API / endpoints",
-   "rank": 14,
-   "residualRisk": 3.9,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.74,
-   "mitigationBulletDerived": 0.75,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 2,
-    "weightedBugs": 9.5,
-    "weightedChurn": 2.61
-   },
-   "bullets": {
-    "total": 106,
-    "validated": 96,
-    "automatedUnwatched": 4,
-    "partial": 3,
-    "flaky": 1,
-    "empty": 2
-   },
-   "specs": {
-    "specs": 47,
-    "stable": 46
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 1,
-    "stableSpecs": 46,
-    "penalty": 0.008
-   },
-   "upstreamBugsByYear": {
-    "2024": 10,
-    "2025": 5,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 14,
-    "residualRisk": 4.4,
-    "inherentRisk": 20,
-    "mitigation": 0.78
-   },
-   "delta": {
-    "residualRisk": -0.5,
-    "rank": 0,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
-   "platformItems": [],
-   "rationale": "'Flow as an API' is the advertised deploy path"
   },
   {
    "key": "governance-policy",
