@@ -151,6 +151,14 @@ node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs --resul
 Other flags: `--history <path>` (default `reports/daily-history.jsonl`),
 `--window <days>` (default `30`, the recurrence window).
 
+**A VM-lane day with no umbrella may be an outage, not a green day.** If the
+daily's Slack message is red but no umbrella exists, or the run's `suite_sha` is
+behind `main`, check whether the VM could reach the destination (the
+`destination-reachability` alert, #2422). If it could not, follow
+`ops/runbooks/destination-unreachable.md` before triaging: open the umbrella by
+hand, and treat tests already fixed or quarantined on `main` as collateral of the
+old suite, not as new failures.
+
 **A VM-lane run has its umbrella on another repository.** Tell it by the run id:
 the VM lane's is a UTC timestamp (`20260928T080030Z`), an Actions run's is a
 number. The VM lane opens its umbrella on `github.ibm.com/Langflow/e2e-qa`, while

@@ -173,12 +173,40 @@ test("a Workflow Builder webhook gets the flat variables, a plain one gets text"
   );
   assert.deepEqual(Object.keys(wf).sort(), ["body", "headline", "links"]);
   assert.match(wf.headline, /^🚨 QA VM cannot reach the destination/);
+  assert.match(wf.links, /^Runbook: https:\/\/\S+\/ops\/runbooks\/destination-unreachable\.md$/);
   rmSync(dir, { recursive: true, force: true });
   const d2 = makeTempDir("reach-transport-text");
   const plain = JSON.parse(look(d2, DOWN, { threshold: 1 }).posted);
   assert.deepEqual(Object.keys(plain), ["text"]);
   assert.match(plain.text, /^:rotating_light: The QA VM cannot reach/);
+  assert.match(plain.text, /\nRunbook: <https:\/\/\S+\/ops\/runbooks\/destination-unreachable\.md\|what to do>$/);
   rmSync(d2, { recursive: true, force: true });
+});
+
+test("every message links the runbook, recovery included; RUNBOOK_URL='' drops the link", () => {
+  const dir = makeTempDir("reach-runbook");
+  const runbook = { RUNBOOK_URL: "https://example.test/runbook.md" };
+  const down = JSON.parse(look(dir, DOWN, { threshold: 1, extraEnv: runbook }).posted);
+  assert.match(down.text, /\nRunbook: <https:\/\/example\.test\/runbook\.md\|what to do>$/);
+  const up = JSON.parse(look(dir, UP, { threshold: 1, extraEnv: runbook }).posted);
+  assert.match(up.text, /reaches .* again/);
+  assert.match(up.text, /\nRunbook: <https:\/\/example\.test\/runbook\.md\|what to do>$/);
+  rmSync(dir, { recursive: true, force: true });
+
+  const d2 = makeTempDir("reach-runbook-off");
+  const off = JSON.parse(look(d2, DOWN, { threshold: 1, extraEnv: { RUNBOOK_URL: "" } }).posted);
+  assert.doesNotMatch(off.text, /Runbook/);
+  rmSync(d2, { recursive: true, force: true });
+  const d3 = makeTempDir("reach-runbook-off-wf");
+  const wf = JSON.parse(
+    look(d3, DOWN, {
+      threshold: 1,
+      webhook: "https://hooks.slack.com/triggers/T/1/x",
+      extraEnv: { RUNBOOK_URL: "" },
+    }).posted,
+  );
+  assert.equal(wf.links, "");
+  rmSync(d3, { recursive: true, force: true });
 });
 
 test("the history keeps one tab-separated line per look, reason included", () => {
