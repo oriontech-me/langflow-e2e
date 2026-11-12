@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 765 `test()` calls carrying the `@stable` tag, distributed across 287 spec
+> 775 `test()` calls carrying the `@stable` tag, distributed across 292 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2130,6 +2130,7 @@
 
 #### core-functionality/a2a/
 - [x] an approved send_to_agent call resumes the run and executes the published agent → `a2a-client-agent-as-tool.spec.ts`
+- [x] External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires → `a2a-client-agent-external.spec.ts`
 - [x] the Internal dropdown lists a locally published agent and calling it runs that flow → `a2a-client-agent-internal.spec.ts`
 - [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
 - [x] card overrides change exactly what the card advertises → `a2a-server-agent-card.spec.ts`
@@ -2138,8 +2139,16 @@
 - [x] a flow without chat input and output cannot be published → `a2a-server-agent-tab-publish.spec.ts`
 - [x] publishing from the Agent tab serves a card at the advertised URL → `a2a-server-agent-tab-publish.spec.ts`
 - [x] the card editor changes what the API serves → `a2a-server-agent-tab-publish.spec.ts`
+- [x] the Try it panel round-trips a sentinel over the published endpoint → `a2a-server-agent-tab-try-it.spec.ts`
+- [x] the api-key gate follows the project the flow lives in → `a2a-server-auth-apikey.spec.ts`
 - [x] discovery lists only agent-typed, A2A-enabled flows → `a2a-server-discovery.spec.ts`
 - [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
+- [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
+- [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
+- [x] a task id is invisible to another flow → `a2a-server-tasks-lifecycle.spec.ts`
 - [x] cancelling a running task moves it to canceled → `a2a-server-tasks-lifecycle.spec.ts`
 
 #### core-functionality/auth/
@@ -2502,6 +2511,7 @@
 - [x] a client reported as available is offered, while the others stay disabled → `mcp-server-install.spec.ts`
 - [x] project MCP settings round-trip through GET and PATCH → `mcp-server-project-config.spec.ts`
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
+- [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
 - [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
