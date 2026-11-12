@@ -1,0 +1,14 @@
+# Hourly, the resolution THRESHOLD was measured at (the mirror check's looks).
+# `Persistent=true`, the alarm's side of the asymmetry in README.md: a look that
+# catches up after downtime is still telling the truth.
+[Unit]
+Description=Hourly check that the VM still reaches the destination host
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+Unit=e2e-destination-reachability.service
+
+[Install]
+WantedBy=timers.target

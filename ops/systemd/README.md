@@ -15,6 +15,8 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7910-7913, echo 8100, ollama 11454; not 7890-7893, the Enterprise and serving-identity defaults), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00. It also refuses while a scheduled routine holds the heavy-lane lock (*Scheduled routines*) |
 | `e2e-on-demand-worker.service` | the **on-demand worker** (`ops/vm/on-demand-worker.mjs`): polls the QA platform's on-demand queue over outbound HTTPS, claims one request at a time, writes it into the run's slot, starts `e2e-on-demand.service` and forwards its result. The one long-running unit here, so the one with an `[Install]` section: it comes back after a reboot by itself. See *Operating the on-demand worker* |
 | `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
+| `e2e-destination-reachability.service` + `.timer` | hourly: can this machine still reach the destination host (ports 22 and 443, and the issue credential)? Posts **once** after 3 consecutive failed looks and **once** on recovery (#2422). The host comes from `/root/.e2e-lane` |
+| `e2e-destination-reachability-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts if the destination host is unreachable **now**, whatever the streak. While an outage lasts, this is its daily reminder |
 | `e2e-routine-<name>.service` + `.timer` | a **scheduled routine** moved off Actions (stage 3): the shape is `ops/vm/lib/routine.sh`, see *Scheduled routines* below |
 | `e2e-routine-watchdog@.service` + `e2e-routine-<name>-watchdog.timer` | the **absence alarm** of one routine, the instance being its name; one template, one timer per routine |
 
@@ -59,13 +61,16 @@ cp -r ops/systemd/e2e-daily.service ops/systemd/e2e-daily.timer \
       ops/systemd/e2e-daily-watchdog.service ops/systemd/e2e-daily-watchdog.timer \
       ops/systemd/e2e-mirror-freshness.service ops/systemd/e2e-mirror-freshness.timer \
       ops/systemd/e2e-mirror-freshness-announce.service ops/systemd/e2e-mirror-freshness-announce.timer \
+      ops/systemd/e2e-destination-reachability.service ops/systemd/e2e-destination-reachability.timer \
+      ops/systemd/e2e-destination-reachability-announce.service ops/systemd/e2e-destination-reachability-announce.timer \
       ops/systemd/e2e-shadow.service ops/systemd/e2e-on-demand.service \
       /etc/systemd/system/
 mkdir -p /etc/systemd/system/e2e-daily.service.d
 cp ops/systemd/e2e-daily.service.d/10-target-dist.conf /etc/systemd/system/e2e-daily.service.d/
 systemctl daemon-reload
 systemctl enable --now e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer \
-  e2e-mirror-freshness-announce.timer
+  e2e-mirror-freshness-announce.timer e2e-destination-reachability.timer \
+  e2e-destination-reachability-announce.timer
 ```
 
 The `.service` units carry no `[Install]` section by design: each is pulled by its
@@ -189,6 +194,8 @@ ceilings grows with retries. The platform asks for at most the suite's default o
 for f in e2e-daily.service e2e-daily.timer e2e-daily-watchdog.service \
          e2e-daily-watchdog.timer e2e-mirror-freshness.service e2e-mirror-freshness.timer \
          e2e-mirror-freshness-announce.service e2e-mirror-freshness-announce.timer \
+         e2e-destination-reachability.service e2e-destination-reachability.timer \
+         e2e-destination-reachability-announce.service e2e-destination-reachability-announce.timer \
          e2e-shadow.service e2e-on-demand.service e2e-on-demand-worker.service; do
   diff -q "ops/systemd/$f" "/etc/systemd/system/$f" || echo "$f DIFFERS"
 done
@@ -197,7 +204,8 @@ diff -q ops/systemd/e2e-daily.service.d/10-target-dist.conf \
 
 systemctl show e2e-daily.service -p LoadState -p Wants -p After --value
 systemctl list-timers e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer \
-  e2e-mirror-freshness-announce.timer
+  e2e-mirror-freshness-announce.timer e2e-destination-reachability.timer \
+  e2e-destination-reachability-announce.timer
 systemctl is-enabled e2e-on-demand-worker.service   # enabled
 systemctl is-active e2e-on-demand-worker.service    # active
 ```

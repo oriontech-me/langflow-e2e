@@ -1,0 +1,13 @@
+# Thirty minutes before e2e-daily.timer, on the same days, beside the mirror announce.
+# `Persistent=false` for the daily's reason: a catch-up would warn about a run that
+# already happened.
+[Unit]
+Description=Pre-daily check that the VM reaches the destination host
+
+[Timer]
+OnCalendar=Mon..Fri 07:30 UTC
+Persistent=false
+Unit=e2e-destination-reachability-announce.service
+
+[Install]
+WantedBy=timers.target
