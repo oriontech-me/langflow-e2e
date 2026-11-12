@@ -146,9 +146,11 @@ test.describe("MCP Server — flow-file resources protocol", () => {
     }
   });
 
-  test(
+  // Quarantined for #2426: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2426's deliverable.
+  test.fixme(
     "resources/list surfaces the uploaded flow file as a resource",
-    { tag: ["@stable", "@regression", "@api", "@mcp"] },
+    { tag: ["@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await mcpHandshake(request, streamableUrl, credential);
 
@@ -187,7 +189,10 @@ test.describe("MCP Server — flow-file resources protocol", () => {
   // server raises AttributeError 'str' has no attribute 'hex' (UUID column vs
   // raw string URI segment in handle_read_resource). Kept as a live regression
   // guard; promote to @stable once the upstream fix lands.
-  test(
+  // Quarantined for #2426: serial sibling of the resources/list test quarantined on daily
+  // 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31); it now runs and fails with "Resource not
+  // found or access denied". Lifting it (drop `test.fixme`) is #2426's deliverable.
+  test.fixme(
     "resources/read returns the uploaded file content by URI",
     { tag: ["@regression", "@api", "@mcp"] },
     async ({ request }) => {

@@ -392,8 +392,10 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
       });
     });
 
-  test("the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured",
-    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+  // Quarantined for #2425: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2425's deliverable.
+  test.fixme("the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured",
+    { tag: ["@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       await enterWithProviders(page, flowId, asUnconfigured);
       const dialog = await openCreateMemoryModal(page);

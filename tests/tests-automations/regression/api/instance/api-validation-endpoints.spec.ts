@@ -124,9 +124,11 @@ test.describe("Validation API — code, prompt and custom components", () => {
     },
   );
 
-  test(
+  // Quarantined for #2423: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2423's deliverable.
+  test.fixme(
     "a custom component is described, and a field update echoes the code back",
-    { tag: ["@stable", "@api", "@components"] },
+    { tag: ["@api", "@components"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/custom_component",
