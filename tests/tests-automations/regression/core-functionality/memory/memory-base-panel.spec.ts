@@ -227,6 +227,14 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
   });
 
   test.afterEach(async ({ page, request }) => {
+    // Drop the providers routes first. Test 6 ends on the click that opens the
+    // Model providers dialog, whose `purpose=configure` models call can still be
+    // inside the handler's `route.fetch()` when the body returns: a configured
+    // provider with live discovery (Azure AI Foundry on the VM daily) makes it
+    // slow, and the context then closes under the fetch and fails a test whose
+    // assertions all passed (#2425). `ignoreErrors` only drops what a handler
+    // throws after removal; one thrown during the body still fails the test.
+    await page.unrouteAll({ behavior: "ignoreErrors" });
     // Leave the editor BEFORE deleting: an editor mounted over a deleted flow
     // 404s its own polls into the fixture's HTTP log.
     await unmountEditorForCleanup(page);
@@ -392,10 +400,8 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
       });
     });
 
-  // Quarantined for #2425: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2425's deliverable.
-  test.fixme("the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured",
-    { tag: ["@release", "@workspace", "@ui-ux"] },
+  test("the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       await enterWithProviders(page, flowId, asUnconfigured);
       const dialog = await openCreateMemoryModal(page);
