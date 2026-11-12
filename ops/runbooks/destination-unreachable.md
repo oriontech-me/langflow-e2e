@@ -31,7 +31,7 @@ on Monday at 07:30 UTC.
 |---|---|---|
 | 1. Wait | The alarm posts | Nothing. The short outages measured so far lasted about 2 hours and cleared by themselves. |
 | 2. Temporary mode | The 07:30 UTC check says it is still down | Enter temporary mode before the 08:00 UTC daily (below). |
-| 3. Network ticket | 24 hours after the outage started, or the second daily in a row in temporary mode, whichever comes first | Open a ticket with the VM's network administrators (below). |
+| 3. Network ticket | 24 hours after the outage started, or the second daily in a row in temporary mode, whichever comes first | First check whether the destination's own outage was announced. If it was, open no ticket. Otherwise, open one with the VM's network administrators (below). |
 | Ceiling | 5 weekdays without a fix | Take it to the team lead. The question is no longer the network, it is the VM or the migration plan. |
 
 Open a triage issue on this repository when you reach step 2, and record each step
@@ -90,7 +90,16 @@ While it lasts:
 
 ## Step 3: the network ticket
 
-Open it with whoever administers the VM's network. Say:
+**First, rule out an outage of the destination itself.** Check the destination's
+announcement channel, and try the destination from a machine outside the VM. If the
+destination's operators have announced an outage, or it fails from outside the VM
+too, the network is not the problem and a ticket only adds noise. Then stay in
+temporary mode, record the announcements in the triage issue, and keep the 5-weekday
+ceiling. This is what happened in #2422: the first look pointed at the network, and
+the destination's operators then announced that it was down, with no ETA.
+
+Only if the destination answers from outside the VM and no outage was announced,
+open a ticket with whoever administers the VM's network. Say:
 
 - **Since when:** the time of the first failed check, from the alarm's message or
   `~/.local/state/langflow-e2e/destination-reachability.history` on the VM.
