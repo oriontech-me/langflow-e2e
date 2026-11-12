@@ -1,5 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 
 // The four hidden validation endpoints the UI leans on constantly.
 // Spec doc: docs/api/instance/api-validation-endpoints.md
@@ -124,16 +125,37 @@ test.describe("Validation API — code, prompt and custom components", () => {
     },
   );
 
-  // Quarantined for #2423: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2423's deliverable.
-  test.fixme(
+  /**
+   * `CustomComponentResponse` gained `warnings` (default `[]`) on `1.14.0.dev24`, with
+   * upstream #16255 (#2423). Decided by the version the instance declares, never by
+   * the body, so a build that lost the key by accident still fails.
+   */
+  const COMPONENT_WARNINGS_SINCE = "1.14.0.dev24";
+
+  /**
+   * The response's key set and its `warnings`, on each side of that change. On the
+   * new side `warnings` must be `[]`: the probe has no generated fields and no
+   * refresh hooks, so there is nothing an Update could fail to restore. On the old
+   * side the key does not exist, so `body.warnings` reads `undefined`.
+   */
+  function expectedComponentShape(withWarnings: boolean) {
+    return withWarnings
+      ? { keys: ["data", "type", "warnings"], warnings: [] }
+      : { keys: ["data", "type"], warnings: undefined };
+  }
+
+  test(
     "a custom component is described, and a field update echoes the code back",
-    { tag: ["@api", "@components"] },
+    { tag: ["@stable", "@api", "@components"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/custom_component",
         "POST /api/v1/custom_component/update",
       ]);
+
+      const withWarnings = await test.step("the served version decides the response's key set", async () =>
+        servedVersionAtLeast(request, COMPONENT_WARNINGS_SINCE),
+      );
 
       await test.step("POST describes the component as a frontend node", async () => {
         const res = await request.post("/api/v1/custom_component", {
@@ -142,7 +164,10 @@ test.describe("Validation API — code, prompt and custom components", () => {
         });
         expect(res.status(), await res.text()).toBe(200);
         const body = await res.json();
-        expect(Object.keys(body).sort()).toEqual(["data", "type"]);
+        expect(
+          { keys: Object.keys(body).sort(), warnings: body.warnings },
+          "the key set of this side of 1.14.0.dev24, and a fresh component carries no update warnings",
+        ).toEqual(expectedComponentShape(withWarnings));
         // The declared input is in the derived template, which is the whole point
         // of the endpoint.
         expect(Object.keys(body.data.template)).toContain("probe_field");
