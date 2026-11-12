@@ -1,6 +1,6 @@
 # Model Provider Model Toggle
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev35`, on a run pinned to Azure AI Foundry, #2281; re-run on `1.13.0.dev8` after the scoped toggle write, #1679; measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev25`, the direction-aware write budget and the quarantine lift, #2419). Earlier: 1.13.x (`1.13.0.dev35`, on a run pinned to Azure AI Foundry, #2281; re-run on `1.13.0.dev8` after the scoped toggle write, #1679; measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -11,7 +11,7 @@ Validates the per-model **enable/disable toggles** in **Settings → Model Provi
 1. **Immediate change + persistence** — toggling a model updates the switch optimistically (immediately) and the change is persisted by the debounced `POST /api/v1/models/enabled_models` write (`useUpdateEnabledModels`, debounced ~1s by `useModelToggleQueue`). Leaving and reopening Model Providers reflects the persisted state (read back from `useGetEnabledModels`).
 2. **Propagation to component dropdowns** — disabling a model in Settings removes it from the model dropdown of an intelligent component (the Agent's `model_model` picker) on the canvas; re-enabling brings it back. This is the cross-cutting effect driven by `useRefreshModelInputs`.
 
-Both are pure UI/state assertions — no LLM call is made. No prior spec covered these toggles: `model-provider-modal-actions.spec.ts` only covers entering/removing API keys, and the only existing toggle tests are upstream Langflow unit tests, not this suite.
+Both are UI/state assertions. The suite runs no agent, but every **enable** write makes the backend send a 1-token call to the provider with that model (`validate_model_provider_key`, see *Waiting for the persistence write*). No prior spec covered these toggles: `model-provider-modal-actions.spec.ts` only covers entering/removing API keys, and the only existing toggle tests are upstream Langflow unit tests, not this suite.
 
 ---
 
@@ -35,7 +35,7 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when it names a *
 3. Read the first visible `llm-toggle-<model>` to derive a model name, filter the list to it via `model-search-input`, and assert it is enabled (`aria-checked="true"`).
 4. Disable it: click the toggle, assert `aria-checked="false"` immediately (optimistic), and wait for the `POST .../enabled_models` response (debounced persistence flush) — through `toggleWriteVerdict()`, so a write that never lands says which half failed (see *Waiting for the persistence write* below).
 5. Reload the app, reopen Model Providers, re-expand the provider, search for the same model and assert its toggle is still `aria-checked="false"` (persisted).
-6. Restore the baseline: re-enable the model and assert `aria-checked="true"`.
+6. Restore the baseline: re-enable the model and assert `aria-checked="true"`. The write for this step has the **enable** budget (90 s), not the disable one (see *Waiting for the persistence write*).
 
 ### Test 2 — disabling a model removes it from a component dropdown
 
@@ -231,6 +231,48 @@ This is **attribution, not a fix**: a saturated instance still fails, correctly.
 What changes is that the failure says which half of the round-trip broke, so the
 next occurrence is not a fifth nameless "signature" (#1012/#1626).
 
+### The two directions are different writes (#2419)
+
+Disabling and enabling go to the same endpoint and do different work. A disable
+only persists the user's variable. An enable also calls
+`validate_model_provider_key(provider, variables, model_name=<the model>)`, which
+sends `llm.invoke("test")` to the provider **with the model being enabled**,
+inside the request (upstream since `ae00c03154`, #11446, February 2026). So the
+time an enable takes depends on the provider and the model. Measured on
+`1.14.0.dev25`, a single-model write over the API, two rounds each:
+
+| Model | Disable | Enable |
+|---|---|---|
+| `gpt-6.1-terra` / `gpt-6.1-sol` (OpenAI) | 26–56 ms | 1.4–2.2 s |
+| `gemini-4-hydrogen` (Google) | 16–45 ms | 3.0–9.4 s |
+| `gemini-4-carbon` (Google) | 20–41 ms | **36.1–41.2 s** |
+
+While a 37 s enable of `gemini-4-carbon` ran, `GET /api/v1/version` answered in
+65 ms or less, so the instance was not blocked. (The area guide, §5.2, measured
+the call blocking the event loop on `1.13.0.dev8`. That no longer reproduces on
+`dev25`.) This matches the VM daily, which measured 0 % outage on the attempts
+that failed.
+
+`gemini-4-carbon` is the first toggle of Google's panel, which is the toggle
+test 1 picks, and the flakes on 2026-10-21 and 2026-11-11 (`gemini-4-argon`,
+`gemini-4-carbon`) and on 2026-09-15 (`claude-fable-5-1`) were all the restore
+step. A 15 s budget there reported a slow provider call as an instance that did
+not answer. So `toggleWriteBudgetMs()` gives each direction its own budget:
+
+| Direction | Budget | Why |
+|---|---|---|
+| disable | **15 s**, unchanged | database only, so a timeout still names a saturated instance |
+| enable | **90 s** | a provider call; about twice the worst case measured (41 s) |
+
+When an enable does run out, `TOGGLE_WRITE_UNANSWERED` says the write includes
+a call to the provider and asks for that call to be timed before the instance is
+blamed. The API restore in `afterEach` is an enable too, so it gets the same
+90 s. Before #2419 it used the request context's default 30 s, which would have
+cut off all three attempts on `gemini-4-carbon`.
+
+Picking a "fast" model was rejected: provider latency is not something the suite
+controls, and a fixed model name breaks as soon as the catalog changes.
+
 ---
 
 ## Validation criterion *(required)*
@@ -267,7 +309,7 @@ next occurrence is not a fifth nameless "signature" (#1012/#1626).
   Note the second and third rows are different mutations on purpose: a single dropped
   selection MUST be repaired, so only swallowing every one of them can force hop 2's
   verdict.
-- A persistence write that does not complete inside its unchanged 15 s budget fails as
+- A persistence write that does not complete inside its budget (15 s for a disable, 90 s for an enable, #2419) fails as
   `TOGGLE_WRITE_NOT_ISSUED` (no POST was ever observed) or `TOGGLE_WRITE_UNANSWERED`
   (the POST was issued, the instance did not answer) — never as a bare
   `page.waitForResponse` timeout.
@@ -360,7 +402,7 @@ flow count grows.
 ## Preconditions *(optional)*
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`.
-- At least one provider has its env keys set (e.g. `OPENAI_API_KEY`). A real API key is required to configure the provider so models are listed, but no LLM call is made.
+- At least one provider has its env keys set (e.g. `OPENAI_API_KEY`). A real API key is required: it configures the provider so models are listed, and every enable write validates it with a 1-token call to the provider.
 - Run with `--workers=1`: named template loads collide under parallelism, and Test 2's
   toggle is **account-global** state that a concurrent provider setup would fight over.
   The spec also sets file-level serial mode. (`SimpleAgentTemplatePage.load()` does

@@ -19,6 +19,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  toggleWriteBudgetMs,
   toggleWriteVerdict,
   type ToggleWriteSnapshot,
 } from "./model-toggle-write";
@@ -60,6 +61,7 @@ test("not-issued names the aria-checked the switch was left showing", () => {
 
 test("a request with no response is unanswered — the instance did not answer", () => {
   const v = toggleWriteVerdict({ ...BASE, requestsSeen: 1 }, ENDPOINT, 15000);
+  assert.doesNotMatch(v.message, /PROVIDER/);
   assert.equal(v.kind, "unanswered");
   assert.match(v.message, /^TOGGLE_WRITE_UNANSWERED:/);
   assert.match(v.message, /INSTANCE/);
@@ -101,4 +103,29 @@ test("requestsSeen decides the verdict, never responsesSeen", () => {
       .kind,
     "unanswered",
   );
+});
+
+// #2419: the two directions are different writes. Disabling only persists the
+// user's variable; enabling also runs `validate_model_provider_key` with the
+// model being enabled — a live 1-token call to the provider, measured at 36-41 s
+// for `gemini-4-carbon` on 1.14.0.dev25 while the disable took ~20 ms.
+test("the budget depends on the direction: disable stays at 15 s, enable covers a provider call", () => {
+  assert.equal(toggleWriteBudgetMs(false), 15000);
+  assert.equal(toggleWriteBudgetMs(true), 90000);
+});
+
+test("an unanswered ENABLE names the provider call, not only the instance", () => {
+  const v = toggleWriteVerdict(
+    { ...BASE, requestsSeen: 1, wantedEnabled: true, ariaChecked: "true" },
+    ENDPOINT,
+    90000,
+  );
+  assert.equal(v.kind, "unanswered");
+  assert.match(v.message, /^TOGGLE_WRITE_UNANSWERED:/);
+  assert.match(v.message, /PROVIDER/);
+  assert.match(v.message, /validate_model_provider_key/);
+  assert.match(v.message, /90000ms/);
+  assert.match(v.message, /#2419/);
+  // An enable timeout is not evidence of a saturated instance on its own.
+  assert.doesNotMatch(v.message, /a saturated instance is something/);
 });

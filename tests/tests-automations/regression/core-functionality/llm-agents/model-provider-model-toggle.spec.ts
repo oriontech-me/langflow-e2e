@@ -11,7 +11,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
-import { toggleWriteVerdict } from "../../../../helpers/provider-setup/model-toggle-write";
+import { toggleWriteBudgetMs, toggleWriteVerdict } from "../../../../helpers/provider-setup/model-toggle-write";
 import {
   censusForTarget,
   enumerateEnabledModels,
@@ -67,10 +67,10 @@ const providerLabel = provider ? langflowProviderName(provider) : "";
 
 const ENABLED_MODELS_ENDPOINT = "/api/v1/models/enabled_models";
 
-// The debounced persistence write's budget, UNCHANGED from the inline 15000 it
-// replaces (#1696). Named only so `toggleWriteVerdict` can quote the same number
-// it waited on — raising it would hide the saturation the verdict exists to name.
-const TOGGLE_WRITE_TIMEOUT_MS = 15000;
+// The API restore below is an ENABLE, so it carries the provider call that
+// `toggleWriteBudgetMs(true)` budgets for. The request context's default 30 s
+// would abort it on a slow model (gemini-4-carbon measured 36-41 s, #2419).
+const RESTORE_TIMEOUT_MS = toggleWriteBudgetMs(true);
 
 // SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) and the
 // canvas URL id is transient on 1.11 — track every flow the load actually
@@ -133,6 +133,7 @@ test.afterEach(async ({ request }) => {
         const bearer = await getAuthToken(request);
         const res = await request.post(ENABLED_MODELS_ENDPOINT, {
           headers: { Authorization: bearer, "Content-Type": "application/json" },
+          timeout: RESTORE_TIMEOUT_MS,
           data: [
             {
               provider: providerLabel,
@@ -242,8 +243,8 @@ async function toggleForModel(page: Page, modelName: string): Promise<Locator> {
 // instance never answering one that was sent — it appeared on BOTH tests of
 // this file on daily 2026-09-01 (run 33511210195) and said neither. The
 // requests and responses are therefore counted and handed to the pure
-// `toggleWriteVerdict` (#1696). The budget is UNCHANGED: this is attribution,
-// and a saturated instance still fails, correctly.
+// `toggleWriteVerdict` (#1696). The budget depends on the direction (#2419):
+// a disable only writes to the database, an enable also calls the provider.
 async function setToggle(
   page: Page,
   toggle: Locator,
@@ -266,10 +267,11 @@ async function setToggle(
   page.on("request", onRequest);
   page.on("response", onResponse);
 
+  const budgetMs = toggleWriteBudgetMs(enabled);
   try {
     const save = page.waitForResponse(
       (resp) => isWrite(resp.url(), resp.request().method()),
-      { timeout: TOGGLE_WRITE_TIMEOUT_MS },
+      { timeout: budgetMs },
     );
     try {
       await toggle.click();
@@ -297,7 +299,7 @@ async function setToggle(
           model: modelName,
         },
         ENABLED_MODELS_ENDPOINT,
-        TOGGLE_WRITE_TIMEOUT_MS,
+        budgetMs,
       );
       throw new Error(
         `${verdict.message} Underlying wait failed with: ` +
@@ -338,9 +340,10 @@ async function readPickerCensus(
 test.describe.configure({ mode: "serial" });
 
 test.describe("Model Provider Model Toggle", () => {
-  // History: the quarantine was LIFTED once (#1696), with `test.fixme` removed
-  // and `@stable` restored; it is re-quarantined below for #2419. It was first
-  // quarantined at the triage of daily #1694 after failing 6 of 30 dailies
+  // History: quarantined twice and lifted twice. The second quarantine (#2419)
+  // was the re-enable write timing out at 15 s on a model whose provider call
+  // takes ~40 s; the enable now has its own budget. The first came at the
+  // triage of daily #1694 after failing 6 of 30 dailies
   // under 4 signatures, and reading each run's own artifacts resolved those
   // into causes rather than one flake: two occurrences (2026-09-01,
   // 2026-09-03) were `navigateSettingsPages` reporting a hop that never had a
@@ -350,12 +353,10 @@ test.describe("Model Provider Model Toggle", () => {
   // attributed by `toggleWriteVerdict` rather than papered over; and three
   // were page-entry-barrier wedge collateral belonging to #1589/#1549.
   // The byte-identical signature carrying two different locators is #1626.
-  // Quarantined for #2419: recurrent flake on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2419's deliverable.
-  test.fixme(
+  test(
     "model toggle changes immediately and persists across reopen",
     {
-      tag: ["@regression", "@components", "@model-provider"],
+      tag: ["@stable", "@regression", "@components", "@model-provider"],
     },
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
