@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import path from "path";
-import type { Page } from "@playwright/test";
+import type { Page, Request } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import {
@@ -218,11 +218,9 @@ test(
   },
 );
 
-// Quarantined for #2424: hard failure on non-environmental guard day on daily 2026-11-12 (1.14.0.dev25, umbrella e2e-qa#31).
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2424's deliverable.
-test.fixme(
-  "Review All flags every outdated component as breaking and pre-selects none",
-  { tag: ["@components", "@regression", "@ui-ux"] },
+test(
+  "Review All tags each breaking component and pre-selects only the non-breaking ones",
+  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
     flows = trackCreatedFlows(page);
 
@@ -233,11 +231,16 @@ test.fixme(
       await importOutdatedFlowAndOpen(page);
       // Breaking components on the canvas = Review buttons; non-breaking =
       // Update buttons. Capture both (emergent from the frozen fixture vs the
-      // nightly) so the dialog assertions track them instead of a pinned literal.
+      // nightly) so the dialog assertions track them instead of a pinned
+      // literal. The mix is not fixed: every 1.13 build and the 1.14 nightlies
+      // up to dev23 classify all five as breaking, and from 1.14.0.dev24
+      // (langflow-ai/langflow#16255) OpenAI is a standard update (#2424).
       breakingCount = await page.getByTestId("review-button").count();
       nonBreakingCount = await page.getByTestId("update-button").count();
       expect(breakingCount).toBeGreaterThan(0);
     });
+
+    const dialog = page.getByRole("dialog");
 
     await test.step("Open the Review All dialog", async () => {
       await page.getByTestId("update-all-button").click();
@@ -246,34 +249,87 @@ test.fixme(
       });
     });
 
-    await test.step("Every breaking component is tagged Breaking and a backup is default-on", async () => {
-      // One "Breaking" update-type tag per breaking component. `exact: true` is
-      // load-bearing: the dialog's warning paragraph contains lowercase
-      // "breaking" inside a sentence, which a non-exact match would also catch.
-      await expect(page.getByText("Breaking", { exact: true })).toHaveCount(
+    await test.step("Every outdated component is listed and tagged by its update type, with a backup default-on", async () => {
+      // One grid row per outdated component; the header row carries no gridcell.
+      await expect(
+        dialog.getByRole("row").filter({ has: page.getByRole("gridcell") }),
+      ).toHaveCount(breakingCount + nonBreakingCount);
+      // One update-type tag per component. `exact: true` is load-bearing: the
+      // dialog's warning paragraph contains lowercase "breaking" inside a
+      // sentence, which a non-exact match would also catch.
+      await expect(dialog.getByText("Breaking", { exact: true })).toHaveCount(
         breakingCount,
+      );
+      await expect(dialog.getByText("Standard", { exact: true })).toHaveCount(
+        nonBreakingCount,
       );
       await expect(page.getByTestId("backup-flow-checkbox")).toBeChecked();
     });
 
-    await test.step("A breaking component is never pre-selected — the user must opt in", async () => {
+    const submit = dialog.getByRole("button", { name: "Update Components" });
+
+    await test.step("Update Components is enabled exactly when a non-breaking component is pre-selected", async () => {
       // The dialog seeds its selection with the NON-breaking components only
       // (updateComponentModal seeds `components.filter(c => !c.breakingChange)`),
-      // so the submit is disabled *exactly when* nothing is pre-selected — the
-      // all-breaking case, which forces an explicit opt-in for every update.
-      //
-      // This assertion is the one place the spec relies on the fixture being
-      // ALL breaking; we make that precondition explicit rather than silent, so
-      // a future drift to a mixed fixture fails HERE with a clear signal (refresh
-      // the fixture — see the frozen-fixture caveat) instead of confusingly at
-      // the disabled check.
-      expect(nonBreakingCount).toBe(0);
-      await expect(
-        page.getByRole("button", { name: "Update Components" }),
-      ).toBeDisabled();
+      // and the submit is disabled only when that selection is empty: disabled
+      // for an all-breaking mix, where every update is an opt-in.
+      await expect
+        .poll(() => submit.isEnabled(), {
+          message: "Update Components is enabled exactly when a non-breaking component is pre-selected",
+        })
+        .toBe(nonBreakingCount > 0);
     });
 
-    // Cancel without applying — no flow state is mutated.
+    // The pre-selection is read from what the dialog APPLIES, not from the grid's
+    // checkboxes: the grid does not reliably display it (0 of 4 fresh runs on
+    // 1.14.0.dev25 showed any row selected within 20 s while the submit was
+    // enabled and a click updated OpenAI — see the spec doc). With nothing
+    // pre-selected there is nothing to apply, and the disabled submit above is
+    // the whole assertion.
+    if (nonBreakingCount > 0) {
+      await test.step("Applying the pre-selection updates every non-breaking component and no breaking one", async () => {
+        // No "(Backup)" flow: the backup is a separate behaviour (Tests 2-3
+        // assert its default) and would be a second flow to clean up.
+        await page.getByTestId("backup-flow-checkbox").click();
+        await expect(page.getByTestId("backup-flow-checkbox")).not.toBeChecked();
+
+        // Each applied component is one `POST /api/v1/custom_component` with
+        // the saved node (langflow-ai/langflow#16255). Counted from the click on,
+        // so nothing the editor posted earlier is mistaken for the update.
+        let updatePosts = 0;
+        const countUpdatePost = (req: Request) => {
+          if (
+            req.method() === "POST" &&
+            new URL(req.url()).pathname.replace(/\/$/, "") === "/api/v1/custom_component"
+          ) {
+            updatePosts += 1;
+          }
+        };
+        page.on("request", countUpdatePost);
+        try {
+          await submit.click();
+          // Every pre-selected (standard) component is refreshed...
+          await expect(page.getByTestId("update-button")).toHaveCount(0, {
+            timeout: 30000,
+          });
+          // ...and every breaking one is left outdated, still behind Review.
+          await expect(
+            page.getByTestId("review-button"),
+            "a breaking update was applied without an opt-in",
+          ).toHaveCount(breakingCount);
+          expect(
+            updatePosts,
+            "one update request per pre-selected component — a request beyond them updated a breaking one",
+          ).toBe(nonBreakingCount);
+        } finally {
+          page.off("request", countUpdatePost);
+        }
+      });
+    }
+
+    // Close whatever is left open. The flow this test imported (and, when the
+    // mix had a standard component, just updated) is deleted id-scoped in
+    // afterEach.
     await page.keyboard.press("Escape");
   },
 );

@@ -2,8 +2,8 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/component-breaking-change-alert.spec.ts`
 
-**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev18`, upload contract) and
-1.13.x (`1.13.1`, per-flow contract)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2424 — OpenAI now
+a standard update) and 1.13.x (`1.13.1`, per-flow contract, all five breaking)
 
 ---
 
@@ -24,8 +24,11 @@ and the toolbar "update all" button between "Update All" and **"Review All"**.
 
 The state is produced deterministically by importing a fixture flow,
 `tests/assets/flows/outdated_flow.json` — 5 components (Prompt, Chat Input,
-OpenAI, Chat Output, Chat Memory) pinned to a version old enough that all 5
-resolve to **breaking** updates on the current nightly. The flow is dropped onto
+OpenAI, Chat Output, Chat Memory) pinned to a version old enough that all 5 are
+**outdated** on the current nightly, and at least one resolves to a **breaking**
+update. Up to `1.14.0.dev23` (and on every 1.13 build) all 5 were breaking; from
+`1.14.0.dev24` OpenAI resolves to a **standard** update — see *The breaking rule
+changed in 1.14* below. The flow is dropped onto
 the flows-page drop zone (`cards-wrapper`) via a synthetic `DataTransfer` — the
 same event an OS drag-and-drop fires — the same import mechanism used by the
 `@stable` `import-invalid-json` spec.
@@ -49,22 +52,30 @@ same event an OS drag-and-drop fires — the same import mechanism used by the
    is then cancelled — the test never applies an update, so no flow state is
    mutated.
 
-3. **"Review All" flags every outdated component as breaking and pre-selects
-   none.** Capture the breaking count from the canvas (`review-button` count),
-   click the "Review All" toolbar button; the multi-component dialog must show
-   that many **"Breaking"** update-type tags (one per breaking component) and the
-   `backup-flow-checkbox` checked by default. Because breaking components are
-   intentionally *not* pre-selected (the dialog seeds its selection with the
-   non-breaking components only), the user must explicitly opt each breaking one
-   in before it can be applied — with the current all-breaking fixture nothing is
-   pre-selected, so the submit **"Update Components"** button is **disabled**.
-   This is the one assertion that relies on the fixture being all-breaking, so
-   the precondition is asserted explicitly (`nonBreakingCount === 0`, captured
-   from the canvas): a future drift to a mixed fixture fails there with a clear
-   refresh cue rather than silently. The dialog is cancelled without applying.
+3. **"Review All" tags each breaking component and pre-selects only the
+   non-breaking ones.** Capture both counts from the canvas — breaking
+   (`review-button`) and standard (`update-button`) — and click the "Review All"
+   toolbar button. The multi-component dialog must list every outdated component
+   (one grid row each), tag exactly the breaking ones **"Breaking"** and the rest
+   **"Standard"**, and default `backup-flow-checkbox` on. Its selection is seeded
+   with the **non-breaking components only**
+   (`components.filter((c) => !c.breakingChange)` in `updateComponentModal`) — the
+   user must opt each breaking update in. The submit **"Update Components"** is
+   enabled exactly when something is pre-selected: disabled for an all-breaking
+   mix (every 1.13 build, ≤ dev23), enabled for the current one (OpenAI
+   pre-selected, `1.14.0.dev24`+). When it is enabled, the test **applies the
+   pre-selection** with the backup unchecked and reads what was applied: every
+   `update-button` is gone (the standard components were refreshed), the
+   `review-button` count is unchanged (no breaking component was), and exactly
+   one `POST /api/v1/custom_component` was sent per standard component. The
+   pre-selection is read from what is applied rather than from the grid's
+   checkboxes, because the grid does not display it reliably — see *The grid
+   hides the pre-selection* below. The test no longer requires an all-breaking
+   fixture: that precondition was what failed on 2026-11-12 (#2424).
 
-No test applies the update (no "Update Component(s)" click), so the imported flow
-is never mutated and no `(Backup)` flow is created. Each imported flow is tracked
+Tests 1–2 never apply an update. Test 3 applies only the pre-selected (standard)
+updates, and only to the flow it imported, with the backup unchecked, so no
+`(Backup)` flow is created; on an all-breaking mix it applies nothing. Each imported flow is tracked
 by id and deleted id-scoped in `afterEach`, through the shared
 `trackCreatedFlows` tracker in `{ strict: true }` mode (a failed delete still
 fails the teardown, as it did before the tracker existed).
@@ -80,6 +91,26 @@ sends, so all three tests timed out at `page.waitForResponse` with the imported
 card on screen (2026-11-05). The helper now reads the imported id from whichever
 contract the version under test speaks, and requires **exactly one** flow to have
 been created by the drop of a single-flow file.
+
+### The breaking rule changed in 1.14 (#2424)
+
+langflow-ai/langflow#16255 (*"integrate administrator upgrade reports and
+repairs"*, `2c403778d8`, first nightly `1.14.0.dev24`; not on any 1.13 line)
+gave the editor and `lfx upgrade` one shared rule: a saved node is **breaking**
+when updating it drops a connection, drops a value, or needs input nobody gave.
+A narrowed input or a changed field type counts only when an edge goes into the
+field or it holds a value; an added output or a renamed display name is safe.
+Under that rule the fixture's OpenAI node is classified a **standard** update
+(which of its field differences the old rule counted and the new one does not
+was not isolated), while Prompt,
+Chat Input, Chat Output and Chat Memory stay breaking (measured on
+`1.14.0.dev25`: 4 `review-button`, 1 `update-button` on OpenAI; the dialog lists
+OpenAI as `Standard` and pre-selects it). The dialog's seeding contract did not
+change. Only the classification of one fixture node did, which is the
+"benign drift to a mix" the frozen-fixture caveat below already promised to
+tolerate. The VM daily of 2026-11-12 ran Test 3 on `dev25` and failed all three
+attempts on the old all-breaking precondition (`Expected: 0`, `Received: 1`);
+Tests 1–2 and the other three specs importing this fixture passed there.
 
 ---
 
@@ -99,15 +130,37 @@ been created by the drop of a single-flow file.
 | 1 | After import + open | `getByTestId("update-all-button")` | text `Review All` |
 | 2 | Single review dialog | warning copy `/disconnect this component .* review or reconnect/i` | `toBeVisible()` |
 | 2 | Single review dialog | `getByTestId("backup-flow-checkbox")` | visible and `toBeChecked()` |
-| 3 | Review All dialog | `getByText("Breaking", { exact: true })` | `toHaveCount(breakingCount)` (== canvas `review-button` count) |
+| 3 | Review All dialog | grid data rows (`getByRole("row")` holding a `gridcell`) | `toHaveCount(breakingCount + nonBreakingCount)` — every outdated component listed |
+| 3 | Review All dialog | `getByText("Breaking", { exact: true })` / `getByText("Standard", { exact: true })` in the dialog | `toHaveCount(breakingCount)` / `toHaveCount(nonBreakingCount)` (canvas `review-button` / `update-button` counts) |
 | 3 | Review All dialog | `getByTestId("backup-flow-checkbox")` | `toBeChecked()` |
-| 3 | Review All dialog | `nonBreakingCount` (canvas `update-button` count) | `toBe(0)` — explicit all-breaking precondition |
-| 3 | Review All dialog | `getByRole("button", { name: "Update Components" })` | `toBeDisabled()` — nothing pre-selected, opt-in required |
+| 3 | Review All dialog | `getByRole("button", { name: "Update Components" })` | enabled **iff** `nonBreakingCount > 0` (disabled for an all-breaking mix) |
+| 3 | After submitting the pre-selection (only when `nonBreakingCount > 0`, backup unchecked) | canvas `getByTestId("update-button")` | `toHaveCount(0)` — every standard component was updated |
+| 3 | same | canvas `getByTestId("review-button")` | `toHaveCount(breakingCount)` — no breaking component was updated |
+| 3 | same | `POST /api/v1/custom_component` requests sent from the click on | exactly `nonBreakingCount` — one per pre-selected component |
 
 Each assertion fails if the breaking-change alert regresses: e.g. every breaking
 component routed to a silent `update-button` (no `review-button` left, toolbar
 falls back to "Update All"), the warning copy removed, the backup default flipped
-off, or a breaking component pre-selected (submit enabled).
+off, a breaking component pre-selected (a `review-button` disappears and an extra
+update request is sent), or a standard one left out of the seed (an
+`update-button` survives).
+
+### The grid hides the pre-selection (product finding, #2424)
+
+On `1.14.0.dev25`, with the fixture's mix (OpenAI standard, four breaking), the
+Review All grid showed **no row selected**: 0 of 4 runs on a fresh container
+showed one within 20 s (`getByRole("row", { selected: true })` stayed `0`), while
+"Update Components" was enabled the whole time, and clicking it sent
+`POST /api/v1/custom_component` for OpenAI and refreshed it. On an instance that
+had been running for hours the same row did read selected, after 0.7–3.6 s. The
+dialog keeps its selection in React state (`selectedComponents`, which the submit
+reads) and copies it into the grid from an effect keyed on `agGrid.current`, a
+ref whose readiness does not re-run the effect; when the grid is not ready on
+that pass, nothing re-applies the selection. So a user can apply a selection the
+grid does not show. It predates #16255 and was invisible to this spec only
+because an all-breaking fixture seeds an empty selection. Recorded here; not
+filed upstream. The test therefore reads the pre-selection from what the dialog
+applies, which holds whether or not that sync is fixed.
 
 ### The banner is gated on the component registry, not on elapsed time (#1061)
 
@@ -159,13 +212,19 @@ fixture to an older snapshot, not a product bug.
   — owns the per-node update bar; `hasBreakingChange` selects
   `data-testid="review-button"` (label "Review") vs `"update-button"` (label
   "Update") and the warning-dot colour / "Update available" label.
+- `src/frontend/src/CustomNodes/helpers/check-code-validity.ts` —
+  `codeHasBreakingChange`, the rule that classifies each outdated node as
+  breaking or standard (shared with `lfx upgrade` since #16255).
 - `src/frontend/src/modals/updateComponentModal/index.tsx` — the review dialog:
   the breaking warning copy, the `backup-flow-checkbox` (default checked), the
   "Breaking"/"Standard" update-type column, and the submit disabled when
   `isMultiple && selectedComponents.size === 0` (breaking components start
   unselected).
 - `tests/assets/flows/outdated_flow.json` — the fixture flow whose 5 components
-  are pinned behind the current version so all resolve to breaking updates.
+  are pinned behind the current version, at least one of them breaking. Shared
+  with `import-outdated-flow`, `outdated-component-notification` and
+  `update-component-action`, which is why #2424 changed the assertion rather
+  than the fixture.
 - `tests/helpers/flows/track-created-flows.ts` — reads the imported id from
   either import contract and owns the id-scoped cleanup.
 - The import request, which depends on the version under test: one
@@ -204,14 +263,15 @@ scope here.
 
 ## What this test does not cover
 
-- **Applying** the update (clicking "Update Component(s)") and asserting the node
-  refreshes / the backup flow is created — deliberately out of scope so no flow
-  state is mutated; that is the "Update component action" bullet, tracked
-  separately.
-- The **non-breaking** ("Update", green, auto-selected) path — this spec is about
-  the breaking alert. A non-breaking fixture would be a separate case.
-- The ag-grid row-checkbox internals — the user-facing "Update Components
-  disabled" state is asserted instead of `input[data-ref="eInput"]` indices.
+- **Applying** a breaking update, and the update itself as a feature — whether a
+  refreshed node keeps its values and connections, and the `(Backup)` flow. Test 3
+  applies the standard pre-selection only to observe which components the dialog
+  selected (refreshed vs still outdated); what an update does to a node is
+  `update-component-action.spec.ts`, the "Update component action" bullet.
+- The grid's display of the pre-selection — not asserted, because the product
+  does not display it reliably (*The grid hides the pre-selection*). The selection
+  is observed through what the dialog applies, never through
+  `input[data-ref="eInput"]` indices or grid class names.
 
 ---
 
