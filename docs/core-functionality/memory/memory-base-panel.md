@@ -1,6 +1,6 @@
 # Memory Base — Memories panel and Create Memory modal
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev25`, #2425)
 
 ---
 
@@ -203,7 +203,14 @@ are.
   endpoint through `useGetModelProviders`, plus
   `GET /api/v1/models/enabled_models`, which is left untouched: with the
   providers payload emptied the option list is already empty, so the second
-  query cannot re-add anything.
+  query cannot re-add anything. Test 6's click opens the **Model providers**
+  dialog, which issues its own
+  `GET /api/v1/models?include_deprecated=true&flow_id=<id>&purpose=configure`;
+  the route matches it too (same pathname). For every **configured** provider
+  with live discovery — `Azure AI Foundry` and `OpenAI` with a custom endpoint,
+  `Ollama`, `IBM WatsonX`, `OpenRouter` (`replace_with_live_models` in
+  `src/lfx/src/lfx/base/models/model_utils.py`) — that call reaches the provider's
+  endpoint, so its latency is the provider's, not Langflow's (see Cleanup).
 - `POST /api/v1/flows/` (flow creation), `DELETE /api/v1/flows/{id}` (cleanup)
   and `GET /api/v1/memories?flow_id=<id>` (the panel's own list).
   `/api/v1/memories` is **absent from `/openapi.json`** on 1.12.0.dev19 (it
@@ -222,6 +229,18 @@ id-scoped in `afterEach` (`deleteFlow`), leaving the editor first via
 fixture's HTTP log. No memory base is ever created, so there is nothing else to
 remove — the cancel test asserts exactly that. Never name-based, never
 delete-all (#553/#520).
+
+**Before** leaving the editor, `afterEach` removes the page's routes with
+`page.unrouteAll({ behavior: "ignoreErrors" })` — the repo's convention for
+routed specs (`voice-assistant`, `flow-lock`). Test 6 ends on the click that
+opens the Model providers dialog, and that dialog's `purpose=configure` models
+call is still in the route handler's `route.fetch()` when the test body returns
+whenever a configured provider makes discovery slow. Without the unroute, the
+context closes under that fetch and the handler's rejection —
+`route.fetch: Target page, context or browser has been closed` — fails a test
+whose every assertion passed (#2425). `ignoreErrors` drops only what a handler
+throws **after** it is removed; an error the handler raises while the test body
+runs still fails the test.
 
 ---
 
@@ -299,6 +318,22 @@ delete-all (#553/#520).
   it carried (`toHaveCount(0)` on both picker handles) could not distinguish the
   empty state working from the picker having been removed. Both are addressed by
   naming the state per test instead of inferring it.
+- **Issue #2425 — a teardown race, not a product change.** Test 6 failed on all
+  three attempts of the 2026-11-12 VM daily (`1.14.0.dev25`) with
+  `route.fetch: Target page, context or browser has been closed`, on
+  `GET /api/v1/models?include_deprecated=true&flow_id=…&purpose=configure`. The
+  run's `results.json` shows **every step passed on every attempt** (label
+  without picker; enabled affordance; Model providers dialog opened) — the
+  failure was raised after the body, while the context closed under the
+  dialog's still-pending models call. That day's agent specs targeted
+  `azure-ai-foundry` (`run-metadata.json` → `model_used_provider`), whose
+  configured credential turns every `GET /api/v1/models` into a live deployment
+  listing against the Azure endpoint. Locally, with only OpenAI/Google
+  configured, the same call answers in ~34 ms and the test passed 6/6 on the
+  same build — the race needs a slow provider, which is why it surfaced on one
+  lane and one weekday. The prior Thursday (`1.14.0.dev18`) passing says only
+  that discovery answered in time that day. Fixed in the teardown (Cleanup),
+  with the assertions unchanged.
 - **The instance's provider state is part of the measurement, not background.**
   The first version of this spec asserted `#memory-embedding-model` present
   unconditionally and was green three times on `1.12.0.dev19` — an instance that
