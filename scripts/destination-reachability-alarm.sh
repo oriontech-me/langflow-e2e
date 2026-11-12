@@ -73,6 +73,10 @@ PROBE_TIMEOUT="${PROBE_TIMEOUT:-10}"
 # An executable PATH, for the reason CHECK_BIN is one in the mirror alarm: a command
 # string would be word-split.
 PROBE_BIN="${PROBE_BIN:-}"
+# What to do about it lives in the runbook, and every message links it: whoever reads
+# the alert should not need to know this repository to find the steps. Set but empty
+# (RUNBOOK_URL=) drops the link.
+RUNBOOK_URL="${RUNBOOK_URL-https://github.com/oriontech-me/langflow-e2e/blob/main/ops/runbooks/destination-unreachable.md}"
 # The same, for the credential check inside the real probe (tests stub it).
 CREDENTIAL_BIN="${CREDENTIAL_BIN:-}"
 PROBE_PORTS="${PROBE_PORTS:-22 443}"
@@ -264,12 +268,15 @@ case "$state" in
 esac
 
 status="$(TRANSPORT="$transport" HEADLINE="$glyph $headline" BODY="$message" \
-  TEXT="$emoji $message" python3 -c '
+  TEXT="$emoji $message" RUNBOOK_URL="$RUNBOOK_URL" python3 -c '
 import json, os
+url = os.environ["RUNBOOK_URL"]
 if os.environ["TRANSPORT"] == "workflow":
-    print(json.dumps({"headline": os.environ["HEADLINE"], "body": os.environ["BODY"], "links": ""}))
+    print(json.dumps({"headline": os.environ["HEADLINE"], "body": os.environ["BODY"],
+                      "links": ("Runbook: " + url) if url else ""}))
 else:
-    print(json.dumps({"text": os.environ["TEXT"]}))
+    text = os.environ["TEXT"]
+    print(json.dumps({"text": text + ("\nRunbook: <" + url + "|what to do>" if url else "")}))
 ' \
   | curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
       -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" 2>/dev/null)"
