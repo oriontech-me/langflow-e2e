@@ -1,0 +1,19 @@
+# Before the daily: posts if the destination host is unreachable NOW, whatever the
+# streak. While an outage lasts, this is also its once-a-day reminder.
+# See scripts/destination-reachability-alarm.sh.
+#
+# Install:
+#   cp ops/systemd/e2e-destination-reachability-announce.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now e2e-destination-reachability-announce.timer
+[Unit]
+Description=Tell the channel if the destination host is unreachable before the daily
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=ANNOUNCE=1
+WorkingDirectory=/root/e2e-qa
+ExecStart=/root/e2e-qa/scripts/destination-reachability-alarm.sh
