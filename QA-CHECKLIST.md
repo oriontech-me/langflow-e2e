@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-11
+> **Last updated:** 2026-11-12
 
 ---
 
@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 766 `test()` calls carrying the `@stable` tag, distributed across 287 spec
+> 762 `test()` calls carrying the `@stable` tag, distributed across 286 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1944,7 +1944,6 @@
 - [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
 - [x] code validation answers 200 for broken code, with the verdict in the body → `api-validation-endpoints.spec.ts`
 - [x] prompt validation extracts variables only when it is given a node → `api-validation-endpoints.spec.ts`
-- [x] a custom component is described, and a field update echoes the code back → `api-validation-endpoints.spec.ts`
 - [x] a missing field does not echo the object it was missing from → `api-validation-redaction.spec.ts`
 - [x] a validator that quotes its input answers [redacted] → `api-validation-redaction.spec.ts`
 - [x] a non-uuid path parameter drops both the value and its input-derived ctx → `api-validation-redaction.spec.ts`
@@ -2022,7 +2021,6 @@
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
 - [x] breaking-change outdated components alert with a Review action, not a silent Update → `component-breaking-change-alert.spec.ts`
 - [x] reviewing a single breaking change warns about disconnection and defaults to a backup → `component-breaking-change-alert.spec.ts`
-- [x] Review All flags every outdated component as breaking and pre-selects none → `component-breaking-change-alert.spec.ts`
 - [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
@@ -2283,7 +2281,6 @@
 - [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
 - [x] Vector Database defaults to SQLite Local and Batch Size to 1 → `memory-base-panel.spec.ts`
 - [x] Embedding Model carries no default model when a provider offers embeddings → `memory-base-panel.spec.ts`
-- [x] the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured → `memory-base-panel.spec.ts`
 - [x] the Embedding Model picker still renders when the configured providers expose no embeddings model → `memory-base-panel.spec.ts`
 - [x] Create Memory stays disabled with an empty form and with only the Name filled → `memory-base-panel.spec.ts`
 - [x] cancelling the Create Memory modal creates no memory base → `memory-base-panel.spec.ts`
@@ -2505,7 +2502,6 @@
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
 - [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
-- [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
