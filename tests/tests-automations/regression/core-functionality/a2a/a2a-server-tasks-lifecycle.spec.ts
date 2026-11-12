@@ -18,6 +18,7 @@ import {
 } from "../../../../helpers/flows/build-custom-component-graph";
 import { createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { createRunnableChatFlowInPublicProject } from "../../../../helpers/a2a/create-public-runnable-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // Spec doc: docs/core-functionality/a2a/a2a-server-tasks-lifecycle.md
@@ -32,6 +33,11 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 // REFUSED rather than absorbed (it must not clobber a real COMPLETED), and a task id
 // is invisible to another flow (the registry is keyed by task id alone, so the
 // handler gates on a flow-scoped store first).
+//
+// Tests 1-2 run on the public path: their flows live in a project created with an
+// EXPLICIT auth_type "none" and are called with no x-api-key. Since 1.14.0.dev23
+// (#16186) the default project is "apikey" under AUTO_LOGIN, so a flow left there
+// answers 401 (#2412). Test 3 is behind a key on purpose (see its own comment).
 
 const TASK_NOT_FOUND = -32001;
 const TASK_NOT_CANCELABLE = -32002;
@@ -49,14 +55,12 @@ interface A2aTask {
   artifacts?: Array<{ artifactId: string; parts: Array<{ text: string }> }>;
 }
 
-async function publish(request: APIRequestContext, headers: Record<string, string>) {
-  const flow = await createRunnableChatFlowViaApi(request, headers);
-  const res = await request.patch(`/api/v1/flows/${flow.flowId}`, {
+async function publish(request: APIRequestContext, headers: Record<string, string>, flowId: string) {
+  const res = await request.patch(`/api/v1/flows/${flowId}`, {
     headers,
     data: { flow_type: "agent", a2a_enabled: true },
   });
   expect(res.status(), await res.text()).toBe(200);
-  return flow;
 }
 
 async function sendAndGetTask(
@@ -96,18 +100,17 @@ async function taskRpc(
 }
 
 test.describe("A2A Server — task lifecycle", () => {
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("a task can be read back and refuses a cancel it cannot honour", { tag: ["@api", "@regression", "@a2a"] }, async ({
+  test("a task can be read back and refuses a cancel it cannot honour", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
-    const flow = await publish(request, headers);
+    const flow = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-task-readback" });
     const sentinel = `a2a-task-readback-${Date.now()}`;
 
     try {
+      await publish(request, headers, flow.flowId);
       const task = await sendAndGetTask(request, headers, flow.flowId, sentinel);
       expect(task.status.state).toBe("completed");
 
@@ -144,25 +147,29 @@ test.describe("A2A Server — task lifecycle", () => {
         expect(read.status.timestamp).toBe(task.status.timestamp);
       });
     } finally {
-      await flow.deleteFlow();
+      await flow.cleanup();
     }
   });
 
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("a task id is invisible to another flow", { tag: ["@api", "@regression", "@a2a"] }, async ({ request }) => {
+  test("a task id is invisible to another flow", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
-    const owner = await publish(request, headers);
-    const other = await publish(request, headers);
+    // Both flows in ONE public project: the property is that a task is scoped to its
+    // FLOW, so the two must differ in nothing else. A project each would let a pass
+    // come from a project-level boundary instead of the flow-scoped store.
+    const owner = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-task-crossflow" });
+    let other: Awaited<ReturnType<typeof createRunnableChatFlowViaApi>> | undefined;
     const sentinel = `a2a-task-crossflow-${Date.now()}`;
 
     try {
+      other = await createRunnableChatFlowViaApi(request, headers, { folderId: owner.projectId });
+      await publish(request, headers, owner.flowId);
+      await publish(request, headers, other.flowId);
       const task = await sendAndGetTask(request, headers, owner.flowId, sentinel);
 
       await test.step("the other flow is told the task does not exist", async () => {
-        const res = await taskRpc(request, headers, other.flowId, "tasks/cancel", task.id);
+        const res = await taskRpc(request, headers, other!.flowId, "tasks/cancel", task.id);
         // -32001 and NOT -32002: flow B must not be able to tell that the task exists
         // at all. -32002 would confirm it, which is the leak the flow-scoped gate closes.
         expect(res.body?.error?.code).toBe(TASK_NOT_FOUND);
@@ -175,8 +182,9 @@ test.describe("A2A Server — task lifecycle", () => {
         expect((res.body!.result as A2aTask).status.state).toBe("completed");
       });
     } finally {
-      await owner.deleteFlow();
-      await other.deleteFlow();
+      // The second flow first: the project still holding it is a different delete path.
+      await other?.deleteFlow().catch((e) => console.warn(`⚠️ other flow cleanup failed: ${e}`));
+      await owner.cleanup();
     }
   });
 

@@ -5,6 +5,10 @@ import {
 } from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
+  createProjectViaApi,
+  type CreatedProject,
+} from "../../../../helpers/flows/create-project-via-api";
+import {
   createRunnableChatFlowViaApi,
   type RunnableChatFlow,
 } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
@@ -21,7 +25,10 @@ import {
  * verify generated endpoint" and "Execute MCP server tool via MCP protocol").
  *
  * A ChatInput -> ChatOutput passthrough flow is created via API and enabled as
- * an MCP tool on the default project. The test then speaks the real MCP protocol
+ * an MCP tool on a project the spec creates with an EXPLICIT auth_type "apikey"
+ * (#2412: it used to take list[0] of GET /api/v1/projects/ — the default project,
+ * via a list with no ORDER BY — whose auth changed under it in 1.14.0.dev23,
+ * #16186). The test then speaks the real MCP protocol
  * to the project's generated streamable endpoint:
  *   T1 — the generated endpoint advertises this project and lists the enabled
  *        flow (composer-url shapes + initialize serverInfo + tools/list).
@@ -36,8 +43,8 @@ import {
  * clean --workers=1 --retries=0 runs + per-assertion force-failure check).
  */
 
-// Shared project MCP settings are instance-wide; run serially so a second
-// project-MCP spec (if added) can't race this one's tool namespace.
+// T1 and T2 share the project and the flow beforeAll creates; serial keeps them on
+// one worker, so that setup runs once.
 test.describe.configure({ mode: "serial" });
 
 test.describe("MCP Server — flow-as-server protocol", () => {
@@ -46,6 +53,7 @@ test.describe("MCP Server — flow-as-server protocol", () => {
   // above still authenticates every other API call here (#1522).
   let credential: McpTransportCredential;
   let apiKeyId: string;
+  let project: CreatedProject;
   let projectId: string;
   let streamableUrl: string;
   let flow: RunnableChatFlow;
@@ -61,17 +69,20 @@ test.describe("MCP Server — flow-as-server protocol", () => {
     credential = { apiKey: created.key };
     apiKeyId = created.id;
 
-    // Default project ("Starter Project") — its id is the MCP project id.
-    const projectsRes = await request.get("/api/v1/projects/", { headers });
-    expect(projectsRes.ok()).toBeTruthy();
-    const projects = await projectsRes.json();
-    const list = Array.isArray(projects) ? projects : projects.items ?? [];
-    expect(list.length).toBeGreaterThan(0);
-    projectId = list[0].id;
+    // The spec's own project — its id is the MCP project id. "apikey" explicitly, so
+    // the keyless refusal below is the project gate's 401 on every build (1.13.1,
+    // 1.14.0.dev22 and 1.14.0.dev25 alike) instead of whatever the default project
+    // happens to be; createProjectViaApi asserts the stored value.
+    project = await createProjectViaApi(request, headers, {
+      namePrefix: "e2e-mcp-protocol",
+      description: "Project exposed as an MCP server by mcp-server-protocol.spec.ts",
+      authSettings: { auth_type: "apikey" },
+    });
+    projectId = project.projectId;
     streamableUrl = `/api/v1/mcp/project/${projectId}/streamable`;
 
     // Deterministic passthrough flow (ChatInput -> ChatOutput, echoes input).
-    flow = await createRunnableChatFlowViaApi(request, headers);
+    flow = await createRunnableChatFlowViaApi(request, headers, { folderId: projectId });
 
     // Expose it as an MCP tool on the project (merges into existing settings).
     const patchRes = await request.patch(`/api/v1/mcp/project/${projectId}`, {
@@ -99,6 +110,13 @@ test.describe("MCP Server — flow-as-server protocol", () => {
         headers: { Authorization: authorization },
       }).catch(() => {});
     }
+    // After the flow: a project still holding one is a different delete path.
+    // deleteProject also sweeps the key the backend mints for an apikey project.
+    if (project) {
+      await project
+        .deleteProject(request)
+        .catch((e) => console.warn(`⚠️ project cleanup failed: ${e}`));
+    }
     if (apiKeyId) {
       await deleteApiKey(request, apiKeyId, {
         Authorization: authorization,
@@ -106,11 +124,9 @@ test.describe("MCP Server — flow-as-server protocol", () => {
     }
   });
 
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme(
+  test(
     "generated endpoint advertises the project and lists the enabled flow",
-    { tag: ["@regression", "@api", "@mcp"] },
+    { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await test.step("composer-url returns the generated endpoint URLs", async () => {
         const res = await request.get(
@@ -138,6 +154,12 @@ test.describe("MCP Server — flow-as-server protocol", () => {
         // credential, so every assertion above passed on a transport that
         // authenticated nobody (#1522). Without this step the spec cannot tell a
         // working key from an endpoint that never asks for one.
+        //
+        // 401 from the PROJECT gate, because the project is "apikey". It used to be
+        // 403 from the superuser fallback that a project with no auth_settings
+        // reaches; since 1.14.0.dev23 (#16186) no such project exists under
+        // AUTO_LOGIN, and the triage read the new status as "admitted" (#2412).
+        // It is still refused — measured.
         const res = await request.post(streamableUrl, {
           headers: {
             "Content-Type": "application/json",
@@ -156,14 +178,13 @@ test.describe("MCP Server — flow-as-server protocol", () => {
         });
         expect(
           res.status(),
-          "a keyless caller must be refused: the transport takes an API key, and " +
-            "resolves nobody to the superuser unless LANGFLOW_SKIP_AUTH_AUTO_LOGIN " +
-            "is set — which no lane sets, on purpose",
-        ).toBe(403);
+          "a keyless caller must be refused: the project is auth_type apikey, so " +
+            "its gate answers 401 before anything else runs",
+        ).toBe(401);
         expect(
           (await res.text()).toLowerCase(),
-          "the refusal must be the API-key gate, not an unrelated 403",
-        ).toContain("api key");
+          "the refusal must be the project's API-key gate, not an unrelated 401",
+        ).toContain("api key required for this project");
       });
 
       await test.step("tools/list exposes the enabled flow", async () => {

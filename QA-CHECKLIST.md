@@ -931,7 +931,7 @@
 - [x] MCP Server tab in flow → `mcp/server/mcp-server-tab.spec.ts`
 - [x] Add MCP server via modal → `mcp/server/mcp-server-tab.spec.ts`
 - [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
-- [x] Flow exposed as MCP server — verify generated endpoint, and that the transport takes an API key: the same `initialize` with no credential is refused `403` (#1522) → `mcp/server/mcp-server-protocol.spec.ts`
+- [x] Flow exposed as MCP server — verify generated endpoint, and that the transport takes an API key: the same `initialize` with no credential is refused `401` by the project's API-key gate (#1522; `403` before #2412, when the spec used the default project) → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] A flow created MCP-enabled is exposed end to end, in a project of its own — the project's tool listing names exactly that flow, the MCP Server tab shows exactly its `tool_<action name>` badge, the JSON config advertises that project's `mcp/project/<id>/streamable` URL, and that endpoint answers a JSON-RPC `initialize` with `200` when carrying an `x-api-key`. Not in the shared default project: the tab renders at most 20 badges and lists in insertion order, so a new flow behind 20 others was never shown (#2198) → `mcp/server/mcp-server-regression.spec.ts`
 - [x] Register an external MCP server through the stdio form — `command` + `args` resolves the server's real tools into the MCPTools node → `mcp/server/mcp-server.spec.ts`

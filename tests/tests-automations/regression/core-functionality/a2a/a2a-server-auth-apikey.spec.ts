@@ -9,7 +9,7 @@ import {
   postA2AJsonRpc,
   messageSendEnvelope,
 } from "../../../../helpers/a2a/post-a2a-jsonrpc";
-import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { createRunnableChatFlowInPublicProject } from "../../../../helpers/a2a/create-public-runnable-flow";
 import { createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
 
 // Spec doc: docs/core-functionality/a2a/a2a-server-auth-apikey.md
@@ -27,6 +27,11 @@ import { createProjectViaApi } from "../../../../helpers/flows/create-project-vi
 // separate flows would leave "the gate comes from the project" an assumption; one
 // flow crossing the boundary rules out the flow, the graph, the server flag and the
 // environment as the cause of the 401.
+//
+// The move starts from a project created with an EXPLICIT auth_type "none". It used
+// to start from the default project, which since 1.14.0.dev23 (#16186) is itself
+// "apikey" under AUTO_LOGIN — the negative control then failed on its first
+// assertion (#2412).
 
 const CARD_PATH = (flowId: string) =>
   `/api/v1/a2a/${flowId}/.well-known/agent-card.json`;
@@ -65,21 +70,19 @@ async function sendText(
 }
 
 test.describe("A2A Server — API-key gate on the JSON-RPC endpoint", () => {
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme(
+  test(
     "the api-key gate follows the project the flow lives in",
-    { tag: ["@api", "@regression", "@a2a"] },
+    { tag: ["@stable", "@api", "@regression", "@a2a"] },
     async ({ request }) => {
       const headers = { Authorization: await getAuthToken(request) };
       await requireA2aEnabled(request, headers);
 
-      const flow = await createRunnableChatFlowViaApi(request, headers);
+      const flow = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-authgate-public" });
       let project: Awaited<ReturnType<typeof createProjectViaApi>> | undefined;
       let apiKey: Awaited<ReturnType<typeof createApiKey>> | undefined;
 
       try {
-        await test.step("publish the flow as an agent, still in the default project", async () => {
+        await test.step("publish the flow as an agent, still in its public project", async () => {
           const patched = await patchFlow(request, headers, flow.flowId, {
             flow_type: "agent",
             a2a_enabled: true,
@@ -183,9 +186,10 @@ test.describe("A2A Server — API-key gate on the JSON-RPC endpoint", () => {
             console.warn(`⚠️ API key cleanup failed: ${e}`),
           );
         }
+        // The flow (wherever it moved) and the public project it started in.
         await flow
-          .deleteFlow()
-          .catch((e) => console.warn(`⚠️ flow cleanup failed: ${e}`));
+          .cleanup()
+          .catch((e) => console.warn(`⚠️ flow / public project cleanup failed: ${e}`));
         if (project) {
           // Must run AFTER the flow is deleted: a project holding flows is a
           // different delete path, and deleteProject already retries the #965 500.

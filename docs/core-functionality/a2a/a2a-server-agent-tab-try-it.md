@@ -1,6 +1,7 @@
 # A2A Server — Agent tab: the "Try it" panel round-trips over the live endpoint
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412) · first
+promoted on 1.12.x (`1.12.0.dev18`)
 
 **Issue:** #1244 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **U3**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -73,17 +74,25 @@ panel that renders the user's own message and never receives a reply would produ
 - **No LLM, no provider key, no external network.** The published flow is the
   Chat Input → Chat Output passthrough from
   `tests/assets/flows/chat-io-ok-trace-fixture.json`, created with
-  `createRunnableChatFlowViaApi()`. The echo is what makes the assertion
+  `createRunnableChatFlowInPublicProject()`. The echo is what makes the assertion
   deterministic.
-- Auto-login superuser (`getAuthToken()`).
+- Auto-login superuser (`getAuthToken()`). The flow lives in a project of its own
+  created with an **explicit** `auth_type: "none"`, so the agent is public and the
+  panel sends with no key. Explicit because from `1.14.0.dev23` (also
+  `release-1.13.2` / `1.13.3`, upstream #16186 + #16151) the default project and
+  every new one are `apikey` under `AUTO_LOGIN=true` (#2412 — the full account is
+  in `a2a-server-jsonrpc-message-send.md`). For a restricted agent the panel shows
+  an API-key field (`agent-test-apikey`) that this spec does not fill; left in the
+  default project, the unmodified spec timed out on `agent-test-send`
+  (`1.14.0.dev25`). That restricted variant is not covered here — #2433.
 
 ---
 
 ## Preconditions *(optional)*
 
 - Langflow reachable at `PLAYWRIGHT_BASE_URL` with A2A enabled.
-- No assumption about existing flows: the flow is created by the test and deleted
-  **by id** in `afterEach`. **No pre-test wipe.**
+- No assumption about existing flows: the flow and its project are created by the
+  test and deleted **by id** in `finally`. **No pre-test wipe.**
 
 ---
 
@@ -93,7 +102,7 @@ One test.
 
 **`the Try it panel round-trips a sentinel over the published endpoint`**
 1. `requireA2aEnabled(page.request, authHeaders)`.
-2. `createRunnableChatFlowViaApi(page.request, authHeaders)` → `flowId`.
+2. `createRunnableChatFlowInPublicProject(page.request, authHeaders)` → `flowId`.
 3. `openFlowById(page, flowId)`.
 4. Click `sidebar-nav-agent`.
 5. **Publish through the UI** — click `agent-publish-switch`, then `agent-save`;
@@ -109,7 +118,7 @@ One test.
    label — a count taken from the transcript's text, not two `toContainText`
    calls, which one occurrence would satisfy.
 8. Assert the turn counter reads `1 turn` and a `Reset` control is visible.
-9. `afterEach` deletes the flow by id.
+9. `finally` deletes the flow, then its project, by id (`cleanup()`).
 
 ---
 

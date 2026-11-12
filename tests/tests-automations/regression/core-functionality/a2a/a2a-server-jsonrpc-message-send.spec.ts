@@ -8,7 +8,7 @@ import {
   postA2AJsonRpc,
   messageSendEnvelope,
 } from "../../../../helpers/a2a/post-a2a-jsonrpc";
-import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { createRunnableChatFlowInPublicProject } from "../../../../helpers/a2a/create-public-runnable-flow";
 
 // Spec doc: docs/core-functionality/a2a/a2a-server-jsonrpc-message-send.md
 //
@@ -18,6 +18,11 @@ import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-r
 // the assertion is causal and needs no LLM), and protocol errors arrive as JSON-RPC
 // errors over HTTP 200 — the half a client that trusts HTTP status silently
 // mis-handles.
+//
+// Each flow lives in a project created with an EXPLICIT auth_type "none", and every
+// call goes out with no x-api-key: the public endpoint is the subject (LE-2081 lived
+// on it). Since 1.14.0.dev23 (#16186) the default project is "apikey" under
+// AUTO_LOGIN, so a flow left there answers 401 (#2412).
 
 async function publishAgent(
   request: APIRequestContext,
@@ -50,15 +55,13 @@ async function sendText(
 }
 
 test.describe("A2A Server — JSON-RPC message/send", () => {
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("message/send runs the flow and echoes the sentinel back", { tag: ["@release", "@api", "@a2a"] }, async ({
+  test("message/send runs the flow and echoes the sentinel back", { tag: ["@stable", "@release", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
-    const flow = await createRunnableChatFlowViaApi(request, headers);
+    const flow = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-msgsend" });
     try {
       await publishAgent(request, headers, flow.flowId);
       const text = sentinel();
@@ -76,17 +79,15 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
         expect(raw).toContain(text);
       });
     } finally {
-      await flow.deleteFlow();
+      await flow.cleanup();
     }
   });
 
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("each call produces its own task", { tag: ["@api", "@a2a"] }, async ({ request }) => {
+  test("each call produces its own task", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
-    const flow = await createRunnableChatFlowViaApi(request, headers);
+    const flow = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-msgsend" });
     try {
       await publishAgent(request, headers, flow.flowId);
       const first = sentinel();
@@ -111,19 +112,17 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
         expect(one.body?.result?.id).not.toBe(two.body?.result?.id);
       });
     } finally {
-      await flow.deleteFlow();
+      await flow.cleanup();
     }
   });
 
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@api", "@a2a"] }, async ({
+  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@stable", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
-    const flow = await createRunnableChatFlowViaApi(request, headers);
+    const flow = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-msgsend" });
     try {
       await publishAgent(request, headers, flow.flowId);
 
@@ -179,7 +178,7 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
         expect(ok.body?.result?.status?.state).toBe("completed");
       });
     } finally {
-      await flow.deleteFlow();
+      await flow.cleanup();
     }
   });
 });

@@ -1,6 +1,7 @@
 # A2A Server — task lifecycle: read back, cancel, and fail closed
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev34`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412) and 1.13.x
+(nightly `1.13.0.dev34`)
 
 **Issue:** #1247 (Test 3 redesigned by #2196) · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T6**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -96,7 +97,13 @@ And the live path:
   `scripts/start-langflow-docker.sh` and every CI lane since #1240; asserted at
   runtime by `requireA2aEnabled()`.
 - **No LLM, no provider key, no external network.** Tests 1–2 use the Chat Input →
-  Chat Output passthrough (`createRunnableChatFlowViaApi()`).
+  Chat Output passthrough, created inside a project of its own with an **explicit**
+  `auth_type: "none"` (`createRunnableChatFlowInPublicProject()`), so their calls
+  carry no `x-api-key`. Explicit because from `1.14.0.dev23` (also
+  `release-1.13.2` / `1.13.3`, upstream #16186 + #16151) the default project and
+  every new one are `apikey` under `AUTO_LOGIN=true`, and a flow left there
+  answers `401` (#2412 — the full account is in
+  `a2a-server-jsonrpc-message-send.md`).
 - **`LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true`** (Test 3 only) — its flow is Chat Input
   → a `CustomComponent` that sleeps 10 s → Chat Output, built from the live catalog.
   Every lane sets the flag (`scripts/start-langflow-docker.sh`, `daily-stable.yml`,
@@ -112,8 +119,12 @@ And the live path:
 ## Preconditions *(optional)*
 
 - Langflow reachable at `PLAYWRIGHT_BASE_URL` with A2A enabled.
-- The cross-flow test needs **two** published flows; both are created by the test
-  and deleted **by id** in `finally`. **No pre-test wipe.**
+- The cross-flow test needs **two** published flows, and puts both in the **same**
+  public project: the property is that a task is scoped to its *flow*, so the two
+  flows must differ in nothing else — with a project each, a pass could come from
+  a project-level boundary instead of the flow-scoped store. Both flows and the
+  project are created by the test and deleted **by id** in `finally`. **No
+  pre-test wipe.**
 - The cancel test creates one flow, one project and one API key, and deletes all
   three **by id** in `finally`.
 
@@ -122,22 +133,23 @@ And the live path:
 ## Step by step *(required)*
 
 **Test 1 — `a task can be read back and refuses a cancel it cannot honour`**
-1. `requireA2aEnabled`; create + publish flow A.
+1. `requireA2aEnabled`; create flow A in its own public project and publish it.
 2. `message/send` with a per-run sentinel → capture `taskId`, `contextId`,
    `artifacts[0].artifactId`, `status.timestamp`.
 3. `tasks/get` → assert every field of criterion 1.
 4. `tasks/get` with a random UUID → `-32001`.
 5. `tasks/cancel` on `taskId` → `-32002`; then `tasks/get` again → still
    `completed`, same `status.timestamp`.
-6. `finally`: delete the flow by id.
+6. `finally`: delete the flow, then its project, by id.
 
 **Test 2 — `a task id is invisible to another flow`**
-1. `requireA2aEnabled`; create + publish flows A **and** B.
+1. `requireA2aEnabled`; create flow A in its own public project and flow B **in
+   the same project**; publish both.
 2. `message/send` on A → `taskId`.
 3. `tasks/cancel` `{ id: taskId }` posted to **B's** endpoint → `-32001`.
 4. Positive control in the same test: `tasks/get` on **A** still returns the task
    `completed` — so a blanket "everything is -32001" bug cannot pass this.
-5. `finally`: delete both flows by id.
+5. `finally`: delete both flows, then the project, by id.
 
 **Test 3 — `cancelling a running task moves it to canceled`**
 1. `requireA2aEnabled`; create a project with `auth_type: "apikey"` and an API key;

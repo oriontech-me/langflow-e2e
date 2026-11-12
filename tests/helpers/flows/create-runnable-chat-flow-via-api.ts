@@ -24,7 +24,7 @@ export interface RunnableChatFlow {
   /** The id of the created flow, for use against `POST /api/v1/run/{flow_id}`. */
   flowId: string;
   /** Deletes the flow created by this helper. Safe to call in `afterAll`. */
-  deleteFlow: () => Promise<void>;
+  deleteFlow: (reqOverride?: APIRequestContext) => Promise<void>;
 }
 
 /**
@@ -35,10 +35,18 @@ export interface RunnableChatFlow {
  * or `{ Authorization: bearer }`; in auto_login mode both map to the same
  * superuser, so flow ownership matches either way. The same header is reused for
  * teardown.
+ *
+ * `folderId` creates the flow inside that project instead of the caller's default
+ * one. It matters wherever the flow is reached through a project-gated transport
+ * (A2A, MCP): the project's `auth_type` decides whether those endpoints are public,
+ * and since `1.14.0.dev23` the default project is `apikey` under `AUTO_LOGIN`
+ * (#2412). Omitted, the payload carries no `folder_id` at all — exactly what every
+ * existing caller sent before the option existed.
  */
 export async function createRunnableChatFlowViaApi(
   request: APIRequestContext,
   headers: Record<string, string>,
+  { folderId }: { folderId?: string } = {},
 ): Promise<RunnableChatFlow> {
   const fixture = JSON.parse(readFileSync(RUNNABLE_CHAT_FLOW_FIXTURE, "utf-8"));
 
@@ -57,6 +65,7 @@ export async function createRunnableChatFlowViaApi(
       description: "Chat Input -> Chat Output passthrough for API run tests",
       data: fixture.data,
       is_component: false,
+      ...(folderId !== undefined ? { folder_id: folderId } : {}),
     },
     { headers },
   );

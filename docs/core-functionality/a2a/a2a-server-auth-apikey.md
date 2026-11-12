@@ -1,6 +1,7 @@
 # A2A Server — the API-key gate on the JSON-RPC endpoint: what a restricted project changes
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412) · first
+validated on 1.12.x (`1.12.0.dev18`)
 
 **Issue:** #1353 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T7**) ·
 **Depends on:** #1240 · **Jira:** epic `LE-1588`, gate `LE-2081`
@@ -63,7 +64,7 @@ graph, the server flag and the environment as the cause of the `401`.
 One flow — the Chat Input → Chat Output passthrough, published as an agent —
 observed in **two project states**, with a per-run sentinel:
 
-**State A, the default (unrestricted) project.** The card carries **no**
+**State A, a project created with an explicit `auth_type: "none"`.** The card carries **no**
 `securitySchemes` and **no** `security`, and `message/send` with **no**
 `x-api-key` header returns `200`, `status.state === "completed"`, and the
 sentinel echoed back.
@@ -96,8 +97,8 @@ indistinguishable from a working gate.
   `requireA2aEnabled()`, which reads the **authenticated** `/api/v1/config` (the
   anonymous response omits `a2a_enabled` entirely).
 - **No LLM, no provider key, no external network** — the Chat Input → Chat Output
-  passthrough (`createRunnableChatFlowViaApi()`), same fixture the rest of the
-  area publishes.
+  passthrough (`createRunnableChatFlowInPublicProject()`), same fixture the rest
+  of the area publishes.
 - Auto-login superuser: the caller, the flow owner and the API key's owner are
   the same user. This is what makes the owner-scoped branch observable with one
   account.
@@ -107,11 +108,22 @@ indistinguishable from a working gate.
 ## Preconditions *(optional)*
 
 - A2A-enabled Langflow at `PLAYWRIGHT_BASE_URL`.
-- **The restricted project is created by the test and deleted by it.** The
-  default project is never modified: flipping its `auth_type` would restrict
-  every flow of the shared superuser and break unrelated specs running in
-  parallel — a cross-spec wipe of the #1010 class. The flow is *moved* into a
-  throwaway project instead.
+- **Both projects are created by the test and deleted by it.** The default
+  project is never used or modified: flipping its `auth_type` would change every
+  flow of the shared superuser and break unrelated specs running in parallel — a
+  cross-spec wipe of the #1010 class. The flow starts in a throwaway **public**
+  project and is *moved* into a throwaway **restricted** one.
+- **State A must be explicit, not the default (#2412).** Until `1.14.0.dev22`
+  the default project had no `auth_settings` and was unrestricted under
+  `AUTO_LOGIN=true`, so State A was simply "the default project". From
+  `1.14.0.dev23` (also `release-1.13.2` / `1.13.3`), upstream #16186 + #16151
+  make every new project `apikey` under `AUTO_LOGIN=true` unless
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN` is set (no lane sets it), and the MCP startup
+  pass flips the existing ones too — the default project's card then advertises
+  `apikey` and State A's first assertion fails. That is an intended policy change,
+  not a regression. An explicit `"none"` is still honoured (measured on
+  `1.14.0.dev25`), and `createProjectViaApi` asserts the stored value at
+  creation, so a build that stopped honouring it fails there, naming the cause.
 - **The API key is minted by the test and deleted by it**, id-scoped, in the same
   `finally` as the flow and the project.
 
@@ -123,10 +135,11 @@ One test, `the api-key gate follows the project the flow lives in`. Everything i
 creates is deleted by id in `finally`.
 
 1. `requireA2aEnabled(request, headers)`.
-2. Create the passthrough flow via `createRunnableChatFlowViaApi()`; keep its id
-   and its `folder_id` (the default project).
+2. Create the passthrough flow via `createRunnableChatFlowInPublicProject()`,
+   which first creates a project with `auth_settings: { auth_type: "none" }`;
+   keep the flow's id.
 3. `PATCH /api/v1/flows/{id}` → `{ flow_type: "agent", a2a_enabled: true }`.
-   Publication is the *only* change; the flow stays in the default project.
+   Publication is the *only* change; the flow stays in the public project.
 4. **Negative control — unrestricted:** `GET` the card and assert
    `securitySchemes` and `security` are both absent. `POST …/jsonrpc` with no
    `x-api-key`, carrying sentinel S₁ → assert `200`, `completed`, S₁ echoed.
@@ -145,8 +158,9 @@ creates is deleted by id in `finally`.
 10. **Owner key (positive control):** `POST /api/v1/api_key/` to mint a key; keep
     its id and raw value. `POST …/jsonrpc` with `x-api-key: <raw>` carrying
     sentinel S₂ → assert `200`, `status.state === "completed"`, S₂ echoed.
-11. `finally`: delete the API key, delete the flow, delete the project — each
-    id-scoped, each guarded so one failure does not skip the rest.
+11. `finally`: delete the API key, then the flow and the public project
+    (`cleanup()`), then the restricted project — each id-scoped, each guarded so
+    one failure does not skip the rest.
 
 ---
 

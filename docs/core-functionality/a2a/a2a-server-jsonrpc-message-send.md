@@ -1,6 +1,7 @@
 # A2A Server — JSON-RPC `message/send`: round-trip and error envelopes
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412) · first
+promoted on 1.12.x (`1.12.0.dev18`)
 
 **Issue:** #1242 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T4**) ·
 **Depends on:** #1240 · **Jira:** epic `LE-1588`, transport `LE-1805`,
@@ -80,11 +81,22 @@ break on any upstream dependency bump while the contract held.
 - **`LANGFLOW_A2A_ENABLED=true`** (#1240); enforced by `requireA2aEnabled()`.
 - **No LLM, no provider key, no external network.** The flow is
   `tests/assets/flows/chat-io-ok-trace-fixture.json` via
-  `createRunnableChatFlowViaApi()`; Chat Output echoes Chat Input.
-- Auto-login superuser. The flow's project stays `auth_type=none`, so the
-  endpoint is public and **no `x-api-key` is sent** — the authenticated variant is
-  a separate spec (`a2a-server-auth-apikey`), because it needs the project's auth
-  changed and a real API key.
+  `createRunnableChatFlowInPublicProject()`; Chat Output echoes Chat Input.
+- Auto-login superuser. The flow lives in a project of its own created with an
+  **explicit** `auth_type: "none"`, so the endpoint is public and **no
+  `x-api-key` is sent** — the authenticated variant is a separate spec
+  (`a2a-server-auth-apikey`), because it needs the project's auth changed and a
+  real API key.
+- **Why explicit (#2412).** From `1.14.0.dev23` (also `release-1.13.2` /
+  `1.13.3`), upstream #16186 + #16151 make every project created under
+  `AUTO_LOGIN=true` default to `auth_type: "apikey"` unless
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN` is set (no lane sets it), and the MCP startup
+  pass flips existing projects with no auth — the default project included — to
+  `apikey` too. A flow left in the default project therefore answers
+  `401 {"detail":"API key required"}` to a keyless call. That is an intended
+  policy change, not a regression; an explicit `"none"` is still honoured
+  (measured on `1.14.0.dev25`), and it keeps this spec on the public path it
+  exists to cover.
 
 ---
 
@@ -100,8 +112,9 @@ break on any upstream dependency bump while the contract held.
 
 ## Step by step *(required)*
 
-Three tests. Every test creates and publishes its own flow via
-`createRunnableChatFlowViaApi()` + `PATCH`, and deletes it by id in `afterEach`.
+Three tests. Every test creates its own public project and flow via
+`createRunnableChatFlowInPublicProject()`, publishes the flow with `PATCH`, and
+deletes both in a `finally` (`cleanup()`: the flow, then the project).
 
 **Test 1 — `message/send runs the flow and echoes the sentinel back`**
 1. `requireA2aEnabled(request)`.
@@ -113,14 +126,14 @@ Three tests. Every test creates and publishes its own flow via
 5. Assert HTTP `200`; assert `body.error` is undefined; assert
    `body.result.status.state === "completed"`; assert `body.result.id` is a
    non-empty string; assert the sentinel appears in the result.
-6. Delete the flow.
+6. Delete the flow and its project (`cleanup()`).
 
 **Test 2 — `each call produces its own task`**
 1. Publish a flow as above.
 2. Send two `message/send` calls with **different** sentinels.
 3. Assert both reach `completed`, each result contains **its own** sentinel and
    **not** the other's, and the two `result.id` values differ.
-4. Delete the flow.
+4. Delete the flow and its project (`cleanup()`).
 
 **Test 3 — `protocol errors come back as JSON-RPC errors over HTTP 200`**
 1. Publish a flow as above.
@@ -131,7 +144,7 @@ Three tests. Every test creates and publishes its own flow via
 3. In the same test, send one **valid** `message/send` and assert it still returns
    `result` with no `error` — a positive control, so an endpoint that answered
    `-32600` to everything cannot pass.
-4. Delete the flow.
+4. Delete the flow and its project (`cleanup()`).
 
 ---
 

@@ -90,6 +90,22 @@ Three things that column pair settles:
 - **An API key works on both builds**, so keying on it is version-robust and
   needs no lane change.
 
+**From `1.14.0.dev23` the refused rows read `401`, not `403` (#2412).** The
+table was measured on a project with no `auth_settings`, which reaches the
+superuser fallback. Upstream #16186 + #16151 (also on `release-1.13.2` /
+`1.13.3`) changed that:
+
+- **What changed.** Every project is now `apikey` under `AUTO_LOGIN=true`:
+  - a new one at creation;
+  - an existing one, the default included, on the MCP startup pass.
+
+  A call without `x-api-key` now stops at the project gate:
+  `401 API key required for this project`. The `x-api-key` row is unchanged.
+- **Still refused.** This is not a widening.
+- **Assert against your own project.** Give it an explicit
+  `auth_settings: { auth_type: "apikey" }` (`createProjectViaApi`), so the answer
+  is the same `401` on every build. Do not lean on the default project's state.
+
 **We deliberately do not set `LANGFLOW_SKIP_AUTH_AUTO_LOGIN` on any lane or
 start script.** The bypass turns off the control these specs exercise, and it is
 weakest exactly where it would be most tempting: `mcp-server-install.spec.ts`

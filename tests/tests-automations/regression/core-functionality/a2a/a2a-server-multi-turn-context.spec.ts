@@ -7,7 +7,7 @@ import {
   messageSendEnvelope,
   postA2AJsonRpc,
 } from "../../../../helpers/a2a/post-a2a-jsonrpc";
-import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { createRunnableChatFlowInPublicProject } from "../../../../helpers/a2a/create-public-runnable-flow";
 
 // Spec doc: docs/core-functionality/a2a/a2a-server-multi-turn-context.md
 //
@@ -19,6 +19,10 @@ import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-r
 // The stored side is checked in GET /api/v1/monitor/messages, not only in the
 // response envelope: an echoed contextId that never reached storage would satisfy a
 // response-only check while leaving every turn in its own thread.
+//
+// The flow lives in a project created with an EXPLICIT auth_type "none", so the
+// turns go out with no x-api-key. Since 1.14.0.dev23 (#16186) the default project
+// is "apikey" under AUTO_LOGIN and a flow left there answers 401 (#2412).
 
 interface MonitorMessage {
   session_id: string;
@@ -52,15 +56,13 @@ const sessionEndingIn = (sessions: Map<string, MonitorMessage[]>, contextId: str
 };
 
 test.describe("A2A Server — multi-turn context", () => {
-  // Quarantined for #2412: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2412's deliverable.
-  test.fixme("a conversation keeps its thread only while the caller quotes the contextId", { tag: ["@api", "@a2a"] }, async ({
+  test("a conversation keeps its thread only while the caller quotes the contextId", { tag: ["@stable", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
-    const flow = await createRunnableChatFlowViaApi(request, headers);
+    const flow = await createRunnableChatFlowInPublicProject(request, headers, { namePrefix: "a2a-multiturn" });
     const run = Date.now();
     const sentinelA = `a2a-ctx-turn1-${run}`;
     const sentinelB = `a2a-ctx-turn2-${run}`;
@@ -142,7 +144,7 @@ test.describe("A2A Server — multi-turn context", () => {
         expect(shape(alone)).toEqual([`Machine:${sentinelC}`, `User:${sentinelC}`].sort());
       });
     } finally {
-      await flow.deleteFlow();
+      await flow.cleanup();
     }
   });
 });
