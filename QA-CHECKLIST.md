@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 798 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 804 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2178,8 +2178,13 @@
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/integrations/
+- [x] the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in → `connection-oauth-wizard.spec.ts`
+- [x] with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL → `connection-oauth-wizard.spec.ts`
+- [x] the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection → `connection-oauth-wizard.spec.ts`
+- [x] a denied consent, then an expired sign-in link, each say so, and the row records why → `connection-oauth-wizard.spec.ts`
 - [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
 - [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
+- [x] the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need → `connection-oauth-wizard.spec.ts`
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
 - [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
@@ -2190,6 +2195,7 @@
 - [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
 - [x] a trigger refuses a connection its flow's owner does not own → `connector-node-picker.spec.ts`
 - [x] the requirement line follows the node's inputs → `connector-node-picker.spec.ts`
+- [x] an empty list says how to get a connection, and Refresh fetches a new one → `connector-node-picker.spec.ts`
 - [x] a list that fails to load says so → `connector-node-picker.spec.ts`
 - [x] picking a connection binds its handle, a reload keeps it, and Clear unbinds it → `connector-node-picker.spec.ts`
 - [x] a handle that outlived its connection is shown as not found → `connector-node-picker.spec.ts`
