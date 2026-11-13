@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-connections-resolution-non-interactive.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev26`)
 
 Owning issue: #2306 (Dedicated Integrations, batch 2). It reuses the probe from #2296
 (`tests/helpers/integrations/connection-probe.ts`), and its sibling
@@ -93,6 +93,23 @@ provider. Where each non-interactive path leaves its result:
 - **Only a superuser may create an instance row** (`403 "Only a superuser may create an instance
   connection."`). The instance rows are therefore the superuser's, and everything else is a throwaway
   owner's (see *Budget*).
+- **The throwaway owner is promoted to superuser (#2414).** langflow-ai/langflow#16288
+  (`fix(security): require admin custom-code authoring by default`, merged into `release-1.13.2` on
+  2026-11-09, first nightly `1.14.0.dev23`) turned `custom_component_admin_only` on by default. With
+  it on, a regular user's build of a flow whose code matches no server template is refused before it
+  runs. That covers the Playground build, the webhook and the background submit alike. The probe is
+  such code, so every run of the owner's flows answered `400 Flow build blocked: outdated components
+  must be updated before running: Probe (CustomComponent-probe)` and no assertion was reached (the
+  2026-11-11 daily). The promotion keeps what this file asserts:
+  - The floor (`authorize_principal` in `lfx/services/connection/base.py`) has no superuser branch.
+    It denies a user row on an owner mismatch, or on a non-interactive principal without the
+    opt-in.
+  - `_owned_or_instance_row` selects the row by the principal's user id.
+  - The owner is still a user of its own, so its rate-limit buckets stay its own (see *Budget*).
+
+  Rejected: turning the policy off on the instance (`LANGFLOW_CUSTOM_COMPONENT_ADMIN_ONLY=false`).
+  It is instance-global, so it would take the product default away from every other spec on the
+  lane, and from the VM lane, which starts its own instance.
 
 ### Recorded, not asserted
 
@@ -103,6 +120,10 @@ provider. Where each non-interactive path leaves its result:
   only for trigger families (`api/v2/workflow.py`). This is code, not black-box reachable.
 - **Explicit shares** need Enterprise RBAC. Non-interactive families do not admit shares anyway
   (`allow_explicit_shares=False`).
+- **The refusal names the wrong cause.** Under the admin-only policy, a regular user's custom
+  component is refused as *outdated* ("outdated components must be updated before running"). The
+  component is not outdated: updating it cannot help, and the real remedy is a superuser or the
+  instance opt-out. This file no longer reaches that message, so it does not pin it.
 
 ### Budget and parallel safety
 
@@ -110,7 +131,8 @@ provider. Where each non-interactive path leaves its result:
   about 15 per worker per run: five user rows created and deleted, plus four `PATCH`es of the opt-in.
   They are all in the owner's own 30/minute bucket, never the shared superuser's.
 - **Superuser writes: 4 per worker per run** — the shared instance row and row 4's same-name instance
-  row, each created and deleted.
+  row, each created and deleted. One more superuser call, on `/api/v1/users/` and not on a connection
+  bucket, promotes the owner.
 - **The owner owns every flow, the API key and the knowledge base.** A webhook run acts as the flow's
   owner and a resumed job as the job's owner, so the opt-in under test has to be on the owner's row.
 - **Each test plants its own user row.** No test reads a connection another test PATCHes, so test
@@ -135,7 +157,9 @@ ingest stops at the principal or at the scope check, and spawns no job.
 
 `beforeAll`, per worker:
 
-1. Create a throwaway owner and an API key for it.
+1. Create a throwaway owner, promote it to superuser (`PATCH /api/v1/users/{id}`
+   `{is_superuser: true}`, read back as `true`; see *Where the measurement differs*), and create an API
+   key for it.
 2. As the superuser, plant one **instance** `google` row with `allow_non_interactive: false`.
 
 Each user row below carries a sentinel token unique to the run.
@@ -213,8 +237,12 @@ the opt-in is off, the other `owner_kind` on the shadowed handle, or the other r
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login, with
+- A running Langflow **1.13** or **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login, with
   `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` (the probe). Every lane sets it.
+- `src/lfx/src/lfx/services/settings/groups/security.py` — `custom_component_admin_only`, on by
+  default since #16288. It is why the owner is a superuser.
+- `src/lfx/src/lfx/utils/flow_validation.py` — `_sanitize_admin_only_flow_build`, the refusal a
+  regular user's probe run meets.
 - `src/backend/base/langflow/api/utils/execution_principal.py` — which families are non-interactive,
   and who the dependency principal is (flow owner for a webhook, job owner for a resume).
 - `src/lfx/src/lfx/services/connection/base.py` — the portable floor: the opt-in check for user rows

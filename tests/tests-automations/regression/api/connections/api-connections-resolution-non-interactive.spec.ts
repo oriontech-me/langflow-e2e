@@ -74,6 +74,19 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
       "connnonint",
     );
     superHeaders = { Authorization: await getAuthToken(request) };
+    // The owner runs the probe, which is custom code. Since langflow-ai/langflow#16288
+    // (1.13.2, 1.14.0.dev23) `custom_component_admin_only` is on by default and refuses a
+    // regular user's run of it — build, webhook and background submit alike — as
+    // "outdated components must be updated" (#2414). Promoting the owner keeps what this
+    // file asserts: the resolver's floor has no superuser branch (owner match + opt-in
+    // only), and the owner is still a user of its own, with its own rate-limit buckets.
+    const promoted = await request.patch(`/api/v1/users/${owner.userId}`, {
+      headers: superHeaders,
+      data: { is_superuser: true },
+    });
+    const promotedText = await promoted.text();
+    expect(promoted.status(), promotedText).toBe(200);
+    expect(JSON.parse(promotedText).is_superuser, "the owner now reads as a superuser").toBe(true);
     // The flag sent explicitly OFF: an instance row that resolves for a
     // non-interactive caller must do so because the flag is not read, not because
     // it happened to be on.
@@ -200,11 +213,9 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
 
   const deniedFor = (reason: string) => ({ state: "denied", code: "connection-not-authorized", reason });
 
-  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
-  test.fixme(
+  test(
     "a webhook run resolves the owner's connection only while the opt-in is on, and the instance connection either way",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/webhook/{flow_id_or_name}",
@@ -297,11 +308,9 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
     return { before: String(row!.prompt ?? ""), after: String(outputs?.["ChatOutput-probe"]?.content ?? "") };
   }
 
-  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
-  test.fixme(
+  test(
     "a resumed HITL run is refused the job owner's connection without the opt-in, though the same job resolved it before the pause",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v2/workflows",
@@ -410,11 +419,9 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
     },
   );
 
-  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
-  test.fixme(
+  test(
     "an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/build/{flow_id}/flow",
@@ -460,11 +467,9 @@ test.describe("Connections — a non-interactive caller needs the owner's opt-in
     },
   );
 
-  // Quarantined for #2414: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2414's deliverable.
-  test.fixme(
+  test(
     "a Slack app-level token is refused outside the trigger listener, interactive or not",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/connections",
