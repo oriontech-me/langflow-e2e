@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 792 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 796 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1828,7 +1828,11 @@
 - [x] a public MCP project resolves no connection for an anonymous caller → `api-connections-resolution-entry-points.spec.ts`
 - [x] a public A2A agent resolves no connection for an anonymous caller → `api-connections-resolution-entry-points.spec.ts`
 - [x] an A2A agent behind an API key resolves no connection either — both sub-paths run as the anonymous family → `api-connections-resolution-entry-points.spec.ts`
+- [x] a webhook run resolves the owner's connection only while the opt-in is on, and the instance connection either way → `api-connections-resolution-non-interactive.spec.ts`
+- [x] a resumed HITL run is refused the job owner's connection without the opt-in, though the same job resolved it before the pause → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a KB connector ingest fails closed without the opt-in, before any ingestion run exists → `api-connections-resolution-non-interactive.spec.ts`
+- [x] an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it → `api-connections-resolution-non-interactive.spec.ts`
+- [x] a Slack app-level token is refused outside the trigger listener, interactive or not → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a planted token reaches no client response across the connection's lifecycle, and scope coverage describes the request rather than the credential → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a hyphenated name does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
