@@ -19,12 +19,30 @@
  * which half of the round-trip broke, so the next occurrence is not a fifth
  * nameless signature (#1012/#1626).
  *
+ * The two directions are DIFFERENT writes (#2419), so they get different
+ * budgets and different wording. Disabling only persists the user's variable.
+ * Enabling also runs `validate_model_provider_key` with the model being enabled
+ * — a live 1-token call to the provider, inside the request. Measured on
+ * 1.14.0.dev25: ~20 ms to disable `gemini-4-carbon`, 36-41 s to enable it, with
+ * `/api/v1/version` answering in under 65 ms throughout. A 15 s enable budget
+ * therefore reported a slow provider as an unanswering instance.
+ *
  * The classification is PURE so both branches are reachable from a unit test.
  * Producing `not-issued` live would mean breaking the frontend's debounce and
  * `unanswered` would mean wedging the backend — neither is something a spec may
  * do on demand, the same argument `providerRowVerdict` (#1648) and
  * `censusForTarget` (#1464) settled for their own decisions.
  */
+
+/**
+ * How long the persistence wait gives the write. The disable budget is the one
+ * #1696 set and is unchanged — that write touches only the database, so a
+ * timeout there still names a saturated instance. The enable budget covers a
+ * provider round-trip: ~2x the worst case measured for #2419 (41 s).
+ */
+export function toggleWriteBudgetMs(wantedEnabled: boolean): number {
+  return wantedEnabled ? 90000 : 15000;
+}
 
 /** What the persistence wait observed by the time its budget ran out. */
 export type ToggleWriteSnapshot = {
@@ -72,6 +90,20 @@ export function toggleWriteVerdict(
         `against the "${wanted}" that was asked for — flipped with no POST is a ` +
         `debounce or queue defect, unflipped means the click itself did nothing. ` +
         `Either way this is a SUITE or PRODUCT defect, not a slow instance (#1696).`,
+    };
+  }
+
+  if (snapshot.wantedEnabled) {
+    return {
+      kind: "unanswered",
+      message:
+        `TOGGLE_WRITE_UNANSWERED: ${snapshot.requestsSeen} POST ${endpoint} request(s) ` +
+        `were issued after enabling "${snapshot.model}" and ${snapshot.responsesSeen} ` +
+        `came back within ${budget}. An ENABLE write runs validate_model_provider_key ` +
+        `with this model — a live call to the PROVIDER inside the request — so the ` +
+        `wait covers the INSTANCE and the PROVIDER together. Time that call for this ` +
+        `model before blaming the instance. The switch is showing aria-checked ` +
+        `"${snapshot.ariaChecked}" against the "${wanted}" that was asked for (#2419).`,
     };
   }
 
