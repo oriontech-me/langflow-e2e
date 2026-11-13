@@ -266,9 +266,20 @@ test.describe("Integrations API — capability manifest and effective policy", (
     return row as Provider;
   }
 
-  /** The capability's promised component identity, as a saved flow spells it. */
-  function namespacedId(providerId: string, componentRef: string): string {
-    return `ext:${providerId}:${componentRef}@official`;
+  /**
+   * The catalog keys that carry a capability's `component_ref`, in ANY bundle.
+   *
+   * A component's identity is `ext:<bundle>:<Class>@official`
+   * (`lfx/extension/loader/_types.py`), and the bundle is the extension's own name,
+   * not the provider id. Every bundle happened to be named after its provider until
+   * Confluence (1.14.0.dev23): its extension is "Confluence Integrations", so its
+   * components are `ext:confluence_integrations:…` under provider `confluence` (#2411).
+   * The product resolves `component_ref` by class name in any bundle — the Connections
+   * page's `findComponentByRef` matches `:<ref>@` — so this does too.
+   */
+  function catalogKeysFor(keys: Iterable<string>, componentRef: string): string[] {
+    const suffix = `:${componentRef}@official`;
+    return [...keys].filter((key) => /^ext:[^:]+:/.test(key) && key.endsWith(suffix) && key.split(":").length === 3);
   }
 
   test(
@@ -444,11 +455,9 @@ test.describe("Integrations API — capability manifest and effective policy", (
     },
   );
 
-  // Quarantined for #2411: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2411's deliverable.
-  test.fixme(
+  test(
     "every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`, `GET ${CATALOG}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -477,27 +486,29 @@ test.describe("Integrations API — capability manifest and effective policy", (
       let crossChecked = 0;
       let declaringComponentRef = 0;
 
-      await test.step("each capability's promised component is in the catalog under its own namespaced id", async () => {
+      await test.step("each capability's promised component is in the catalog exactly once, under its own namespaced id", async () => {
         for (const provider of providers) {
           for (const capability of provider.capabilities) {
             if (capability.component_ref === null) continue;
             declaringComponentRef += 1;
-            const expected = namespacedId(provider.provider_id, capability.component_ref);
-            const found = catalogEntry.get(expected);
+            const matches = catalogKeysFor(catalogEntry.keys(), capability.component_ref);
+            // None: a promise the canvas cannot place. Two: one class name shipped by two
+            // bundles, which the product's `:<ref>@` lookup would resolve arbitrarily.
             expect(
-              found,
+              matches,
               `capability ${capability.id} promises component "${capability.component_ref}", so ` +
-                `${CATALOG} must carry "${expected}" — searched ${categories.length} categories ` +
-                `(${categories.sort().join(", ")})`,
-            ).toBeDefined();
-            const { category, entry } = found as { category: string; entry: Record<string, unknown> };
+                `${CATALOG} must carry exactly one "ext:<bundle>:${capability.component_ref}@official" — ` +
+                `searched ${categories.length} categories (${categories.sort().join(", ")})`,
+            ).toHaveLength(1);
+            const [key] = matches;
+            const { category, entry } = catalogEntry.get(key) as { category: string; entry: Record<string, unknown> };
             // Present under the key is not enough: the entry must identify ITSELF
             // by that id, or a catalog built off a stale mapping still passes.
             expect(
               entry.namespaced_id,
-              `the ${category} catalog entry reached through "${expected}" (capability ${capability.id}) ` +
+              `the ${category} catalog entry reached through "${key}" (capability ${capability.id}) ` +
                 `must carry that same namespaced_id`,
-            ).toBe(expected);
+            ).toBe(key);
             crossChecked += 1;
           }
         }

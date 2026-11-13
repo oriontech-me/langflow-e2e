@@ -2,6 +2,7 @@ import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { expect, type PageWithErrorHooks, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { addLegacyComponents } from "../../../../helpers/flows/add-legacy-components";
 import {
   type CatalogComponent,
   type CatalogNodeSpec,
@@ -29,7 +30,7 @@ import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 // run seeded. Every assertion keys on this file's own handles; no count is read.
 //
 // Rows are planted through a throwaway owner (#2295), whose rows the superuser's
-// picker lists. Only test 8 spends superuser writes (2 rows, 4 writes): a trigger
+// picker lists. Only test 15 spends superuser writes (2 rows, 4 writes): a trigger
 // accepting its flow owner's own row needs a row the superuser owns.
 test.describe("Connector components — the palette, the canvas and the connection picker", () => {
   /** The connection field's id on every connector node; always scoped by its node. */
@@ -58,7 +59,9 @@ test.describe("Connector components — the palette, the canvas and the connecti
    * here, and test 1 asserts the manifest names exactly these providers on the served
    * version: a new one fails there by name (#2360). GitHub arrived with upstream
    * #15957, first in 1.14.0.dev7; Jira with upstream #15952, first in 1.14.0.dev10
-   * (#2377).
+   * (#2377); seven more in 1.14.0.dev23, the first build requiring their lfx-* bundles
+   * (#2411). Nor is the group derivable from the catalog: Confluence's components are
+   * `ext:confluence_integrations:…`, and its group is `disclosure-bundles-confluence`.
    */
   const PROVIDERS: ReadonlyArray<{ id: string; label: string; group: string; since?: string }> = [
     { id: "google", label: "Google", group: "disclosure-bundles-google" },
@@ -66,6 +69,13 @@ test.describe("Connector components — the palette, the canvas and the connecti
     { id: "slack", label: "Slack", group: "disclosure-bundles-slack" },
     { id: "github", label: "GitHub", group: "disclosure-bundles-github", since: "1.14.0.dev7" },
     { id: "jira", label: "Jira", group: "disclosure-bundles-jira", since: "1.14.0.dev10" },
+    { id: "confluence", label: "Confluence", group: "disclosure-bundles-confluence", since: "1.14.0.dev23" },
+    { id: "discord", label: "Discord", group: "disclosure-bundles-discord", since: "1.14.0.dev23" },
+    { id: "gitlab", label: "GitLab", group: "disclosure-bundles-gitlab", since: "1.14.0.dev23" },
+    { id: "salesforce", label: "Salesforce", group: "disclosure-bundles-salesforce", since: "1.14.0.dev23" },
+    { id: "servicenow", label: "ServiceNow", group: "disclosure-bundles-servicenow", since: "1.14.0.dev23" },
+    { id: "telegram", label: "Telegram", group: "disclosure-bundles-telegram", since: "1.14.0.dev23" },
+    { id: "whatsapp", label: "WhatsApp", group: "disclosure-bundles-whatsapp", since: "1.14.0.dev23" },
   ];
 
   interface Capability {
@@ -85,6 +95,13 @@ test.describe("Connector components — the palette, the canvas and the connecti
     key: string;
     displayName: string;
     trigger: boolean;
+    /**
+     * The catalog's `legacy` flag. The default palette hides a legacy component, so it is
+     * in no group and placing it needs Show Legacy Components (#2411: Telegram's Notify).
+     */
+    legacy: boolean;
+    /** The catalog's `replacement` list (`<category>.<ClassName>`), what a legacy one points to. */
+    replacement: string[];
     identities: Set<Capability["identity"]>;
   }
 
@@ -124,6 +141,8 @@ test.describe("Connector components — the palette, the canvas and the connecti
           key,
           displayName: String(entry.display_name),
           trigger: Boolean((entry.metadata as { trigger_kind?: string } | undefined)?.trigger_kind),
+          legacy: entry.legacy === true,
+          replacement: Array.isArray(entry.replacement) ? entry.replacement.map(String) : [],
           identities: new Set([capability.identity]),
         });
       }
@@ -285,11 +304,9 @@ test.describe("Connector components — the palette, the canvas and the connecti
     return node?.data.node.template.connection?.value;
   }
 
-  // Quarantined for #2411: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2411's deliverable.
-  test.fixme(
+  test(
     "the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4",
-    { tag: ["@components", "@integrations"] },
+    { tag: ["@stable", "@components", "@integrations"] },
     async ({ page, request }) => {
       const groups = new Map<string, string[]>();
       const expected = await shippedProviders(request);
@@ -327,10 +344,29 @@ test.describe("Connector components — the palette, the canvas and the connecti
       });
 
       await test.step("every action is in its own provider's group", async () => {
-        for (const action of connectors.filter((c) => !c.trigger)) {
+        for (const action of connectors.filter((c) => !c.trigger && !c.legacy)) {
           expect(groups.get(action.provider), `${action.displayName} (${action.ref})`).toContain(
             addButtonId(action.displayName),
           );
+        }
+      });
+
+      // The default palette hides legacy components, so a legacy manifest action is in no
+      // group, and what it says replaces it is offered in its provider's group instead.
+      // Read from the catalog: a component that stops being legacy is expected back.
+      await test.step("a legacy action is in no group, and its replacement is in its provider's group", async () => {
+        const everything = [...groups.values()].flat();
+        for (const action of connectors.filter((c) => !c.trigger && c.legacy)) {
+          expect(everything, `${action.displayName} (${action.ref}) is legacy`).not.toContain(
+            addButtonId(action.displayName),
+          );
+          expect(action.replacement.length, `${action.ref} names its replacement`).toBeGreaterThan(0);
+          for (const replacement of action.replacement) {
+            const entry = findCatalogComponent(catalog, catalogKey(replacement.slice(replacement.lastIndexOf(".") + 1)));
+            expect(groups.get(action.provider), `${replacement}, which replaces ${action.ref}`).toContain(
+              addButtonId(String(entry.display_name)),
+            );
+          }
         }
       });
 
@@ -394,8 +430,14 @@ test.describe("Connector components — the palette, the canvas and the connecti
             .locator('[data-testid^="rf__node-"]')
             .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid") ?? ""));
 
+        let legacyShown = false;
         for (const action of actions) {
           await test.step(`${action.displayName} is added and asks for a ${provider.id} connection`, async () => {
+            if (action.legacy && !legacyShown) {
+              // The default palette hides a legacy component (#2411).
+              await addLegacyComponents(page);
+              legacyShown = true;
+            }
             const before = await nodeIds();
             await addComponentFromSidebar(page, action.displayName, addButtonId(action.displayName));
             const added = (await nodeIds()).filter((id) => !before.includes(id));

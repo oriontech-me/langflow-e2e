@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-integrations-manifest.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev26`) and 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1968 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order and dependencies in the #1971 comment). Seeds through
@@ -22,8 +22,20 @@ what a builder may place and run: a picker renders what the manifest lists, and 
 fails closed against the policy. Nothing in the suite read either one before.
 
 The load-bearing half is the **cross-check**. The manifest's `component_ref` is a promise
-that a component exists, and the saved-flow contract says its identity is
-`ext:<provider_id>:<Class>@official`. `GET /api/v1/all` answers that independently.
+that a component exists. The component's identity is `ext:<bundle>:<Class>@official`, and
+`GET /api/v1/all` answers whether it exists, independently of the manifest. The
+`<bundle>` namespace is the bundle's own name, not the provider id. Upstream builds it as
+`ext:{bundle}:{class_name}@{slot}` (`lfx/extension/loader/_types.py`). The product
+resolves `component_ref` by its class name inside any bundle: the Connections page's
+`findComponentByRef` matches `:<component_ref>@`, and the backend's policy and trigger
+code compare `component_ref` to the class name. Until `1.14.0.dev22` every bundle
+happened to be named after its provider, so this file built
+`ext:<provider_id>:<component_ref>@official` and read that as the contract. Confluence
+(langflow-ai/langflow#15953, first in `1.14.0.dev23`) is the first bundle where the two
+differ. Its extension is named *Confluence Integrations*, so its components are
+`ext:confluence_integrations:…@official`, while its provider id is `confluence`. The test failed there on the
+2026-11-11 daily (#2411). The product was right: the test's premise was not upstream's
+contract.
 **No upstream test crosses the two** — the manifest is covered by
 `test_integrations.py`, the catalog elsewhere — so a component renamed on one side and
 not the other is a node a user can place and cannot resolve, and nothing today would see
@@ -56,6 +68,12 @@ between the two moved:
   is a key of `GET /api/v1/all`, and the entry's own `namespaced_id` is that same string.
   The 24 reference **22** distinct components — each Slack trigger component backs two
   capabilities, one per transport.
+- On `1.14.0.dev26` (#2411) the manifest lists **12** providers: `confluence`, `discord`,
+  `github`, `gitlab`, `google`, `jira`, `microsoft`, `salesforce`, `servicenow`, `slack`,
+  `telegram`, `whatsapp`. All **90** capabilities cross-check, and they reference **86**
+  distinct components. Every `component_ref` matches exactly one `ext:<bundle>:<ref>@official`
+  key, and every entry's `namespaced_id` is its own key. Eleven providers live in a bundle
+  named after them, and Confluence lives in `confluence_integrations`.
 
 ### The top-level `deployment_context` (#2074)
 
@@ -368,11 +386,15 @@ it (measured in #1969, and again on `1.13.0.dev47` for #2317).
    a metadata map keyed by the lowercased type name, not a category (its keys are
    `ext:google:gmailsendcomponent@official`, so counting it would let a cross-check pass
    on a component the canvas cannot place).
-3. For each capability carrying a `component_ref`, build
-   `ext:<provider_id>:<component_ref>@official` and assert it is a key of some category;
-   the failure message names the capability, the expected id and the categories searched.
-4. That entry's own `namespaced_id` equals the same string — the entry identifies itself
-   by the id the manifest promised, so a catalog keyed off a stale mapping is caught too.
+3. For each capability carrying a `component_ref`, find the catalog keys of the shape
+   `ext:<bundle>:<component_ref>@official`, in any bundle, and assert there is **exactly
+   one**. None is a promise the canvas cannot place. Two are a class name shipped by two
+   bundles, and then the product's `:<component_ref>@` lookup would pick one of them
+   arbitrarily. The failure message names the capability, the matches found and the
+   categories searched. The bundle is not predicted from the provider id (see *What this
+   test validates*).
+4. That entry's own `namespaced_id` equals its key. The entry identifies itself by the id
+   it is stored under, so a catalog keyed off a stale mapping is still caught.
 5. At least one capability was cross-checked (the non-vacuity floor), and every capability
    that carried a `component_ref` was.
 
@@ -447,17 +469,29 @@ the fixture recorded. And, since #2317, the control cannot be moved by another s
 rows: a `--workers=2` run of `api/connections/` together with
 `core-functionality/integrations/` on one backend passes three consecutive times.
 
+Since #2411, test 2 resolves each `component_ref` in any bundle. It passes three
+consecutive times at `--retries=0 --workers=1` against `1.14.0.dev26`, with all 90
+capabilities cross-checked: each matches exactly one `ext:<bundle>:<ref>@official` key,
+the Confluence ones under `confluence_integrations`.
+
 ---
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser,
+- A running Langflow **1.13** or **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser,
   **unrestricted**: no integration policy bundle and no externally managed ceiling.
 - `src/backend/base/langflow/api/v1/integrations.py` — both routes under test, the
   `IntegrationListRead` / `IntegrationProviderRead` / `IntegrationCapabilityRead` /
   `EffectiveIntegrationPolicyRead` shapes asserted here (including `IntegrationListRead`'s
   `deployment_context` literal and its absence of any context filter), the `enabled = approved and connection_count > 0` derivation, and
   the omission of blocked providers and actions from the default listing.
+- `src/lfx/src/lfx/extension/loader/_types.py` — the namespaced id,
+  `ext:{bundle}:{class_name}@{slot}`. The namespace is the bundle's, not the provider's.
+- `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/helpers/scopes.ts` —
+  `findComponentByRef`, the product's own `component_ref` lookup (`:<ref>@`, any bundle),
+  which test 2 mirrors.
+- `src/bundles/confluence/src/lfx_confluence/extension.json` — the *Confluence Integrations*
+  bundle, whose namespace (`confluence_integrations`) is not its provider id (#2411).
 - `src/backend/base/langflow/services/integration_policy_discovery.py` — how the ceiling
   and the action deny-list are resolved for the caller.
 - `src/backend/base/langflow/services/connection/oauth/config.py` — `deployment_context()`
