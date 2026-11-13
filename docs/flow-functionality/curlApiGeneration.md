@@ -1,6 +1,6 @@
 # Flow Functionality — cURL API Generation
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2415) · first validated on 1.10.x
 
 ---
 
@@ -23,10 +23,11 @@ If this breaks, integrators copying the snippet will hit malformed requests, mis
 1. Bootstrap the app and open the Templates page (`side_nav_options_all-templates`)
 2. Open the `Basic Prompting` template
 3. Click the publish button and open the API access item
-4. Switch to the `cURL` tab (`api_tab_curl`)
-5. Switch the platform sub-tab to `macOS/Linux` to make the output deterministic
-6. Click the Copy icon and read `navigator.clipboard`
-7. Assert the structural shape of the curl command (see Validation criterion)
+4. Select the **v1** API version (`api_version_v1`) — explicitly, because the default differs by release line (see Notes)
+5. Switch to the `cURL` tab (`api_tab_curl`)
+6. Switch the platform sub-tab to `macOS/Linux` to make the output deterministic
+7. Click the Copy icon and read `navigator.clipboard`
+8. Assert the structural shape of the curl command (see Validation criterion)
 
 ---
 
@@ -49,7 +50,7 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 ## External dependencies *(required)*
 
 - `src/frontend/src/modals/apiModal/utils/get-curl-code.tsx` — `getNewCurlCode` builds the command for both `unix` and `powershell` platforms
-- `src/frontend/src/modals/apiModal/codeTabs/code-tabs.tsx` — renders the cURL tab and the macOS/Linux ↔ Windows platform switch (default driven by `getOS()`)
+- `src/frontend/src/modals/apiModal/codeTabs/code-tabs.tsx` — renders the v1/v2 API version selector (`api_version_v1` / `api_version_v2`), the cURL tab and the macOS/Linux ↔ Windows platform switch (v1 only; default driven by `getOS()`)
 - `src/frontend/src/utils/utils.ts` — `getOS()` reads `navigator.platform` to pick the default platform tab
 - `src/backend/base/langflow/api/v1/endpoints.py` — owns `/api/v1/run/{flow_id}`; the URL shape encoded in the curl must keep matching this route
 
@@ -61,6 +62,7 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 - Tweaks payload encoding for flows with file-upload nodes (multi-step curl)
 - Actually executing the generated command against the running backend (covered by API tests under `api/flows/`)
 - The Python and JavaScript snippets in the same modal (covered by `pythonApiGeneration.spec.ts`)
+- The **v2** cURL snippet (`POST /api/v2/workflows`) — the v2 tab is covered by `api-access-modal-regression.spec.ts` (#2415)
 
 ---
 
@@ -75,6 +77,7 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 ## When to review this test *(optional)*
 
 - The cURL tab gains a new platform option (e.g., a `bash`-only sub-tab) — the explicit `macOS/Linux` click may need to change
+- The v1 API version is removed from the modal — this spec's subject goes with it
 - `getNewCurlCode` is refactored to drop `--request POST` in favor of `-X POST`, or to switch quoting style
 - The `/api/v1/run/{flow_id}` route is renamed or namespaced
 - The Basic Prompting template's default ChatInput value changes from `"Hello"` — the assertion `"input_value": "Hello"` will need to track it
@@ -85,3 +88,4 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 
 - The platform switch is required because `getOS()` is driven by `navigator.platform`, which can differ between local Chromium runs and CI runners. Without explicitly clicking macOS/Linux, the generated snippet is non-deterministic.
 - The previous version of this test asserted only `clipboardContent.length > 0`, which would pass even if the wrong (PowerShell) variant or empty content was copied. The structural assertions guard against that class of false positive.
+- **The v1 tab is selected explicitly (#2415).** Upstream #13508 (first nightly `1.14.0.dev23`) made the modal open on **v2**, which targets `POST /api/v2/workflows`, renders two copyable steps (sync and stream) and has **no** platform sub-tab. Without the click the spec copied a v2 snippet and timed out looking for `macOS/Linux`. The default is not the same everywhere — `v2` on `release-1.14.0`, still `v1` on `main` and on the 1.13 lines — while the selector itself exists on all of them, so selecting v1 is what keeps the spec deterministic across lines. The v1 `/api/v1/run` contract this spec asserts is unchanged.

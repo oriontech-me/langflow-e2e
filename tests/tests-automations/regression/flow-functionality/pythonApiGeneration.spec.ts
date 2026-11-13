@@ -1,11 +1,30 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { selectApiVersion } from "../../../helpers/ui/select-api-version";
+import {
+  type FlowTracker,
+  trackCreatedFlows,
+} from "../../../helpers/flows/track-created-flows";
 
-// Quarantined for #2415: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2415's deliverable.
-test.fixme(
+// Every flow this page creates — the bootstrap's and the template's — is tracked
+// from before the bootstrap and deleted id-scoped after the test (repo convention,
+// #490/#681). Until #2415 this spec deleted none of the flows it created.
+let flows: FlowTracker | undefined;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+test.afterEach(async ({ request }) => {
+  const tracker = flows;
+  flows = undefined;
+  // `strict`: a failed delete fails the teardown so a leak surfaces (#545).
+  await tracker?.cleanup(request, { strict: true });
+});
+
+test(
   "user can copy a valid Python requests snippet from the API access modal",
-  { tag: ["@release", "@workspace"] },
+  { tag: ["@release", "@workspace", "@stable"] },
   async ({ page }) => {
     await test.step("Open the Basic Prompting template", async () => {
       await awaitBootstrapTest(page);
@@ -13,9 +32,12 @@ test.fixme(
       await page.getByRole("heading", { name: "Basic Prompting" }).click();
     });
 
-    await test.step("Open the API access modal on the Python tab", async () => {
+    await test.step("Open the API access modal on the v1 Python tab", async () => {
       await page.getByTestId("publish-button").click();
       await page.getByTestId("api-access-item").click();
+      // v1 explicitly: the modal opens on v2 on the 1.14 line since #13508, and this
+      // spec asserts the v1 /run snippet (#2415).
+      await selectApiVersion(page, "v1");
       await page.getByTestId("api_tab_python").click();
     });
 

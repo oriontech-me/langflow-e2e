@@ -1,6 +1,6 @@
 # Flow Functionality — Python API Generation
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2415) · first validated on 1.10.x
 
 ---
 
@@ -23,9 +23,10 @@ If this breaks, integrators copying the Python snippet will hit malformed reques
 1. Bootstrap the app and open the Templates page (`side_nav_options_all-templates`)
 2. Open the `Basic Prompting` template
 3. Click the publish button and open the API access item
-4. Switch to the `Python` tab (`api_tab_python`)
-5. Click the Copy icon and read `navigator.clipboard`
-6. Assert the structural shape of the Python snippet (see Validation criterion)
+4. Select the **v1** API version (`api_version_v1`) — explicitly, because the default differs by release line (see Notes)
+5. Switch to the `Python` tab (`api_tab_python`)
+6. Click the Copy icon and read `navigator.clipboard`
+7. Assert the structural shape of the Python snippet (see Validation criterion)
 
 ---
 
@@ -50,7 +51,7 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 ## External dependencies *(required)*
 
 - `src/frontend/src/modals/apiModal/utils/get-python-api-code.tsx` — `getNewPythonApiCode` builds the Python snippet for both the no-files path (used here) and the multi-step file-upload path
-- `src/frontend/src/modals/apiModal/codeTabs/code-tabs.tsx` — renders the Python tab and registers `data-testid="api_tab_python"`; the platform sub-tab is gated to cURL only, so Python is deterministic across machines
+- `src/frontend/src/modals/apiModal/codeTabs/code-tabs.tsx` — renders the v1/v2 API version selector (`api_version_v1` / `api_version_v2`) and the Python tab (`data-testid="api_tab_python"`); the platform sub-tab is gated to v1 cURL only, so Python is deterministic across machines
 - `src/frontend/src/customization/utils/custom-code-samples.ts` — `getBaseUrl()` and `getApiSampleHeaders("python")` shape the URL and headers when API key auth is disabled
 - `src/backend/base/langflow/api/v1/endpoints.py` — owns `/api/v1/run/{flow_id}`; the URL shape encoded in the snippet must keep matching this route
 
@@ -62,6 +63,7 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 - Actually executing the generated code against the running backend (covered by API tests under `api/flows/`)
 - The cURL and JavaScript snippets in the same modal (covered by `curlApiGeneration.spec.ts` and `jsApiGeneration.spec.ts`)
 - The "no API key" variant (`shouldDisplayApiKey === false`) — Basic Prompting always renders with the auth section
+- The **v2** Python snippet (`POST /api/v2/workflows`, sync and stream steps) — the v2 tab is covered by `api-access-modal-regression.spec.ts` (#2415)
 
 ---
 
@@ -79,6 +81,7 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 - The `/api/v1/run/{flow_id}` route is renamed or namespaced
 - The Basic Prompting template's default ChatInput value changes from `"Hello"` — the assertion `"input_value": "Hello"` will need to track it
 - The Python tab gains a sub-tab (e.g., `requests` vs `httpx`) — the test would need to pin one variant explicitly, the same way `curlApiGeneration.spec.ts` pins macOS/Linux
+- The v1 API version is removed from the modal — this spec's subject goes with it
 
 ---
 
@@ -86,3 +89,4 @@ A bare "clipboard is non-empty" check is insufficient — the previous version o
 
 - Unlike the cURL variant, the Python snippet has no platform sub-tab (the OS sub-tabs render only when `selectedTab === "cURL"` in `code-tabs.tsx`), so the test does not need to pin a platform.
 - The previous version of this test asserted only `clipboardContent.length > 0`, which would pass even if the wrong tab's content or an empty buffer was copied. The structural assertions guard against that class of false positive.
+- **The v1 tab is selected explicitly (#2415).** Upstream #13508 (first nightly `1.14.0.dev23`) made the modal open on **v2**, whose Python tab renders two copyable steps (sync and stream) on `POST /api/v2/workflows`. Without the click the spec's `icon-Copy` `.last()` copied the v2 **stream** step (`import json …`) and failed on `^import requests`. The default is not the same everywhere — `v2` on `release-1.14.0`, still `v1` on `main` and on the 1.13 lines — while the selector itself exists on all of them, so selecting v1 keeps the spec deterministic across lines. The v1 `/api/v1/run` contract this spec asserts is unchanged.
