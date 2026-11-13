@@ -19,22 +19,32 @@ const fileInput = (page: Page) =>
 const previewImage = (page: Page, fileName: string) =>
   page.locator(`[data-testid="input-wrapper"] img[alt="${fileName}"]`);
 
+// The delete button's accessible name is matched by its "Delete " prefix.
+// langflow-ai/langflow#16277 (first shipped in 1.14.0.dev23) turned the label
+// from "Delete file" into "Delete <file name>"; the exact "Delete file" match
+// found zero buttons (#2416). main and the 1.13.x line still say "Delete file",
+// and the prefix holds on both. No other button in the input wrapper starts
+// with "Delete " (Attach file, Voice input, Send/Stop).
+const DELETE_BUTTON = 'button[aria-label^="Delete "]';
+
 const previewDeleteButton = (page: Page) =>
-  page.locator(
-    '[data-testid="input-wrapper"] button[aria-label="Delete file"]',
-  );
+  page.locator(`[data-testid="input-wrapper"] ${DELETE_BUTTON}`);
 
 // The Delete button for a SPECIFIC image's preview. On 1.12 the preview markup
-// changed: the "Delete file" button is no longer a descendant of the img's
-// direct parent (the old `div:has(> img[alt="…"]) button` matched nothing and
-// the click timed out — #908). Anchor on the img and walk up to the nearest
-// ancestor tile that actually contains a Delete button, then that button —
+// changed: the delete button is no longer a descendant of the img's direct
+// parent (the old `div:has(> img[alt="…"]) button` matched nothing and the
+// click timed out — #908). Anchor on the img and walk up to the nearest
+// ancestor tile that actually contains a delete button, then that button —
 // class-independent, so a Tailwind restyle of the tile cannot re-break it.
+// Anchoring on the img rather than on the button's name is what keeps it
+// per-file on the "Delete file" line, where both buttons share one name.
 const previewDeleteButtonFor = (page: Page, fileName: string) =>
   page
     .locator(`[data-testid="input-wrapper"] img[alt="${fileName}"]`)
-    .locator('xpath=ancestor::div[.//button[@aria-label="Delete file"]][1]')
-    .getByLabel("Delete file");
+    .locator(
+      'xpath=ancestor::div[.//button[starts-with(@aria-label,"Delete ")]][1]',
+    )
+    .locator(DELETE_BUTTON);
 
 test.describe("Playground — Chat Input Attachments Management", () => {
   test.describe.configure({ mode: "serial" });
@@ -62,11 +72,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     await expect(previewImage(page, alt)).toBeVisible({ timeout: 10000 });
   };
 
-  // Quarantined for #2416: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground must show one compact preview per attached image when two images are attached",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",
@@ -89,13 +97,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
-  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
-  // or is serial behind a sibling that does, with the same cause.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground must keep the remaining preview when one of two attachments is removed",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach two images",
@@ -124,13 +128,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
-  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
-  // or is serial behind a sibling that does, with the same cause.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground must render both attached images in the user message after sending",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach two images",
@@ -162,13 +162,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
-  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
-  // or is serial behind a sibling that does, with the same cause.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground input must return to empty state after removing the only attachment",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach a single image",
@@ -204,13 +200,9 @@ test.describe("Playground — Chat Input Attachments Management", () => {
     },
   );
 
-  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
-  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
-  // or is serial behind a sibling that does, with the same cause.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground swap flow must send only the second image when the first is removed before attaching the second",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up flow, open playground and attach image A",

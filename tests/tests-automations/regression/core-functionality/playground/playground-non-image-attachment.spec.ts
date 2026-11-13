@@ -8,6 +8,13 @@ const TXT_PATH = path.resolve(
   "../../../../assets/files/test-file.txt",
 );
 
+// The delete button's accessible name, matched by its "Delete " prefix.
+// langflow-ai/langflow#16277 (first shipped in 1.14.0.dev23) turned it from
+// "Delete file" into "Delete <file name>"; the exact "Delete file" match found
+// nothing (#2416). main and the 1.13.x line still say "Delete file", and the
+// prefix holds on both.
+const DELETE_BUTTON_NAME = /^Delete /;
+
 test.describe("Playground Output – Non-Image Attachment (#195)", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -21,11 +28,9 @@ test.describe("Playground Output – Non-Image Attachment (#195)", () => {
     }
   });
 
-  // Quarantined for #2416: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",
@@ -52,28 +57,39 @@ test.describe("Playground Output – Non-Image Attachment (#195)", () => {
         async () => {
           const inputWrapper = page.locator('[data-testid="input-wrapper"]');
 
-          // The compact FilePreviewDisplay tile renders a "Delete file" aria-label
-          // button whenever a file is attached (either branch). Visible button proves
-          // the attach landed and a preview tile rendered.
+          // The compact FilePreviewDisplay tile renders a delete button whenever a
+          // file is attached (either branch). Visible button proves the attach
+          // landed and a preview tile rendered.
           await expect(
-            inputWrapper.getByRole("button", { name: "Delete file" }),
+            inputWrapper.getByRole("button", { name: DELETE_BUTTON_NAME }),
           ).toBeVisible({ timeout: 5000 });
 
-          // The image branch would emit <img src=URL.createObjectURL(file)> inside
-          // the same tile. Zero <img> elements proves the non-image branch ran.
+          // Positive marker of the non-image branch. While the upload is in flight
+          // the tile shows a spinner (input-wrapper passes `loading`) with the
+          // delete button already visible and no <img> yet, so the zero-<img>
+          // count below is, on its own, satisfied by an IMAGE attachment too —
+          // measured in #2416 by attaching chain.png. The File icon renders only
+          // once loading cleared and the non-image branch was taken. Scoped to
+          // the tile (the div whose direct child is the delete button) because on
+          // the 1.13.x line the attach button also renders icon-File.
+          const tile = inputWrapper.locator(
+            'div:has(> button[aria-label^="Delete "])',
+          );
+          await expect(tile.getByTestId("icon-File")).toBeVisible({
+            timeout: 10000,
+          });
+
+          // With the tile resolved, the image branch would have emitted
+          // <img src=URL.createObjectURL(file)>; zero <img> proves it did not run.
           await expect(inputWrapper.locator("img")).toHaveCount(0);
         },
       );
     },
   );
 
-  // Quarantined for #2416: serial sibling skipped behind a quarantined test on daily 2026-11-11
-  // (1.14.0.dev23, umbrella e2e-qa#30); it fails in the PR #2420 impacted-specs lane,
-  // or is serial behind a sibling that does, with the same cause.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2416's deliverable.
-  test.fixme(
+  test(
     "playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt",
-    { tag: ["@regression", "@playground", "@components"] },
+    { tag: ["@stable", "@regression", "@playground", "@components"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",
@@ -94,7 +110,7 @@ test.describe("Playground Output – Non-Image Attachment (#195)", () => {
         await expect(
           page
             .locator('[data-testid="input-wrapper"]')
-            .getByRole("button", { name: "Delete file" }),
+            .getByRole("button", { name: DELETE_BUTTON_NAME }),
         ).toBeVisible({ timeout: 5000 });
 
         await page.getByTestId("button-send").click();
@@ -108,11 +124,23 @@ test.describe("Playground Output – Non-Image Attachment (#195)", () => {
             timeout: 30000,
           });
 
+          // Since #16277 the input tile renders its own truncated name
+          // (formatFileName(name, 6) -> "test-f...txt"), which also ends in
+          // "...txt". The user message bubble has no data-testid to scope to, so
+          // prove the attachment left the input first: after that, a page-wide
+          // "...txt" can only be the sent message. Without this, the assert
+          // below passes on the input tile alone.
+          const inputWrapper = page.locator('[data-testid="input-wrapper"]');
+          await expect(
+            inputWrapper.getByRole("button", { name: DELETE_BUTTON_NAME }),
+          ).toHaveCount(0);
+          await expect(inputWrapper.getByText(/\.\.\.txt$/)).toHaveCount(0);
+
           // Expanded FilePreviewDisplay non-image branch emits a <span> with
-          // formatFileName(name, 10). The server prefixes uploads with a timestamp,
-          // so the rendered text is e.g. "2026-05-08...txt". The "...{ext}" suffix is
-          // literal output from formatFileName when name.length > 10 — robust whether
-          // or not the server applies the timestamp prefix.
+          // formatFileName(name, 10). From 1.14.0.dev23 the display drops the
+          // server's upload timestamp prefix ("test-file...txt"); before, it read
+          // e.g. "2026-05-08...txt". The "...{ext}" suffix is literal output from
+          // formatFileName when name.length > 10 — robust on both.
           await expect(
             page.getByText(/\.\.\.txt$/).first(),
           ).toBeVisible({ timeout: 10000 });

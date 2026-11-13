@@ -1,6 +1,6 @@
 # Playground — Chat Input Attachments Management
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.14.x (`1.14.0.dev26`)
 
 ---
 
@@ -26,18 +26,18 @@ No API key or LLM is required — the flow is a ChatInput → ChatOutput echo th
 
 ## Step by step *(required)*
 
-All five tests share the same setup: create a ChatInput → ChatOutput echo flow, open the Playground, then exercise the attachment surface via `[data-testid="input-wrapper"] input[type="file"]` and the `aria-label="Delete file"` button on each preview.
+All five tests share the same setup: create a ChatInput → ChatOutput echo flow, open the Playground, then exercise the attachment surface via `[data-testid="input-wrapper"] input[type="file"]` and the delete button on each preview, located by an `aria-label` starting with `Delete ` (see **Label drift** below).
 
 **Test 1 — one preview per attached image when two are attached**
 
 1. Attach `chain.png` and wait for `img[alt="chain.png"]` to appear inside the input wrapper.
 2. Attach `chain-2.png` and wait for `img[alt="chain-2.png"]` to appear.
-3. Assert both previews are visible and `button[aria-label="Delete file"]` has count 2.
+3. Assert both previews are visible and `button[aria-label^="Delete "]` has count 2.
 
 **Test 2 — remove one of two attachments leaves the other**
 
 1. Attach both images (as in Test 1).
-2. Click the delete button scoped to `chain.png`, anchored on the image and walking up to the nearest ancestor tile that contains a `Delete file` button (`img[alt="chain.png"]` → `xpath=ancestor::div[.//button[@aria-label="Delete file"]][1]` → `getByLabel("Delete file")`), filename-targeted with no DOM-order assumption. **Drift note (#908):** the previous locator `div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]` assumed the Delete button was a descendant of the image's *direct* parent; on 1.12 the preview markup moved the button up to the tile (2 levels above the image), so that selector matched nothing and the click timed out (20s). The image-anchored ancestor locator is class-independent, so a further Tailwind restyle of the tile will not re-break it.
+2. Click the delete button scoped to `chain.png`, anchored on the image and walking up to the nearest ancestor tile that contains a delete button (`img[alt="chain.png"]` → `xpath=ancestor::div[.//button[starts-with(@aria-label,"Delete ")]][1]` → that button), filename-targeted with no DOM-order assumption. **Drift note (#908):** the previous locator `div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]` assumed the Delete button was a descendant of the image's *direct* parent; on 1.12 the preview markup moved the button up to the tile (2 levels above the image), so that selector matched nothing and the click timed out (20s). The image-anchored ancestor locator is class-independent, so a further Tailwind restyle of the tile will not re-break it. It anchors on the image rather than on the button's name so that it finds the right tile on both label shapes below — on the `Delete file` line both buttons carry the same name.
 3. Assert `img[alt="chain.png"]` count is 0; `img[alt="chain-2.png"]` is visible; delete button count is 1.
 
 **Test 3 — send with two attachments renders both in the user message**
@@ -71,12 +71,15 @@ All five tests share the same setup: create a ChatInput → ChatOutput echo flow
 - Test 4: input wrapper has no preview and no delete button after removal; sending text without files still works; no server-image leaks.
 - Test 5: only `chain-2.png` renders after send; `chain.png` count is 0.
 
+**Label drift (#2416).** Upstream langflow-ai/langflow#16277 (`fix(frontend): name playground chat attachments`, merged into `release-1.14.0` on 2026-11-10, first shipped in `1.14.0.dev23`) changed the locale string `playgroundComponent.deleteFile` from `Delete file` to `Delete {{name}}`, so the buttons now read `Delete chain.png` / `Delete chain-2.png`. The exact `aria-label="Delete file"` selector found zero buttons, Test 1 failed on the 2026-11-11 daily and the four serial siblings were skipped behind it; the previews themselves rendered. Neither `main` nor `release-1.13.3` carries the change, so the delete button is matched by the `Delete ` prefix, which holds on both lines. Asserting the per-file names is a different contract and is not in this spec's scope.
+
 ---
 
 ## External dependencies *(required)*
 
 - `src/frontend/src/shared/hooks/use-chat-file-upload.ts` — `setFiles(prev => [...prev, ...new])` appending behavior and `handleFileChange` clearing input value after each upload (required for sequential `setInputFiles()` to work).
-- `src/frontend/src/components/core/playgroundComponent/chat-view/utils/file-preview-display.tsx` — compact/expanded variants, `aria-label="Delete file"` on the delete button, `alt={fileInfo.name}` on the preview image.
+- `src/frontend/src/components/core/playgroundComponent/chat-view/utils/file-preview-display.tsx` — compact/expanded variants, the delete button's `aria-label`, `alt={fileInfo.name}` on the preview image.
+- `src/frontend/src/locales/en.json` — `playgroundComponent.deleteFile`, the delete button's accessible name (`Delete {{name}}` since #16277, `Delete file` before); matched by the `Delete ` prefix.
 - `src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/user-message.tsx` — iterates `chat.files` rendering one `FilePreviewDisplay` per attachment (`variant="expanded"`).
 - `src/backend/base/langflow/` — file upload endpoint and the `/files/images/` URL prefix; if either changes, the `src*=` / `src$=` selectors will not match.
 
