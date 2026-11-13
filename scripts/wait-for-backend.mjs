@@ -35,6 +35,19 @@
 // connection fails in milliseconds regardless, which is the only case the split
 // distinguished.
 //
+// THE WRITE PROBE (#2405)
+//
+// `/api/v1/version` opens no database session, so it answers on a backend whose
+// SQLite file is locked — the state on-demand run od-20261109-e3743682 hit on one
+// shard: the gate passed, and every test then died in `auto_login`, which writes.
+// Once the version probe answers, the gate therefore also calls
+// `GET /api/v1/auto_login`: the call every spec makes first, with no rate limit,
+// and one that writes. A READ is not enough: Langflow runs SQLite in WAL mode, and
+// measured on 1.14.0.dev25 with a `BEGIN IMMEDIATE` held, `/health_check` (a
+// `SELECT`) answered 200 in 35 ms while `auto_login` hung past 25 s. A 403 means
+// auto-login is disabled on that instance; the gate cannot check the write path
+// there, so it passes and says so instead of failing a lane it cannot judge.
+//
 // FAILURE CLASSIFICATION
 //
 // The shell copies decoded curl's exit code (7 = refused, 28 = timeout) because
@@ -55,7 +68,8 @@
 //                          ::warning:: here where a reader is already looking —
 //                          the run is NOT gated on it (#980)
 //
-// Exit 0 = backend answered; exit 1 = deadline expired (the lane should stop).
+// Exit 0 = backend answered (and took a write, unless auto-login is disabled);
+// exit 1 = deadline expired (the lane should stop).
 //
 // Pure, dependency-free ESM so every lane runs it with plain `node` (no ts-node).
 
@@ -73,6 +87,7 @@ export const DEFAULTS = {
 };
 
 const HEALTH_PATH = "/api/v1/version";
+const WRITE_PATH = "/api/v1/auto_login";
 
 function num(value, fallback) {
   const n = Number(value);
@@ -85,6 +100,18 @@ export function buildProbeUrl(baseUrl) {
   return `${String(baseUrl || DEFAULTS.baseUrl).replace(/\/+$/, "")}${HEALTH_PATH}`;
 }
 
+export function buildWriteProbeUrl(baseUrl) {
+  return `${String(baseUrl || DEFAULTS.baseUrl).replace(/\/+$/, "")}${WRITE_PATH}`;
+}
+
+// Derives the write probe from the version probe, so a caller that only knows the
+// version URL (and any path prefix it carries) gets the matching write URL.
+function writeUrlFor(versionUrl) {
+  return versionUrl.endsWith(HEALTH_PATH)
+    ? `${versionUrl.slice(0, -HEALTH_PATH.length)}${WRITE_PATH}`
+    : buildWriteProbeUrl(versionUrl);
+}
+
 // The kinds are what the caller ACTS on, so they are deliberately coarse:
 //   dead   nothing is listening — the backend never came up, or came down for
 //          good. Waiting longer cannot help; look at the container's own log.
@@ -95,6 +122,9 @@ export function buildProbeUrl(baseUrl) {
 //          failure that a longer wait will not change either, but which must not
 //          be reported as one, or the next reader chases the wrong bug.
 //   other  DNS, TLS, an unroutable host — usually a wiring mistake in the lane.
+//   db     /api/v1/version answers but the write probe does not (#2405): the event
+//          loop is fine and the database is not, so every spec would fail in
+//          auth. Distinct from the wedge, whose version probe never answers.
 // `headline` is the sentence that assigns blame. It is per-kind on purpose: the
 // inline copies claimed "This is the post-collect-models wedge" unconditionally,
 // which is a false statement on three of the four states and sends the next
@@ -102,6 +132,18 @@ export function buildProbeUrl(baseUrl) {
 export function classifyFailure(failure) {
   if (!failure) {
     return { kind: "unknown", diag: "no failure recorded", headline: "The gate recorded no probe result, which is a bug in the gate itself" };
+  }
+  if (failure.stage === "write") {
+    const what = failure.status
+      ? `answered HTTP ${failure.status}`
+      : failure.code === "TIMEOUT"
+        ? "did not answer within the probe deadline"
+        : `failed (${failure.code || failure.reason || "unknown error"})`;
+    return {
+      kind: "db",
+      diag: `${HEALTH_PATH} answers but ${WRITE_PATH}, which writes the database, ${what} — the database is locked or its write path is stuck (#2405)`,
+      headline: `The backend answers but cannot write its database (the SQLite-lock shape of #2405), so every spec would fail in auth; this is NOT the post-collect-models wedge`,
+    };
   }
   if (failure.status) {
     return {
@@ -154,6 +196,20 @@ export async function probeOnce(url, timeoutMs, fetchImpl = fetch) {
   }
 }
 
+/**
+ * One gate attempt: the version probe, then — only if it answered — the write
+ * probe. `writeUnverified` marks a pass where auto-login is disabled (403), so
+ * the database was not checked.
+ */
+export async function probeBackend(versionUrl, timeoutMs, fetchImpl = fetch, writeUrl = writeUrlFor(versionUrl)) {
+  const version = await probeOnce(versionUrl, timeoutMs, fetchImpl);
+  if (!version.ok) return { ...version, stage: "version" };
+  const write = await probeOnce(writeUrl, timeoutMs, fetchImpl);
+  if (write.ok) return { ok: true, ms: version.ms + write.ms };
+  if (write.status === 403) return { ok: true, ms: version.ms + write.ms, writeUnverified: true };
+  return { ...write, stage: "write" };
+}
+
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -172,7 +228,7 @@ export async function waitForBackend(options = {}) {
     intervalS = DEFAULTS.intervalS,
     heartbeatEvery = DEFAULTS.heartbeatEvery,
     log = console.log,
-    probe = (u) => probeOnce(u, probeTimeoutMs),
+    probe = (u) => probeBackend(u, probeTimeoutMs),
     now = () => Date.now(),
     sleep = realSleep,
   } = options;
@@ -186,7 +242,13 @@ export async function waitForBackend(options = {}) {
     attempts += 1;
     const result = await probe(url);
     if (result.ok) {
-      return { ok: true, attempts, elapsedS: Math.round((now() - startedAt) / 1000), failure: undefined };
+      return {
+        ok: true,
+        attempts,
+        elapsedS: Math.round((now() - startedAt) / 1000),
+        failure: undefined,
+        writeUnverified: Boolean(result.writeUnverified),
+      };
     }
     failure = result;
 
@@ -202,7 +264,7 @@ export async function waitForBackend(options = {}) {
     if (heartbeatEvery > 0 && attempts % heartbeatEvery === 0) {
       const left = Math.max(0, Math.round((deadline - now()) / 1000));
       log(
-        `Still waiting: attempt ${attempts}, last failure ${failure.code || failure.reason || "unknown"}, ${left}s left of ${timeoutS}s.`,
+        `Still waiting: attempt ${attempts}, last failure ${failure.stage === "write" ? `${WRITE_PATH} ` : ""}${failure.code || failure.reason || "unknown"}, ${left}s left of ${timeoutS}s.`,
       );
     }
     await sleep(intervalS * 1000);
@@ -228,7 +290,9 @@ export async function main(env = process.env, log = console.log) {
     );
   }
 
-  log(`Waiting up to ${timeoutS}s for ${url} (probe deadline ${probeTimeoutMs}ms, interval ${intervalS}s).`);
+  log(
+    `Waiting up to ${timeoutS}s for ${url}, then ${WRITE_PATH} (probe deadline ${probeTimeoutMs}ms, interval ${intervalS}s).`,
+  );
   const outcome = await waitForBackend({
     url,
     timeoutS,
@@ -239,16 +303,27 @@ export async function main(env = process.env, log = console.log) {
   });
 
   if (outcome.ok) {
-    log(
-      `Backend answered ${HEALTH_PATH} on attempt ${outcome.attempts} after ${outcome.elapsedS}s — proceeding to ${nextStep}.`,
-    );
+    if (outcome.writeUnverified) {
+      log(
+        `::warning::${WRITE_PATH} answered 403 (auto-login is disabled on this instance), so the gate could NOT check that the database accepts writes (#2405).`,
+      );
+    }
+    const probed = outcome.writeUnverified ? HEALTH_PATH : `${HEALTH_PATH} and ${WRITE_PATH}`;
+    log(`Backend answered ${probed} on attempt ${outcome.attempts} after ${outcome.elapsedS}s — proceeding to ${nextStep}.`);
     return 0;
   }
 
   const { diag, headline } = classifyFailure(outcome.failure);
+  const failedPath = outcome.failure?.stage === "write" ? WRITE_PATH : HEALTH_PATH;
+  // globalSetup polls /api/v1/version, so on a database that will not write it
+  // passes and every test then fails in auth instead.
+  const consequence =
+    outcome.failure?.stage === "write"
+      ? `${nextStep} would fail every test in auth (globalSetup only polls ${HEALTH_PATH}).`
+      : `${nextStep} would abort in globalSetup with zero tests.`;
   log(
-    `::error::Langflow did not answer ${HEALTH_PATH} within ${timeoutS}s after the Collect models step ` +
-      `(${outcome.attempts} attempts; ${diag}). ${nextStep} would abort in globalSetup with zero tests. ` +
+    `::error::Langflow did not answer ${failedPath} within ${timeoutS}s after the Collect models step ` +
+      `(${outcome.attempts} attempts; ${diag}). ${consequence} ` +
       `${headline}, ${attribution}.`,
   );
   return 1;
