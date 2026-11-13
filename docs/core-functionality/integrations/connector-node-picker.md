@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connector-node-picker.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev14`, and `1.14.0.dev9` before Jira) and 1.13.x (`1.13.1rc0`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev26`; `1.14.0.dev14` before the `dev23` providers, `1.14.0.dev9` before Jira) and 1.13.x (`1.13.1rc0`)
 
 Owning issue: #2297 (Dedicated Integrations, batch 2). It opens `QA-CHECKLIST.md` § 24.6, the
 builder-facing half of the feature: placing a connector and binding it to a connection. The picker is
@@ -39,9 +39,40 @@ Measured on `1.13.0.dev47`:
   *Jira: On Issue Status Changed*), every capability with identity `user_delegated`. Their display names
   start with *"Jira:"* (`add-component-button-jira:-search-issues`), and an action lands reading
   *"Select a jira connection"*.
+- **From `1.14.0.dev23` there are seven more providers** (#2411). `langflow==1.14.0.dev23` is the
+  first build that requires `lfx-confluence`, `lfx-discord`, `lfx-gitlab`, `lfx-salesforce`,
+  `lfx-servicenow`, `lfx-telegram` and `lfx-whatsapp`; `1.14.0.dev22` requires none of them, and the
+  1.13 line (`release-1.13.3`) none either. Measured on `1.14.0.dev26`:
+
+| Provider (manifest `display_name`) | Group | Components | Actions | Triggers | Identity |
+|---|---|---|---|---|---|
+| `confluence` (*Confluence Cloud*) | `disclosure-bundles-confluence` (*Confluence*) | 6 | 4 | 2 | `user_delegated` |
+| `discord` (*Discord*) | `disclosure-bundles-discord` (*Discord*) | 4 | 2 | 2 | `bot` |
+| `gitlab` (*GitLab*) | `disclosure-bundles-gitlab` (*GitLab*) | 11 | 9 | 2 | `user_delegated` |
+| `salesforce` (*Salesforce*) | `disclosure-bundles-salesforce` (*Salesforce*) | 4 | 3 | 1 | `user_delegated` |
+| `servicenow` (*ServiceNow*) | `disclosure-bundles-servicenow` (*ServiceNow*) | 6 | 4 | 2 | `user_delegated` |
+| `telegram` (*Telegram*) | `disclosure-bundles-telegram` (*Telegram*) | 5 | 3 | 2 | `bot` |
+| `whatsapp` (*WhatsApp Business*) | `disclosure-bundles-whatsapp` (*WhatsApp*) | 4 | 3 | 1 | `service` |
+
+  As with GitHub and Jira, every display name starts with the provider's name and a colon
+  (*"Confluence: Search Pages"*, *"WhatsApp: Send Text"*), and an action lands reading
+  *"Select a <provider id> connection"*. Telegram's 5 components back 7 capabilities.
+- **A manifest action can be legacy, and the palette hides it** (#2411). *Telegram: Send Notification*
+  (`TelegramNotifyComponent`, capability `telegram.bot.notify`) ships with `legacy: true` and
+  `replacement: ["telegram.TelegramSendMessageComponent"]`. Its description reads *"Use Telegram Send
+  Message with Silent Notification enabled for new flows."* The manifest still lists the capability,
+  but the default palette shows no legacy component. So the action is in no group, and its sidebar
+  search finds nothing. With *Show Legacy Components* on (`sidebar-options-trigger` →
+  `sidebar-legacy-switch`), it is listed and lands like any other action. It is the only legacy
+  manifest component on `1.14.0.dev26`. The test reads `legacy` from the catalog entry, so it follows
+  the catalog: a component that stops being legacy is expected back in its group.
 - **The group a provider lives in is not derivable from the manifest.** The group is named after the
   bundle, not after the provider's `display_name`: the manifest says *Google Workspace* and the group is
-  *google*. So the test keeps a table of provider → group, each row with the first build that ships it,
+  *google*. Nor is it derivable from the catalog. Confluence's components live in the
+  `confluence_integrations` category (`ext:confluence_integrations:…`, the bundle's own name), and its
+  group is `disclosure-bundles-confluence`. #2411 asked whether the provider list could be derived
+  instead of pinned. Confluence answers no: neither the manifest nor the catalog gives its group. So the
+  test keeps a table of provider → group, each row with the first build that ships it,
   and **asserts that the manifest names exactly the providers that table expects on the served version**.
   A provider added upstream then fails that first step by name, instead of failing three steps later on
   a group nobody read (`toContain` on `undefined`, which is how #2360 surfaced).
@@ -50,7 +81,8 @@ Measured on `1.13.0.dev47`:
   The catalog marks every trigger with `metadata.trigger_kind`, and the palette uses that marker.
   With GitHub (`1.14.0.dev7`) the totals are 38 components behind 40 capabilities: 28 actions and
   10 triggers. With Jira as well (`1.14.0.dev14`) they are 46 components behind 48 capabilities:
-  33 actions and 13 triggers.
+  33 actions and 13 triggers. With the seven `dev23` providers as well (`1.14.0.dev26`) they are
+  86 components behind 90 capabilities: 61 actions and 25 triggers.
 - **All 20 actions are in their provider's group**: 5 Google, 8 Microsoft 365, 7 Slack. Each one's add
   button is `add-component-button-<display name, lowercased, spaces as ->`.
 - **No trigger is in the palette on the 1.13 line.** `ENABLE_TRIGGERS = false` is a compile-time flag,
@@ -173,28 +205,33 @@ Every connection is deleted after its test too. Handles are unique per run.
 
 **Test 1 — the palette.**
 1. Read the manifest and the catalog. The manifest's provider ids equal the providers the test expects on
-   the served version: `google`, `microsoft` and `slack`, plus `github` from `1.14.0.dev7` and `jira`
-   from `1.14.0.dev10`.
+   the served version: `google`, `microsoft` and `slack`, plus `github` from `1.14.0.dev7`, `jira`
+   from `1.14.0.dev10`, and `confluence`, `discord`, `gitlab`, `salesforce`, `servicenow`, `telegram`
+   and `whatsapp` from `1.14.0.dev23`.
 2. Split each provider's `component_ref`s by the catalog entry's `metadata.trigger_kind`: actions and
    triggers. Floors: at least one action per expected provider, and one trigger.
 3. Open a blank flow, switch the sidebar to *Bundles*, and expand each expected provider's group one at a
    time. Collect each group's `add-component-button-*` ids.
 4. Every action's add button is in its own provider's group, under the id derived from its catalog
-   display name.
+   display name. An action whose catalog entry is `legacy: true` is the exception. Its add button is in
+   no group, and each component its `replacement` names is in the legacy action's own provider group.
 5. From `1.14.0.dev4`, every trigger's add button is in its own provider's group and in no other. Before
    it, no trigger's add button is in any group.
 6. Every Slack action's display name ends in *"(as user)"* when its capability is `user_delegated`, and
    in *"(as app)"* when it is `bot`.
 
-**Tests 2–6 — one per provider (Google, Microsoft 365, Slack, GitHub, Jira): every manifest action
-lands on the canvas.** The GitHub test skips, naming the version, on a build older than `1.14.0.dev7`,
-and the Jira test on one older than `1.14.0.dev10`; test 1 already asserts that such a build has no
-such provider. On a blank flow, each of the provider's actions, read from the manifest at run time:
-1. It is added from the sidebar search (`addComponentFromSidebar`).
+**Tests 2–13 — one per provider (Google, Microsoft 365, Slack, GitHub, Jira, Confluence, Discord,
+GitLab, Salesforce, ServiceNow, Telegram, WhatsApp): every manifest action lands on the canvas.** A
+provider's test skips, naming the version, on a build older than the one that ships it:
+`1.14.0.dev7` for GitHub, `1.14.0.dev10` for Jira, `1.14.0.dev23` for the other seven. Test 1
+already asserts that such a build has no such provider. On a blank flow, each of the provider's actions, read from the manifest at run time:
+1. It is added from the sidebar search (`addComponentFromSidebar`). Before the first legacy action
+   (catalog `legacy: true`), *Show Legacy Components* is switched on (`addLegacyComponents`), because
+   the default palette hides it.
 2. Its new node is found by diffing the node ids.
 3. The node's connection field reads *"Select a <provider> connection"*, and no handle is bound.
 
-**Test 7 — the picker lists the provider's connections and says why each cannot run.**
+**Test 14 — the picker lists the provider's connections and says why each cannot run.**
 1. Plant five owner `google` rows: usable (`gmail.send` granted), no scopes, identity `bot`,
    credential-free (`pending`), and revoked.
 2. Build a flow with *Gmail: Send Email* and *Slack: Post Message (as app)*, and open the Google picker.
@@ -206,7 +243,7 @@ such provider. On a blank flow, each of the provider's actions, read from the ma
 5. The Slack picker requested `provider=slack`. It lists none of the planted handles, and every handle
    it lists starts with `slack/`.
 
-**Test 8 — a trigger refuses a connection its flow's owner does not own.**
+**Test 15 — a trigger refuses a connection its flow's owner does not own.**
 1. Plant three rows, each granting `gmail.readonly`:
    - the superuser's own row;
    - an instance row (the superuser's);
@@ -216,26 +253,26 @@ such provider. On a blank flow, each of the provider's actions, read from the ma
 3. In the picker, the superuser's own row has no badge. The instance row and the other user's row both
    read *"Not owned by the flow owner"*.
 
-**Test 9 — the requirement line follows the node's inputs.** A flow with *SharePoint/OneDrive: List
+**Test 16 — the requirement line follows the node's inputs.** A flow with *SharePoint/OneDrive: List
 Items* and *Slack: On Message*. The four footers in the table above are read in that order, then the
 Slack trigger's *"No scope required"*. No connection is planted.
 
-**Test 10 — empty, then Refresh.**
+**Test 17 — empty, then Refresh.**
 1. The picker's `GET …?provider=google` is fulfilled with `[]`, and the picker reads *"No google
    connections yet. Create one in Settings, then refresh."* with no option.
 2. The route is removed, and an owner row is planted. It is not listed yet: the list is cached.
 3. **Refresh** lists it.
 
-**Test 11 — a failed list.** The same request is fulfilled with `500`. The picker reads *"Could not load
+**Test 18 — a failed list.** The same request is fulfilled with `500`. The picker reads *"Could not load
 connections."* within 60 s.
 
-**Test 12 — binding.**
+**Test 19 — binding.**
 1. Pick a planted row on *Gmail: Send Email*. The field shows its handle, and the saved flow's
    `template.connection.value` becomes that handle (polled through `GET /api/v1/flows/{id}`).
 2. Reload. The field still shows it.
 3. **Clear**. The field reads *"Select a google connection"*, and the saved value becomes `""`.
 
-**Test 13 — a handle that outlived its connection.**
+**Test 20 — a handle that outlived its connection.**
 1. Build a flow whose *Gmail: Send Email* is saved with a planted row's handle.
 2. Delete the row, then open the flow.
 3. The field shows the handle and the *"not found"* badge.
@@ -249,8 +286,12 @@ once at `--workers=2`. With the GitHub provider (#2360), all twelve pass three c
 `--retries=0 --workers=1` against `1.14.0.dev7`, and against `1.13.1rc0` the GitHub canvas test skips
 while the other eleven pass (two runs). With the Jira provider (#2377), all thirteen pass three
 consecutive times at `--retries=0 --workers=1` against `1.14.0.dev14` and once at `--workers=2`, and
-against `1.14.0.dev9` the Jira canvas test skips while the other twelve pass. The following hold on
-every run:
+against `1.14.0.dev9` the Jira canvas test skips while the other twelve pass. With the seven `dev23`
+providers (#2411), the file holds twenty tests. Nineteen pass three consecutive times at
+`--retries=0 --workers=1` against `1.14.0.dev26`, and once at `--workers=2`. Test 17 is quarantined
+for #2413 and is not part of that count. The `since` gate on the seven new rows was not run against a
+`dev22` build: it is the same `servedVersionAtLeast` gate the GitHub and Jira rows were validated
+with. The following hold on every run:
 
 - the manifest names exactly the providers expected on the served version;
 - the palette groups contain every manifest action under its own provider, and each trigger under its
@@ -281,6 +322,13 @@ Each test also has a force-fail mutation executed against it.
 - `src/bundles/github/extension.json` — the GitHub bundle and its `github` provider, from `1.14.0.dev7`.
 - `src/bundles/jira/src/lfx_jira/extension.json` — the Jira bundle and its `jira` provider, from
   `1.14.0.dev10`.
+- `src/bundles/confluence/src/lfx_confluence/extension.json`,
+  `src/bundles/discord/src/lfx_discord/extension.json`, `src/bundles/gitlab/extension.json`,
+  `src/bundles/salesforce/src/lfx_salesforce/extension.json`,
+  `src/bundles/servicenow/src/lfx_servicenow/extension.json`,
+  `src/bundles/telegram/src/lfx_telegram/extension.json` and
+  `src/bundles/whatsapp/src/lfx_whatsapp/extension.json` — the seven bundles and their providers, from
+  `1.14.0.dev23` (#2411).
 - `src/backend/base/langflow/services/connection/service.py` — `_list_visible_rows`, and the superuser
   seeing every user's rows.
 - `src/lfx/src/lfx/inputs/input_mixin.py` — `identity_kind` and `ownership_mode` on a connection field.
