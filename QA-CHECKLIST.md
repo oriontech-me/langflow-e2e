@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 796 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 798 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1846,6 +1846,7 @@
 - [x] creating, revoking and deleting a connection writes no global variable → `api-connections-surface-details.spec.ts`
 - [x] on this lane's deployment context no capability is filtered, and none could be → `api-connections-surface-details.spec.ts`
 - [x] every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain → `api-integrations-manifest.spec.ts`
+- [x] every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id → `api-integrations-manifest.spec.ts`
 - [x] a provider's enabled flag and connection count are derived from its connections, and only its own → `api-integrations-manifest.spec.ts`
 - [x] the manifest and the effective policy agree that the instance is unrestricted → `api-integrations-manifest.spec.ts`
 - [x] every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared → `api-integrations-manifest.spec.ts`
@@ -2184,6 +2185,7 @@
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
+- [x] the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4 → `connector-node-picker.spec.ts`
 - [x] every <provider.label> action in the manifest lands on the canvas with an unbound connection field → `connector-node-picker.spec.ts`
 - [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
 - [x] a trigger refuses a connection its flow's owner does not own → `connector-node-picker.spec.ts`
