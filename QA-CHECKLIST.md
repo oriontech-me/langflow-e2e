@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 804 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 805 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2400,6 +2400,7 @@
 - [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
 - [x] a session renamed in the playground is the session its messages are stored under → `playground-session-id.spec.ts`
 - [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
+- [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
 - [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
