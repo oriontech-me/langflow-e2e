@@ -172,6 +172,16 @@ handle is bound) and `refresh-connections-<id>`.
   superuser's own row that shows a trigger accepting its owner (2 rows, 4 writes per run).
 - **Seed `google` only.** The manifest spec reserves `microsoft` as its subject and `slack` as its
   untouched control. The Slack and Microsoft nodes here bind nothing.
+- **The canvas tests read the connection list once each** (#2411). Every connector node a test places
+  sends its own `GET /api/v1/connections?provider=<id>`, and list reads share the superuser's
+  `connections-read` bucket (60/minute per user). Measured on `1.14.0.dev26`, the twelve canvas tests
+  spent **54** reads, one per node, where the five before #2411 spent 33. On PR #2443's first CI run, at
+  `--workers=2`, that pushed the bucket into `429`, and test 19's picker was refused its list and
+  flaked. Each canvas test now runs inside `holdConnectionList`: the first read is a real one, and the
+  same `200` answers the rest. That is twelve reads instead of 54. The snapshot is what the server would
+  answer: every node in one canvas test belongs to one provider, the test creates no connection, and
+  the unbound field it asserts does not depend on the list. The picker tests (14–20) read the real list
+  every time.
 
 ### Recorded, not asserted
 
@@ -227,7 +237,8 @@ provider's test skips, naming the version, on a build older than the one that sh
 already asserts that such a build has no such provider. On a blank flow, each of the provider's actions, read from the manifest at run time:
 1. It is added from the sidebar search (`addComponentFromSidebar`). Before the first legacy action
    (catalog `legacy: true`), *Show Legacy Components* is switched on (`addLegacyComponents`), because
-   the default palette hides it.
+   the default palette hides it. The provider's connection list is served from one real read for the
+   whole test (`holdConnectionList`, see *Why some cases are mocked or seeded*).
 2. Its new node is found by diffing the node ids.
 3. The node's connection field reads *"Select a <provider> connection"*, and no handle is bound.
 

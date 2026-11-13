@@ -15,6 +15,7 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
+import { holdConnectionList } from "../../../../helpers/integrations/fake-oauth-provider";
 import {
   type CreateConnectionOptions,
   type CreatedConnection,
@@ -430,25 +431,33 @@ test.describe("Connector components — the palette, the canvas and the connecti
             .locator('[data-testid^="rf__node-"]')
             .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid") ?? ""));
 
-        let legacyShown = false;
-        for (const action of actions) {
-          await test.step(`${action.displayName} is added and asks for a ${provider.id} connection`, async () => {
-            if (action.legacy && !legacyShown) {
-              // The default palette hides a legacy component (#2411).
-              await addLegacyComponents(page);
-              legacyShown = true;
-            }
-            const before = await nodeIds();
-            await addComponentFromSidebar(page, action.displayName, addButtonId(action.displayName));
-            const added = (await nodeIds()).filter((id) => !before.includes(id));
-            expect(added, `one new node for ${action.displayName}`).toHaveLength(1);
-            expect(added[0], "the new node is the manifest's component").toContain(action.key);
-            const node = page.getByTestId(added[0]);
-            await expect(node.getByTestId(`value-connection-${FIELD}`)).toHaveText(
-              `Select a ${provider.id} connection`,
-            );
-          });
-        }
+        // Every node placed reads `GET /api/v1/connections?provider=<id>` from the
+        // superuser's `connections-read` bucket (60/minute). One read per node spent 54
+        // across these twelve tests, and at --workers=2 that refused test 19's picker its
+        // list with a 429 (#2411). One real read stands for the rest: every node here is
+        // one provider's, this test creates no connection, and the unbound field it
+        // asserts does not depend on the list.
+        await holdConnectionList(page.context(), async () => {
+          let legacyShown = false;
+          for (const action of actions) {
+            await test.step(`${action.displayName} is added and asks for a ${provider.id} connection`, async () => {
+              if (action.legacy && !legacyShown) {
+                // The default palette hides a legacy component (#2411).
+                await addLegacyComponents(page);
+                legacyShown = true;
+              }
+              const before = await nodeIds();
+              await addComponentFromSidebar(page, action.displayName, addButtonId(action.displayName));
+              const added = (await nodeIds()).filter((id) => !before.includes(id));
+              expect(added, `one new node for ${action.displayName}`).toHaveLength(1);
+              expect(added[0], "the new node is the manifest's component").toContain(action.key);
+              const node = page.getByTestId(added[0]);
+              await expect(node.getByTestId(`value-connection-${FIELD}`)).toHaveText(
+                `Select a ${provider.id} connection`,
+              );
+            });
+          }
+        });
       },
     );
   }
