@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-12
+> **Last updated:** 2026-11-13
 
 ---
 
@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 775 `test()` calls carrying the `@stable` tag, distributed across 292 spec
+> 782 `test()` calls carrying the `@stable` tag, distributed across 295 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2419,6 +2419,11 @@
 - [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 
 #### flow-functionality/
+- [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
+- [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
+- [x] API access modal v2 offers a full-result and a streaming snippet bound to the open flow → `api-access-modal-regression.spec.ts`
 - [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] connecting two compatible components creates exactly one edge → `canvas-connect-components.spec.ts`
 - [x] connecting the same compatible pair twice does not duplicate the edge → `canvas-connect-components.spec.ts`
@@ -2439,6 +2444,7 @@
 - [x] deleting one of two sticky notes leaves the other in place → `canvas-sticky-note-delete.spec.ts`
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
+- [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] dropping a collection file imports every flow it contains → `dragAndDrop.spec.ts`
 - [x] dropping a single flow file imports that flow → `dragAndDrop.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
@@ -2476,6 +2482,7 @@
 - [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
+- [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
