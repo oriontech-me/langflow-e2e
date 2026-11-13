@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -6,6 +7,28 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 // Session switching is tested via sidebar click (session-selector); the header dropdown (session-selector-trigger) only exists in the fullscreen playground, not in the IOModal.
 
 test.describe.configure({ mode: "serial" });
+
+// The run behind a send is `POST /api/v2/workflows`, and it can leave the page
+// well after the click: `button-stop` is hidden before the run starts too, so
+// it is not a completion signal on its own. Clicking `new-chat` while the
+// previous run is still in flight drops the next send or sends it empty (#2418),
+// so each send waits for its own run's stream to end.
+async function sendAndAwaitRun(page: Page, text: string): Promise<string> {
+  const run = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" && new URL(r.url()).pathname === "/api/v2/workflows",
+    { timeout: 30000 },
+  );
+  await page.getByTestId("input-chat-playground").last().fill(text);
+  await page.getByTestId("button-send").last().click();
+  const response = await run;
+  const body = response.request().postDataJSON() as { input_value?: string; session_id?: string };
+  expect(body.input_value, "the run must carry the text that was typed").toBe(text);
+  await response.finished();
+  await expect(page.getByTestId(`chat-message-User-${text}`)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("button-stop").last()).toBeHidden({ timeout: 30000 });
+  return body.session_id ?? "";
+}
 
 test.describe("Playground – Session Creation and Navigation", () => {
   let createdFlowId: string | null = null;
@@ -44,11 +67,9 @@ test.describe("Playground – Session Creation and Navigation", () => {
     },
   );
 
-  // Quarantined for #2418: recurrent flake on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2418's deliverable.
-  test.fixme(
+  test(
     "session selector sidebar must switch to the selected session",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
@@ -59,14 +80,8 @@ test.describe("Playground – Session Creation and Navigation", () => {
       });
 
       await test.step("send a message in the Default session", async () => {
-        await page.getByTestId("input-chat-playground").last().fill("default session message");
-        await page.getByTestId("button-send").last().click();
-        await expect(page.getByText("default session message").last()).toBeVisible({
-          timeout: 15000,
-        });
-        await expect(page.getByTestId("button-stop").last()).toBeHidden({
-          timeout: 30000,
-        });
+        const sessionId = await sendAndAwaitRun(page, "default session message");
+        expect(sessionId, "the Default session is the flow id").toBe(createdFlowId);
       });
 
       await test.step("create a new session and send a distinct message", async () => {
@@ -74,14 +89,8 @@ test.describe("Playground – Session Creation and Navigation", () => {
         await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
           timeout: 10000,
         });
-        await page.getByTestId("input-chat-playground").last().fill("new session message");
-        await page.getByTestId("button-send").last().click();
-        await expect(page.getByText("new session message").last()).toBeVisible({
-          timeout: 15000,
-        });
-        await expect(page.getByTestId("button-stop").last()).toBeHidden({
-          timeout: 30000,
-        });
+        const sessionId = await sendAndAwaitRun(page, "new session message");
+        expect(sessionId, "the new chat must not reuse the Default session").not.toBe(createdFlowId);
       });
 
       await test.step("click the Default Session sidebar entry and verify its messages are shown", async () => {
