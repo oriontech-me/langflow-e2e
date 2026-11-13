@@ -36,8 +36,9 @@ Measured on `1.13.0.dev2`:
 
 1. **`/healthz` and `/health_check` are twins, `/health` is not.** A change that made
    `/healthz` shallow would silently weaken every CI health gate that polls it
-   (`.github/actions/wait-for-backend` polls `/api/v1/version`, but the container
-   healthcheck and several docs use `/health_check`).
+   (`.github/actions/wait-for-backend` polls `/api/v1/version` and then
+   `/api/v1/auto_login`, but the container healthcheck and several docs use
+   `/health_check`).
 2. **`version` and `config` answer unauthenticated — but `config` answers a DIFFERENT
    BODY, and says which one it gave you.** Measured: anonymous gets `type: "public"`
    with 12 keys, a credential gets `type: "full"` with 35. That variant is the

@@ -20,7 +20,16 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 
-import { buildProbeUrl, classifyFailure, main, probeOnce, waitForBackend, DEFAULTS } from "./wait-for-backend.mjs";
+import {
+  buildProbeUrl,
+  buildWriteProbeUrl,
+  classifyFailure,
+  main,
+  probeBackend,
+  probeOnce,
+  waitForBackend,
+  DEFAULTS,
+} from "./wait-for-backend.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -265,6 +274,177 @@ test("probeOnce reports a timeout as TIMEOUT, not as an opaque abort", async () 
   } finally {
     await close(server);
     server.unref?.();
+  }
+});
+
+// ── State 5: the database will not take a write (#2405) ─────────────────────
+
+// The od-20261109-e3743682 shape: the event loop answers `/api/v1/version`, while
+// `auto_login` (which writes) never returns because SQLite is locked.
+function lockedDbServer({ writeStatus, unlockAfter = Infinity } = {}) {
+  const seen = [];
+  let writes = 0;
+  const server = http.createServer((req, res) => {
+    seen.push(req.url);
+    if (req.url === "/api/v1/auto_login") {
+      writes += 1;
+      if (writes > unlockAfter) return res.end('{"access_token":"t"}');
+      if (writeStatus) {
+        res.statusCode = writeStatus;
+        return res.end("{}");
+      }
+      return; // locked: accepted, never answered
+    }
+    res.end('{"version":"1.14.0"}');
+  });
+  return { server, seen };
+}
+
+test("buildWriteProbeUrl keeps the base URL and any path prefix it carries", () => {
+  assert.equal(buildWriteProbeUrl("http://localhost:7860/"), "http://localhost:7860/api/v1/auto_login");
+  assert.equal(buildWriteProbeUrl("https://lf.example.com/prefix/"), "https://lf.example.com/prefix/api/v1/auto_login");
+});
+
+test("a locked database is NOT accepted as healthy, and is classified as db, not as the wedge", async () => {
+  const { server, seen } = lockedDbServer();
+  const port = await listen(server);
+  try {
+    const outcome = await waitForBackend({
+      url: `http://127.0.0.1:${port}/api/v1/version`,
+      timeoutS: 0.4,
+      ...FAST,
+      log: () => {},
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.failure.stage, "write");
+    const verdict = classifyFailure(outcome.failure);
+    assert.equal(verdict.kind, "db");
+    assert.match(verdict.diag, /#2405/);
+    assert.match(verdict.headline, /NOT the post-collect-models wedge/);
+    assert.ok(seen.includes("/api/v1/version") && seen.includes("/api/v1/auto_login"));
+  } finally {
+    server.closeAllConnections?.();
+    await close(server);
+  }
+});
+
+test("a database that unlocks within the budget lets the gate pass", async () => {
+  const { server } = lockedDbServer({ unlockAfter: 2 });
+  const port = await listen(server);
+  try {
+    const outcome = await waitForBackend({
+      url: `http://127.0.0.1:${port}/api/v1/version`,
+      timeoutS: 5,
+      ...FAST,
+      log: () => {},
+    });
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.attempts, 3);
+    assert.equal(outcome.writeUnverified, false);
+  } finally {
+    server.closeAllConnections?.();
+    await close(server);
+  }
+});
+
+test("a write probe answering 5xx is a db failure that names the status", async () => {
+  const { server } = lockedDbServer({ writeStatus: 500 });
+  const port = await listen(server);
+  try {
+    const result = await probeBackend(`http://127.0.0.1:${port}/api/v1/version`, 500);
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "write");
+    assert.equal(classifyFailure(result).kind, "db");
+    assert.match(classifyFailure(result).diag, /answered HTTP 500/);
+  } finally {
+    await close(server);
+  }
+});
+
+test("auto-login disabled (403) passes the gate but marks the write path unverified", async () => {
+  const { server } = lockedDbServer({ writeStatus: 403 });
+  const port = await listen(server);
+  const lines = [];
+  try {
+    const result = await probeBackend(`http://127.0.0.1:${port}/api/v1/version`, 500);
+    assert.equal(result.ok, true);
+    assert.equal(result.writeUnverified, true);
+
+    const code = await main(
+      { WAIT_BASE_URL: `http://127.0.0.1:${port}`, WAIT_TIMEOUT_S: "5", WAIT_PROBE_TIMEOUT_MS: "500" },
+      (line) => lines.push(line),
+    );
+    const out = lines.join("\n");
+    assert.equal(code, 0);
+    assert.match(out, /::warning::\/api\/v1\/auto_login answered 403/);
+    assert.match(out, /could NOT check that the database accepts writes/);
+    assert.doesNotMatch(out, /answered \/api\/v1\/version and \/api\/v1\/auto_login/);
+  } finally {
+    await close(server);
+  }
+});
+
+test("the write probe is never sent while the version probe is failing", async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.url);
+    res.statusCode = 503;
+    res.end("{}");
+  });
+  const port = await listen(server);
+  try {
+    const result = await probeBackend(`http://127.0.0.1:${port}/api/v1/version`, 500);
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "version");
+    assert.equal(classifyFailure(result).kind, "http");
+    assert.deepEqual(seen, ["/api/v1/version"]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("main names auto_login and #2405 when the database will not take a write", async () => {
+  const { server } = lockedDbServer();
+  const port = await listen(server);
+  const lines = [];
+  try {
+    const code = await main(
+      {
+        WAIT_BASE_URL: `http://127.0.0.1:${port}/`,
+        WAIT_TIMEOUT_S: "0.4",
+        WAIT_PROBE_TIMEOUT_MS: "150",
+        WAIT_INTERVAL_S: "0.02",
+        WAIT_NEXT_STEP_LABEL: "the @stable round of shard 2",
+      },
+      (line) => lines.push(line),
+    );
+    const out = lines.join("\n");
+    assert.equal(code, 1);
+    assert.match(out, /::error::Langflow did not answer \/api\/v1\/auto_login within/);
+    assert.match(out, /SQLite-lock shape of #2405/);
+    assert.match(out, /would fail every test in auth/);
+    assert.doesNotMatch(out, /abort in globalSetup/);
+    assert.doesNotMatch(out, /This is the post-collect-models wedge/);
+  } finally {
+    server.closeAllConnections?.();
+    await close(server);
+  }
+});
+
+test("main reports both paths when the backend is healthy", async () => {
+  const server = http.createServer((_req, res) => res.end("{}"));
+  const port = await listen(server);
+  const lines = [];
+  try {
+    const code = await main(
+      { WAIT_BASE_URL: `http://127.0.0.1:${port}`, WAIT_TIMEOUT_S: "5", WAIT_PROBE_TIMEOUT_MS: "500" },
+      (line) => lines.push(line),
+    );
+    assert.equal(code, 0);
+    assert.match(lines.join("\n"), /answered \/api\/v1\/version and \/api\/v1\/auto_login/);
+    assert.doesNotMatch(lines.join("\n"), /::warning::/);
+  } finally {
+    await close(server);
   }
 });
 
