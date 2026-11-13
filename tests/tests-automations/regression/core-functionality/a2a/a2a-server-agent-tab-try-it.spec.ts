@@ -18,7 +18,7 @@ import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 // It lives in a project created with an EXPLICIT auth_type "none", so the agent is
 // public and the panel sends with no key. Since 1.14.0.dev23 (#16186) the default
 // project is "apikey" under AUTO_LOGIN; the panel then asks for a key this spec does
-// not fill (#2412). That restricted variant is #2433.
+// not fill (#2412). That restricted variant is a2a-server-agent-tab-try-it-apikey.spec.ts (#2433).
 
 test.describe("A2A Server — Agent tab Try it panel", () => {
   test("the Try it panel round-trips a sentinel over the published endpoint", { tag: ["@stable", "@workspace", "@ui-ux", "@a2a"] }, async ({
