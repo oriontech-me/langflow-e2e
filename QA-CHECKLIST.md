@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 783 `test()` calls carrying the `@stable` tag, distributed across 295 spec
+> 790 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2348,6 +2348,11 @@
 - [x] rejecting a Human Input pause routes only the reject branch → `human-input-pause-resume.spec.ts`
 - [x] a suspended Human Input run survives a page reload and completes on approval → `human-input-pause-resume.spec.ts`
 - [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
+- [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
+- [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
+- [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
+- [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
+- [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
 - [x] the audio button is disabled in a browser without speech recognition → `playground-audio-input.spec.ts`
 - [x] a click starts speech recognition and a second click stops it → `playground-audio-input.spec.ts`
 - [x] the final transcript is appended to the text already in the input → `playground-audio-input.spec.ts`
@@ -2370,6 +2375,8 @@
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
 - [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
 - [x] selecting messages in the log table and deleting them must reduce the row count → `playground-message-logs.spec.ts`
+- [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
+- [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
 - [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
