@@ -1785,7 +1785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 790 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 791 `test()` calls carrying the `@stable` tag, distributed across 297 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1944,6 +1944,7 @@
 - [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
 - [x] code validation answers 200 for broken code, with the verdict in the body → `api-validation-endpoints.spec.ts`
 - [x] prompt validation extracts variables only when it is given a node → `api-validation-endpoints.spec.ts`
+- [x] a custom component is described, and a field update echoes the code back → `api-validation-endpoints.spec.ts`
 - [x] a missing field does not echo the object it was missing from → `api-validation-redaction.spec.ts`
 - [x] a validator that quotes its input answers [redacted] → `api-validation-redaction.spec.ts`
 - [x] a non-uuid path parameter drops both the value and its input-derived ctx → `api-validation-redaction.spec.ts`
