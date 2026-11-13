@@ -275,26 +275,33 @@ export const FINISHED_AT_GRACE_MS = 5_000;
  * Polls `GET /{kb}/runs/{id}` until the run has SETTLED — a terminal status and a
  * `finished_at` — and returns it. Throws naming the last status seen when the budget
  * runs out, and naming the missing timestamp when a terminal run does not get one
- * within `FINISHED_AT_GRACE_MS`.
+ * within `FINISHED_AT_GRACE_MS` (`finishedAtGraceMs` overrides it, for the unit tests).
+ *
+ * `requireFinishedAt: false` returns on the terminal status alone. It exists for one
+ * caller: a cancelled run keeps `finished_at: null` forever on `1.14.0.dev23`+ (#2417),
+ * and the cancel test must assert everything else about that run before it checks the
+ * timestamp under a declared-failing step. Every other caller keeps the strict default.
  */
 export async function waitForRunToFinish(
   request: APIRequestContext,
   dirName: string,
   runId: string,
-  options?: Headers & { timeoutMs?: number },
+  options?: Headers & { timeoutMs?: number; requireFinishedAt?: boolean; finishedAtGraceMs?: number },
 ): Promise<IngestionRun> {
+  const requireFinishedAt = options?.requireFinishedAt ?? true;
+  const graceMs = options?.finishedAtGraceMs ?? FINISHED_AT_GRACE_MS;
   const deadline = Date.now() + (options?.timeoutMs ?? 120_000);
   let last: IngestionRun | null = null;
   let terminalSince: number | null = null;
   while (Date.now() < deadline) {
     last = await getRun(request, dirName, runId, options);
     if (last && TERMINAL_RUN_STATUSES.includes(last.status)) {
-      if (last.finished_at) return last;
+      if (last.finished_at || !requireFinishedAt) return last;
       terminalSince ??= Date.now();
-      if (Date.now() - terminalSince > FINISHED_AT_GRACE_MS) {
+      if (Date.now() - terminalSince > graceMs) {
         throw new Error(
           `Ingestion run ${runId} reports '${last.status}' but its finished_at stayed null ` +
-            `for ${FINISHED_AT_GRACE_MS} ms`,
+            `for ${graceMs} ms`,
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 100));

@@ -1,6 +1,6 @@
 # Memory Base — ingestion: chunk settings, preview, folder connector, runs and cancel
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev18`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev25`, #2417) · first validated on `1.14.0.dev18`
 
 ---
 
@@ -49,7 +49,11 @@ the only way a caller can reach it.
    ~30 s is observed as `running` in both `GET /{kb}/runs` and `GET /{kb}/runs/{id}`
    (`finished_at: null`); `POST /{kb}/cancel` answers `200`; the run then reports
    `cancelled` with `error_message: "ingestion cancelled by user"` — never
-   `succeeded` — and `GET /{kb}/chunks?job_id=<run>` holds no chunk from it.
+   `succeeded` — and `GET /{kb}/chunks?job_id=<run>` holds no chunk from it. Last,
+   the cancelled run must report a `finished_at`; on the builds where it never does
+   (`1.14.0.dev23`+, a confirmed regression — #2417, LE-3447) that one check is **declared
+   failing**, so the test stays green on everything else and turns red the day
+   upstream fixes it.
 
 ---
 
@@ -138,9 +142,23 @@ test 1 drives the Knowledge page and never used the helper.
   found among the chunks.
 - **Test 5 requires having seen the run in flight before it cancels**, in both the
   list and the detail. A run that finished before the cancel landed fails the test
-  naming that — it is never read as "cancel works". The cancelled run must also carry
-  `finished_at`, and `GET /{kb}/chunks?job_id=<run>` must answer `total: 0` (the
-  cancel path rolls back what the run had written).
+  naming that — it is never read as "cancel works". `GET /{kb}/chunks?job_id=<run>`
+  must answer `total: 0` (the cancel path rolls back what the run had written).
+- **Test 5 checks `finished_at` last, and on affected builds declares it failing.**
+  Everything above runs unweakened on every build; the run is read for those with
+  `waitForRunToFinish(…, { requireFinishedAt: false })`, which returns on the terminal
+  status alone. That status flips the moment the cancel route marks the **job**
+  cancelled, while the run's own reason (`error_message`) is written by `finalize_run`
+  a moment later — read once right away it was still `null` 3 times out of 3 on
+  `1.14.0.dev25` — so the reason is **polled** for (15 s), not read once. Then a
+  separate step waits for `finished_at` with the usual 5 s grace.
+  On a build the regression affects (`1.14.0.dev23`+, `cancelledRunKeepsNullFinishedAt`)
+  that step is wrapped in `test.fail()`: the failure is the expected outcome, and
+  when upstream fixes it the step passes, Playwright reports "expected to fail but
+  passed", and the test goes red asking for the declaration to be removed. A failure
+  in any earlier step is still a real failure, because the declaration is made only
+  once those steps have passed. On every other build (1.13.x, and `main` while it
+  lacks upstream #13508) the step must pass, as it did before.
 - **A run is read once it has settled.** A run reports its terminal status a moment
   before its `finished_at`: the status is written into the job's metadata by
   `finalize_run`, `finished_at` is projected from the job row's `finished_timestamp`,
@@ -266,6 +284,36 @@ of the job row's timestamp — so the fix is one line upstream, but a client pol
 a terminal status reads `finished_at: null` in the meantime. Recorded for the upstream
 draft; the test waits it out rather than failing on a 70 ms race.
 
+### A cancelled run never gets `finished_at` (regression, `1.14.0.dev23`+, #2417)
+
+Measured on `1.14.0.dev25`: a cancelled folder ingestion reports `status: "cancelled"`
+and the right `error_message`, but its `finished_at` stays `null` — 5 s, then 90 s,
+and the database shows why: the `job` row reads `status: cancelled`,
+`finished_timestamp: NULL`, while `job_metadata.finished_at` **is** set (by
+`finalize_run`, ~2 s after the run started). `GET /{kb}/runs/{id}` projects
+`finished_at` from `job.finished_timestamp` (`_job_to_run_row`), so the run never
+reports one.
+
+Two upstream pieces combine:
+
+- `POST /{kb}/cancel` (`knowledge_bases.py`) writes
+  `update_job_status(job_id, CANCELLED)` with no `finished_timestamp`.
+- Until `1.14.0.dev22`, when `perform_ingestion` returned after catching its own
+  cancellation, `execute_with_status` wrote
+  `update_job_status(COMPLETED, finished_timestamp=True)` unconditionally — which
+  set the timestamp (and overwrote the cancel with `completed`, see below).
+  Upstream #13508 (`ba88fe1767`, first nightly `1.14.0.dev23`) replaced that with
+  `complete_live_job`, which writes only while the row is still live; a row the
+  cancel route already marked `cancelled` is left alone, so nothing ever sets
+  `finished_timestamp`.
+
+Scope: only `release-1.14.0` carries #13508; `main` and `release-1.13.3` keep the old
+success path and are unaffected (checked at their tips, 2026-11-12). Not fixed at the
+`release-1.14.0` tip either. Either one-line fix works upstream: pass
+`finished_timestamp=True` from the cancel route, or let `_job_to_run_row` fall back to
+`job_metadata.finished_at`. Filed as [LE-3447](https://datastax.jira.com/browse/LE-3447)
+(`REGRESSIONS.md` → Ledger, `Open`).
+
 ### Measured side effects of a cancel (not asserted)
 
 After a cancel, the knowledge base row reads `status: "failed"` with
@@ -274,7 +322,10 @@ After a cancel, the knowledge base row reads `status: "failed"` with
 `400 "Cannot cancel job with status 'completed'"`. `perform_ingestion` catches its own
 cancellation and returns normally, so `execute_with_status` records a completion.
 The run is what reports the cancellation, and it does so correctly; the job and the
-row are recorded here so nobody re-derives them.
+row are recorded here so nobody re-derives them. **From `1.14.0.dev23` the job reads
+`cancelled` instead** — #13508's guarded success write no longer overwrites the
+cancel — which is the change behind the section above (measured on `1.14.0.dev25`,
+from the database).
 
 ### Why the folder connector needs a lane change
 
