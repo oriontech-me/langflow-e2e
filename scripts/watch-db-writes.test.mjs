@@ -10,10 +10,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 import { nextState, runWatchdog } from "./watch-db-writes.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -140,7 +140,7 @@ test("against a real locked backend the CLI writes a fired verdict and signals t
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dbwd-"));
+  const dir = makeTempDir("dbwd-");
   const out = path.join(dir, "v.json");
   // A sacrificial process group standing in for the round.
   const victim = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
@@ -177,7 +177,7 @@ test("against a real locked backend the CLI writes a fired verdict and signals t
 test("the CLI stops on SIGTERM and writes an unfired verdict", async () => {
   const server = http.createServer((_req, res) => res.end("{}"));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dbwd-"));
+  const dir = makeTempDir("dbwd-");
   const out = path.join(dir, "v.json");
   try {
     const child = spawn(process.execPath, [path.join(REPO_ROOT, "scripts/watch-db-writes.mjs")], {
@@ -222,7 +222,7 @@ test("run-e2e.sh fails the shard on a fired verdict, and only on a fired one (ex
   const end = body.indexOf("\n  fi\n", start) + "\n  fi\n".length;
   assert.ok(start > 0 && end > start);
   const block = body.slice(start, end);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dbwd-sh-"));
+  const dir = makeTempDir("dbwd-sh-");
   const run = (verdict, status) => {
     fs.writeFileSync(path.join(dir, "v.json"), verdict);
     fs.mkdirSync(path.join(dir, "logs"), { recursive: true });
