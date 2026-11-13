@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connection-oauth-wizard.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev14`; the pre-`1.14.0.dev10` side on `1.14.0.dev9`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev26`; `1.14.0.dev14` before the `dev23` provider field; the pre-`1.14.0.dev10` side on `1.14.0.dev9`)
 
 Owning issue: #2307 (Dedicated Integrations, batch 2; upstream surfaces A10, B2 and B3). It depends on #2301's fake
 OAuth registrations (`docs/api/connections/oauth-fake-registrations.md`). The callback's controls are asserted
@@ -49,7 +49,7 @@ Measured on `1.14.0.dev2`, and again on `1.14.0.dev7`:
 
 | What the user does | What the dialog shows | What the row reads |
 |---|---|---|
-| Opens *Add connection* | *Provider* (`connection-provider`): the manifest's providers in its order, the **first** one preselected. On `1.14.0.dev7` that is *GitHub* (langflow#15957 added it ahead of Google), so every test that needs Google picks it. Then *Setup guide*, *Handle*, *Display name*, *Share with the whole instance*, and *Scopes to request*: one checkbox per scope (`connection-scope-<scope>`), all checked. Each scope's label lists every action that needs it, with that action's risk (*Read* / *Write*), from the manifest's `display_name` and `risk`. The scope id comes last, shortened to its last segment, with the full scope as its `title`. Slack adds *How to connect* (`connection-method`: *Sign in with Slack* / *Paste a token*) and *Runs as* (`connection-identity`). | — |
+| Opens *Add connection* | *Provider* (`connection-provider`): the manifest's providers in its order, the **first** one preselected. On `1.14.0.dev7` that is *GitHub* (langflow#15957 added it ahead of Google), and on `1.14.0.dev23` *Confluence Cloud*, so every test that needs Google picks it. From `1.14.0.dev23` the field is a combobox and not a native `<select>` (see *The provider field* below). Then *Setup guide*, *Handle*, *Display name*, *Share with the whole instance*, and *Scopes to request*: one checkbox per scope (`connection-scope-<scope>`), all checked. Each scope's label lists every action that needs it, with that action's risk (*Read* / *Write*), from the manifest's `display_name` and `risk`. The scope id comes last, shortened to its last segment, with the full scope as its `title`. Slack adds *How to connect* (`connection-method`: *Sign in with Slack* / *Paste a token*) and *Runs as* (`connection-identity`). | — |
 | Reads the help | *Handle* and *Display name* each carry an info button (`connection-handle-help`, `connection-display-name-help`; accessible names *Handle help* / *Display name help*). Its tooltip reads *"The identifier flows use to reference this connection, such as `<provider>/work`."* (the example follows the selected provider) and *"A readable name shown in connection lists to help you recognize this account."*. *Setup guide* (`connection-setup-guide`) links the selected provider's page: Google `…/connection-oauth#customer-owned-google-registration`, Microsoft `…/entra-app-registration`, Slack `…/connection-oauth#customer-owned-slack-registration` (all on `docs.langflow.org`). | — |
 | Picks Microsoft 365 | The scope a component needs only for some inputs marks each such action *"For some inputs"* after its risk: `Files.Read.All` and `Sites.Read.All`, which the SharePoint/OneDrive actions and trigger need only when given a drive or a site (the manifest's `conditional_scopes`). The same actions list `Files.Read` without the mark, because they always need it. `offline_access` names no action. | — |
 | Picks *Paste a token* | A *Token* field (`connection-token`) in place of the scope list, and the *Setup guide* points to the Slack bundle's page | — |
@@ -122,12 +122,27 @@ Two states need the registration list mocked, because the lanes serve one regist
   rarely beats the request, so the spec waits for the list before it touches the dialog, and the race is recorded here
   instead of asserted.
   **The race reopens on every provider pick, not only on the first open**, because the list is fetched per provider
-  (`?provider=<id>`): the list the dialog loads first is the preselected provider's, GitHub since `1.14.0.dev7`, and
+  (`?provider=<id>`): the list the dialog loads first is the preselected provider's (GitHub since `1.14.0.dev7`,
+  Confluence since `1.14.0.dev23`), and
   Google's is fetched only after the test picks Google. Waiting for the first list therefore no longer covered the
   pick, and test 4 lost the race: measured on `1.14.0.dev14`, `oauth/start` answered `400` with *"OAuth registration
   ID is not configured."*, the popup never reached the provider, and the test timed out waiting for the callback
   (`browserContext.waitForEvent`), the signature of test 4's one-off failure on `1.14.0.dev9` (#2376). The spec now
   waits for the list of the provider it picks.
+- **The provider field (#2413).** From `1.14.0.dev23` *Provider* is a Radix Select. `connection-provider` is a
+  `button` with `role="combobox"` showing the chosen provider's `display_name`, and its options (`role="option"`)
+  are named by `display_name` and carry no value in the DOM. It replaces a native `<select>` of provider ids.
+  langflow#15951 (the ServiceNow bundle) added it as `ProviderSelect.tsx`, with the provider icons. The 2026-11-11
+  daily failed four tests on `locator.inputValue: Node is not an <input>, <textarea> or <select> element`, and test
+  1 on an option list of one element. *How to connect*, *Runs as* and *OAuth registration* are still native
+  selects. The spec reads ids and names from the manifest the dialog renders, and decides which field it drives by
+  the served version (`1.14.0.dev23`), never by what the page shows. `release-1.13.3` still ships the native select.
+- **The display name (#2413).** From `1.14.0.dev26` the dialog no longer asks for one. Upstream `1dcd9de3fb`
+  (*"use connection handles as display names"*, 2026-11-12) removed the *Display name* field and its help, and the
+  connection's `display_name` is now its handle. `1.14.0.dev25` and the 1.13 line keep the field. The spec fills it
+  only where it exists, and test 7 asserts its absence from `1.14.0.dev26`, both by served version. The tests that
+  open *Reconnect* plant their rows through the API with an explicit display name, so their dialog titles do not
+  move. That the handle becomes the display name of a row added in the UI is not asserted here.
 - **The 10-minute client timeout**, which also shows the *expired* copy, is not waited out. The server-side
   `oauth-expired` reaches the same copy. langflow#15816 made it hold while the window is untracked too; that is
   the same timer, and it is not asserted either.
@@ -229,12 +244,15 @@ whatever is left through the API. The fake provider is a context route on `https
 for test 5, `https://login.microsoftonline.com/**`), with the outcome set per step. *Add connection* is opened only
 once its registration list has arrived, and then the provider the test needs is picked, waiting again for **that**
 provider's list: the list is fetched per provider, the first provider listed is preselected, and on `1.14.0.dev7` that
-is GitHub (see *Recorded, not asserted* for the race this avoids). The tests run in order in one worker (see *Budgets* above).
+is GitHub, on `1.14.0.dev23` Confluence (see *Recorded, not asserted* for the race this avoids). From `1.14.0.dev23`
+a provider is picked by opening the combobox and choosing the option named by its manifest `display_name`, and the
+current one is read back from the combobox's text. The tests run in order in one worker (see *Budgets* above).
 
 **Test 1 — the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a
 token instead of a sign-in.**
 1. Read `GET /api/v1/integrations`. Open *Add connection*. The provider options are the manifest's providers, in
-   its order, with the first one preselected. Pick Google.
+   its order, with the first one preselected: their ids on a native select, and their `display_name`s on the
+   `1.14.0.dev23` combobox. Pick Google.
 2. For every Google capability and every scope it requires, `connection-scope-<scope>` is checked, and its label
    carries the capability's `display_name` with its risk label. The registration select is absent (one registration
    per profile), and so is the callback help.
@@ -314,7 +332,9 @@ only some inputs need.**
 1. Read `GET /api/v1/integrations`. Open *Add connection* and pick Google.
 2. Hover *Handle help* (`connection-handle-help`): the tooltip reads *"The identifier flows use to reference this
    connection, such as google/work."*. Hover *Display name help* (`connection-display-name-help`): *"A readable
-   name shown in connection lists to help you recognize this account."*.
+   name shown in connection lists to help you recognize this account."*. From `1.14.0.dev26` the dialog has no
+   *Display name* field, so neither `connection-display-name` nor its help is present (see *The display name*
+   below).
 3. For Google, Microsoft 365 and Slack in turn, *Setup guide* links that provider's page (the three URLs in the
    table above), and the Handle tooltip's example follows the provider.
 4. On Microsoft 365, for every action and every scope it requires or needs only for some inputs, that scope's label
@@ -351,6 +371,8 @@ Each test also has a force-fail mutation executed against it.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/ConnectionSetupHelp.tsx` and
   `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/helpers/setup-guide.ts` — the setup help and the
   suggested redirect URI.
+- `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/ProviderSelect.tsx` — the provider
+  combobox from `1.14.0.dev23` (langflow#15951): `connection-provider`, options named by `display_name`.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/RegistrationSelect.tsx` — the picker, shown
   only with two or more registrations.
 - `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/components/ScopeChecklist.tsx` and

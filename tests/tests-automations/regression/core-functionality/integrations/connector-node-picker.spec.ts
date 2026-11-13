@@ -42,6 +42,8 @@ test.describe("Connector components — the palette, the canvas and the connecti
   const COPY = {
     loading: "Loading connections…",
     empty: "No google connections yet. Create one in Settings, then refresh.",
+    /** The empty copy from 1.14.0.dev23, beside the picker's own Add connection button. */
+    emptyInline: "No google connections yet.",
     loadFailed: "Could not load connections.",
     noScopes: "No scope required",
     notFound: "not found",
@@ -51,6 +53,11 @@ test.describe("Connector components — the palette, the canvas and the connecti
     pending: "Pending",
     revoked: "Revoked",
   };
+  /**
+   * First build whose picker creates connections itself (langflow#16332, #2413): an Add
+   * connection button in the popover, and the empty copy no longer points to Settings.
+   */
+  const INLINE_ADD_SINCE = "1.14.0.dev23";
   /** First build whose palette shows the provider triggers (upstream #15940, #2336). */
   const TRIGGERS_IN_PALETTE_SINCE = "1.14.0.dev4";
   /**
@@ -256,6 +263,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
       footer: node.getByText(/^(Requires .+|No scope required)$/),
       clear: node.getByTestId(`clear-connection-${FIELD}`),
       refresh: node.getByTestId(`refresh-connections-${FIELD}`),
+      add: node.getByTestId(`add-connection-${FIELD}`),
       copy: (text: string) => node.getByText(text, { exact: true }),
     };
   }
@@ -621,23 +629,27 @@ test.describe("Connector components — the palette, the canvas and the connecti
     },
   );
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "an empty list says how to get a connection, and Refresh fetches a new one",
-    { tag: ["@components", "@integrations"] },
+    { tag: ["@stable", "@components", "@integrations"] },
     async ({ page, request }) => {
       // The superuser sees every user's google rows, so the empty state is reached
       // by answering the picker's own request with []. The only mocked response here.
       const googleList = isList("google");
+      // From 1.14.0.dev23 the way to get one is the picker's own Add connection button;
+      // before it, a sentence pointing to Settings. The served version decides (#2413).
+      const inlineAdd = await servedVersionAtLeast(request, INLINE_ADD_SINCE);
+      const emptyCopy = inlineAdd ? COPY.emptyInline : COPY.empty;
       await page.route(googleList, (route) => route.fulfill({ json: [] }));
       await openCatalogFlow(page, request, "empty", [{ id: "gmail", type: connector("GmailSendComponent").key }]);
       const gmail = picker(page, "gmail");
 
       await test.step("the empty list says how to get one", async () => {
         await openPicker(gmail);
-        await expect(gmail.copy(COPY.empty)).toBeVisible();
+        await expect(gmail.copy(emptyCopy)).toBeVisible();
         await expect(gmail.options).toHaveCount(0);
+        await expect(gmail.add, "the picker offers to add a connection").toHaveCount(inlineAdd ? 1 : 0);
+        if (inlineAdd) await expect(gmail.add).toBeVisible();
       });
 
       let refetched = 0;
@@ -649,7 +661,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
         await page.unroute(googleList);
         const planted = await plant(request, "refresh", { grantedScopes: [GMAIL_SEND] });
         await expect(gmail.option(handleOf(planted))).toHaveCount(0);
-        await expect(gmail.copy(COPY.empty)).toBeVisible();
+        await expect(gmail.copy(emptyCopy)).toBeVisible();
         expect(refetched, "the list is cached: nothing fetched it again").toBe(0);
         return planted;
       });
@@ -659,7 +671,7 @@ test.describe("Connector components — the palette, the canvas and the connecti
         await gmail.refresh.click();
         expect((await fetched).status()).toBe(200);
         await expect(gmail.option(handleOf(row))).toBeVisible();
-        await expect(gmail.copy(COPY.empty)).toBeHidden();
+        await expect(gmail.copy(emptyCopy)).toBeHidden();
       });
     },
   );

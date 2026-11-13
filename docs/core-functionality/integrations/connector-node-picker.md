@@ -129,6 +129,14 @@ handle is bound) and `refresh-connections-<id>`.
 - **An empty list says how to get one**: *"No google connections yet. Create one in Settings, then
   refresh."* The list is cached. A connection created while the picker is open stays absent until
   **Refresh** re-fetches, measured as 0 options before and 1 after.
+- **From `1.14.0.dev23` the picker creates connections itself** (#2413). langflow#16332 (*create
+  connections inline*) added an **Add connection** button to the popover (`add-connection-<field id>`)
+  and shortened the empty copy to *"No google connections yet."*: the way to get one is now that button,
+  not a sentence pointing to Settings. Measured on `1.14.0.dev26`, an empty popover reads *Connections*,
+  *"No google connections yet."*, the footer (*"Requires gmail.send"*), **Refresh** and **Add connection**.
+  `1.14.0.dev22` and `release-1.13.3` keep the long copy and have no button. The test asserts the copy and
+  the button by the served version. The caching and Refresh behaviour are unchanged. What the inline
+  dialog does is not asserted here.
 - **A failed list says so**: *"Could not load connections."* It does so only after react-query's retries
   are exhausted. Measured with the list answering `500`: 6 requests and **~31 s** before the copy
   replaces *"Loading connections…"*. The test therefore gives it 60 s.
@@ -182,6 +190,21 @@ handle is bound) and `refresh-connections-<id>`.
   answer: every node in one canvas test belongs to one provider, the test creates no connection, and
   the unbound field it asserts does not depend on the list. The picker tests (14–20) read the real list
   every time.
+- **The hold answers every read it took before it removes its route** (#2413). Removing a context's last
+  route makes Playwright send every request still inside a handler on to the network (1.58,
+  `notifyRoutesInFlightAboutRemovedHandler`). A read still in its `route.fetch()` at that moment was then
+  fulfilled a second time and threw *"Route is already handled!"* into a canvas test whose every step had
+  passed. That happened at `--workers=2`, in 2 of 34 tests in one measured run, and it cost the test its
+  cleanup, so a flow leaked. `holdConnectionList` now takes no new read once released, answers every
+  read it took, and only then removes its route. It is unit-tested with a fake context that applies
+  Playwright's rule. The test fails on the version in #2444, and on a first attempt here that waited
+  *after* the route was gone.
+- **The hold's one read waits a `429` out** (#2413). With the wizard spec draining the same bucket in the
+  other worker, the hold's first read in a canvas test drew `429`. A non-`200` was never snapshotted, so
+  every later node read the server again: 11 and 18 `🚨 429` lines in two of three `--workers=2` runs,
+  all advisory and all green. The hold now reads through `fetchAbsorbingReadLimit`, so a refused read is
+  waited out instead of reaching the page. Reads that arrive while one is out share it, so a drained
+  window ends in one read, not one per node.
 
 ### Recorded, not asserted
 
@@ -269,8 +292,10 @@ Items* and *Slack: On Message*. The four footers in the table above are read in 
 Slack trigger's *"No scope required"*. No connection is planted.
 
 **Test 17 — empty, then Refresh.**
-1. The picker's `GET …?provider=google` is fulfilled with `[]`, and the picker reads *"No google
-   connections yet. Create one in Settings, then refresh."* with no option.
+1. The picker's `GET …?provider=google` is fulfilled with `[]`, and the picker reads the empty copy with no
+   option: from `1.14.0.dev23`, *"No google connections yet."* and an **Add connection** button
+   (`add-connection-<field id>`); before it, *"No google connections yet. Create one in Settings, then
+   refresh."*.
 2. The route is removed, and an owner row is planted. It is not listed yet: the list is cached.
 3. **Refresh** lists it.
 

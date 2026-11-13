@@ -75,6 +75,19 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
    * Decided by the served version, never by whether a row survives (#2336, #2376).
    */
   const FAILED_ADD_DISCARDED_SINCE = "1.14.0.dev10";
+  /**
+   * From this build *Provider* is a Radix Select (langflow#15951, `ProviderSelect.tsx`):
+   * `connection-provider` is a combobox button showing the provider's display_name, and
+   * its options are named by display_name with no value in the DOM. Before it, a native
+   * <select> of provider ids. Decided by the served version, never by the element (#2413).
+   */
+  const PROVIDER_COMBOBOX_SINCE = "1.14.0.dev23";
+  /**
+   * From this build the dialog has no *Display name* field: a connection's display name
+   * is its handle (langflow upstream 1dcd9de3fb, "use connection handles as display
+   * names", first in 1.14.0.dev26). The 1.13 line and earlier 1.14 builds keep it.
+   */
+  const NO_DISPLAY_NAME_FIELD_SINCE = "1.14.0.dev26";
   /** Long enough for a start, a callback or a read that waits out two 429 windows (the spec doc's *Budgets*). */
   const OUTCOME_TIMEOUT = 180_000;
   /**
@@ -87,10 +100,24 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
 
   let superHeaders: Record<string, string>;
   let provider: FakeOAuthProvider;
+  /** Whether the served build renders *Provider* as a combobox (see PROVIDER_COMBOBOX_SINCE). */
+  let providerCombobox = false;
+  /** Whether the served build's dialog still has a *Display name* field. */
+  let displayNameField = true;
+  /** provider_id → display_name, in the manifest's order: what the combobox is named by. */
+  let providerNames = new Map<string, string>();
   const handles: string[] = [];
 
   test.beforeEach(async ({ page, request }, testInfo) => {
     superHeaders = { Authorization: await getAuthToken(request) };
+    providerCombobox = await servedVersionAtLeast(request, PROVIDER_COMBOBOX_SINCE);
+    displayNameField = !(await servedVersionAtLeast(request, NO_DISPLAY_NAME_FIELD_SINCE));
+    if (providerCombobox && providerNames.size === 0) {
+      const res = await request.get("/api/v1/integrations", { headers: superHeaders });
+      expect(res.status(), await res.text()).toBe(200);
+      const { providers } = (await res.json()) as { providers: Array<{ provider_id: string; display_name: string }> };
+      providerNames = new Map(providers.map((item) => [item.provider_id, item.display_name]));
+    }
     provider = await installFakeOAuthProvider(page.context(), testInfo.project.use.baseURL!);
     await absorbStartRateLimit(page);
     await absorbReadRateLimit(page.context());
@@ -155,6 +182,51 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     );
   }
 
+  /** The provider field, a native select or (from 1.14.0.dev23) a combobox. */
+  const providerField = (page: Page) => page.getByTestId("connection-provider");
+
+  /** The provider ids the field offers, in its order. */
+  async function providerOptionIds(page: Page): Promise<string[]> {
+    if (!providerCombobox) {
+      return providerField(page)
+        .locator("option")
+        .evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value));
+    }
+    await providerField(page).click();
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
+    const names = await listbox.getByRole("option").evaluateAll((els) => els.map((el) => (el as HTMLElement).innerText.trim()));
+    await page.keyboard.press("Escape");
+    await expect(listbox).toBeHidden();
+    return names.map((name) => providerIdNamed(name));
+  }
+
+  /** The provider id the field currently shows. */
+  async function chosenProvider(page: Page): Promise<string> {
+    if (!providerCombobox) return providerField(page).inputValue();
+    return providerIdNamed((await providerField(page).innerText()).trim());
+  }
+
+  /** Picks a provider by id: its option is named by the manifest's display_name. */
+  async function chooseProvider(page: Page, providerId: string): Promise<void> {
+    if (!providerCombobox) {
+      await providerField(page).selectOption(providerId);
+      return;
+    }
+    const name = providerNames.get(providerId);
+    expect(name, `the manifest names provider ${providerId}`).toBeDefined();
+    await providerField(page).click();
+    await page.getByRole("listbox").getByRole("option", { name, exact: true }).click();
+    // innerText, not toHaveText: the provider icon's own text ("Microsoft") is in textContent.
+    await expect.poll(() => chosenProvider(page), { message: `${providerId} is chosen` }).toBe(providerId);
+  }
+
+  function providerIdNamed(name: string): string {
+    const match = [...providerNames].find(([, displayName]) => displayName === name);
+    expect(match, `"${name}" is a manifest provider's display_name`).toBeDefined();
+    return match![0];
+  }
+
   /**
    * Opens Add, waits for its registration list, then picks `provider` and waits
    * for that provider's list too. Continue is enabled before the list arrives, and
@@ -175,10 +247,9 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     const dialog = page.getByRole("dialog", { name: "Add connection" });
     await expect(dialog).toBeVisible();
     expect((await listed).status()).toBe(200);
-    const select = page.getByTestId("connection-provider");
-    if (provider && (await select.inputValue()) !== provider) {
+    if (provider && (await chosenProvider(page)) !== provider) {
       const picked = registrationsListed(page, provider);
-      await select.selectOption(provider);
+      await chooseProvider(page, provider);
       expect((await picked).status(), `the ${provider} registration list`).toBe(200);
     }
     return dialog;
@@ -239,7 +310,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
 
   async function fillDetails(page: Page, name: string) {
     await page.getByTestId("connection-name").fill(name);
-    await page.getByTestId("connection-display-name").fill(`E2E ${name}`);
+    if (displayNameField) await page.getByTestId("connection-display-name").fill(`E2E ${name}`);
   }
 
   /** Every non-GET connection request the page sends from now on. */
@@ -264,11 +335,9 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")!.slice("connection-scope-".length)));
   }
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const res = await request.get("/api/v1/integrations", { headers: superHeaders });
       expect(res.status(), await res.text()).toBe(200);
@@ -284,11 +353,11 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       const dialog = await openAddDialog(page, null);
 
       await test.step("the provider options are the manifest's, the first one selected", async () => {
-        const select = page.getByTestId("connection-provider");
-        const values = await select.locator("option").evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value));
-        expect(values).toEqual(manifest.providers.map((item) => item.provider_id));
-        await expect(select).toHaveValue(manifest.providers[0].provider_id);
-        await select.selectOption("google");
+        expect(await providerOptionIds(page)).toEqual(manifest.providers.map((item) => item.provider_id));
+        await expect.poll(() => chosenProvider(page), { message: "the first provider is preselected" }).toBe(
+          manifest.providers[0].provider_id,
+        );
+        await chooseProvider(page, "google");
       });
 
       await test.step("every scope a Google action needs is checked and names that action with its risk", async () => {
@@ -309,7 +378,7 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
       });
 
       await test.step("Slack offers a sign-in or a pasted token, as the user or as a bot", async () => {
-        await page.getByTestId("connection-provider").selectOption("slack");
+        await chooseProvider(page, "slack");
         const method = page.getByTestId("connection-method");
         await expect(method.locator("option")).toHaveText(["Sign in with Slack", "Paste a token"]);
         await expect(method).toHaveValue("oauth");
@@ -336,11 +405,9 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page }) => {
       await page.route("**/api/v1/connections/oauth/registrations**", (route) =>
         route.fulfill({ json: { registrations: [] } }),
@@ -383,11 +450,9 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const discards = await servedVersionAtLeast(request, FAILED_ADD_DISCARDED_SINCE);
       // A second Google registration, listed first: the picker must not just
@@ -503,11 +568,9 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "a denied consent, then an expired sign-in link, each say so, and the row records why",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const discards = await servedVersionAtLeast(request, FAILED_ADD_DISCARDED_SINCE);
       const name = newHandle("deny");
@@ -716,11 +779,9 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
     },
   );
 
-  // Quarantined for #2413: hard failure on non-environmental guard day on daily 2026-11-11 (1.14.0.dev23, umbrella e2e-qa#30).
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2413's deliverable.
-  test.fixme(
+  test(
     "the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need",
-    { tag: ["@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
     async ({ page, request }) => {
       const res = await request.get("/api/v1/integrations", { headers: superHeaders });
       expect(res.status(), await res.text()).toBe(200);
@@ -742,19 +803,25 @@ test.describe("Connections — the Add and Reconnect wizard, up to consent", () 
 
       await test.step("Handle and Display name each explain themselves", async () => {
         await expectTooltip(page, "connection-handle-help", COPY.handleTooltip("google"));
-        await expectTooltip(page, "connection-display-name-help", COPY.displayNameTooltip);
+        if (displayNameField) {
+          await expectTooltip(page, "connection-display-name-help", COPY.displayNameTooltip);
+        } else {
+          // From 1.14.0.dev26 the handle is the display name, and the dialog asks for one only.
+          await expect(dialog.getByTestId("connection-display-name")).toHaveCount(0);
+          await expect(dialog.getByTestId("connection-display-name-help")).toHaveCount(0);
+        }
       });
 
       await test.step("each OAuth provider links its own setup guide, and the handle example follows it", async () => {
         for (const [providerId, guide] of Object.entries(SETUP_GUIDE)) {
-          await page.getByTestId("connection-provider").selectOption(providerId);
+          await chooseProvider(page, providerId);
           await expect(dialog.getByTestId("connection-setup-guide"), providerId).toHaveAttribute("href", guide);
           await expectTooltip(page, "connection-handle-help", COPY.handleTooltip(providerId));
         }
       });
 
       await test.step("a Microsoft scope names each action needing it, marking those that need it only for some inputs", async () => {
-        await page.getByTestId("connection-provider").selectOption("microsoft");
+        await chooseProvider(page, "microsoft");
         const pairs = microsoft.capabilities.flatMap((capability) => [
           ...capability.required_scopes.map((scope) => ({ scope, capability, conditional: false })),
           ...capability.conditional_scopes.map(({ scope }) => ({ scope, capability, conditional: true })),

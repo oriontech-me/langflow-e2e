@@ -8,7 +8,7 @@
 // port-less `redirect_uri`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { consentRedirect } from "./fake-oauth-provider";
+import { consentRedirect, holdConnectionList } from "./fake-oauth-provider";
 
 const AUTH = new URL(
   "https://accounts.google.com/o/oauth2/v2/auth?client_id=e2e-fake-client.apps.googleusercontent.com" +
@@ -44,4 +44,104 @@ test("stall redirects nowhere", () => {
 test("an authorization URL without a state is refused, not redirected", () => {
   const bare = new URL("https://accounts.google.com/o/oauth2/v2/auth?client_id=x");
   assert.throws(() => consentRedirect(bare, "google", "http://localhost:7860", "deny"), /no state/);
+});
+
+// holdConnectionList (#2413): no read the hold took may still be in flight when it
+// removes its route. Playwright sends every request still inside a handler on to the
+// network when the context's last route goes, and a fulfill that comes after that
+// throws "Route is already handled!". The fake context reproduces that rule.
+function fakeHoldContext(statuses: number[] = []) {
+  let handler: ((route: never) => Promise<void>) | undefined;
+  const events: string[] = [];
+  const inFlight = new Set<{ handled: boolean }>();
+  let fetches = 0;
+  const context = {
+    async route(_url: unknown, h: (route: never) => Promise<void>) {
+      handler = h;
+    },
+    async unroute() {
+      events.push("unroute");
+      handler = undefined;
+      for (const state of inFlight) state.handled = true; // sent on to the network
+    },
+  };
+  function request(fetchGate: Promise<void>) {
+    const state = { handled: false };
+    inFlight.add(state);
+    const settle = (what: string) => {
+      if (state.handled) throw new Error("route.fulfill: Route is already handled!");
+      state.handled = true;
+      inFlight.delete(state);
+      events.push(what);
+    };
+    const route = {
+      request: () => ({ method: () => "GET", url: () => "http://lane/api/v1/connections?provider=google" }),
+      fallback: async () => settle("fallback"),
+      fetch: async () => {
+        fetches += 1;
+        await fetchGate;
+        const status = statuses.length > 0 ? statuses.shift()! : 200;
+        return { status: () => status, headers: () => ({}), body: async () => Buffer.from("[]") };
+      },
+      fulfill: async (answer: { status: number }) => settle(`fulfill ${answer.status}`),
+    };
+    const h = handler;
+    assert.ok(h, "the hold has a handler registered");
+    return h(route as never);
+  }
+  return { context, request, events, fetches: () => fetches };
+}
+
+/** No real waiting: the rate-limit poll sleeps advance a fake clock. */
+function instantRateLimit() {
+  let clock = 0;
+  return { sleep: async (ms: number) => void (clock += ms), now: () => clock, log: () => {} };
+}
+
+test("holdConnectionList answers a read still in flight before it removes its route", async () => {
+  const { context, request, events } = fakeHoldContext();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let pending: Promise<void> | undefined;
+  const result = await holdConnectionList(context as never, async () => {
+    pending = request(gate);
+    events.push("wait done");
+    setTimeout(release, 20);
+    return "result";
+  });
+  assert.equal(result, "result");
+  await pending; // would reject with "Route is already handled!" if unroute came first
+  assert.deepEqual(events, ["wait done", "fulfill 200", "unroute"]);
+});
+
+test("holdConnectionList serves later reads from the first successful one", async () => {
+  const { context, request, events } = fakeHoldContext();
+  await holdConnectionList(context as never, async () => {
+    await request(Promise.resolve());
+    await request(new Promise<void>(() => {})); // would hang if it reached the server
+  });
+  assert.deepEqual(events, ["fulfill 200", "fulfill 200", "unroute"]);
+});
+
+test("holdConnectionList waits a 429 out instead of handing it to the page", async () => {
+  const { context, request, events, fetches } = fakeHoldContext([429, 429, 200]);
+  await holdConnectionList(context as never, async () => {
+    await request(Promise.resolve());
+  }, instantRateLimit());
+  assert.deepEqual(events, ["fulfill 200", "unroute"]);
+  assert.equal(fetches(), 3, "two refused reads, then the answer");
+});
+
+test("holdConnectionList shares one read between reads that arrive while it is out", async () => {
+  const { context, request, events, fetches } = fakeHoldContext();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await holdConnectionList(context as never, async () => {
+    const first = request(gate);
+    const second = request(gate);
+    release();
+    await Promise.all([first, second]);
+  });
+  assert.equal(fetches(), 1, "the second read waited for the first instead of fetching");
+  assert.deepEqual(events, ["fulfill 200", "fulfill 200", "unroute"]);
 });

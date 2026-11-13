@@ -139,29 +139,69 @@ async function deliverCallback(
  * (measured on `1.14.0.dev7`), and list reads are limited to 60/minute per user.
  * Waiting out a callback window with a dialog open therefore spends about half
  * of the superuser's read budget, and at `--workers=2`, where the API spec holds
- * the callback bucket, waits ran long enough to read the list into `429`.
+ * the callback bucket, waits ran long enough to read the list into `429`. The
+ * palette spec's canvas tests hold it too: every connector node they place reads
+ * the list, and the answer is not what they assert (#2411).
  *
- * Only use it while the callback has not landed. Until then the row cannot
- * change, so the snapshot is what the server would answer. The route is gone
- * before this returns, so the read that teaches the dialog the outcome is a
- * real one.
+ * Only use it while the list cannot change: until the callback has landed, or
+ * in a test that creates no connection. Then the snapshot is what the server
+ * would answer. One read goes to the server at a time, a `429` is waited out
+ * rather than handed to the page, and the route is gone before this returns, so
+ * the read that teaches the page the outcome is a real one.
  */
-export async function holdConnectionList<T>(context: BrowserContext, wait: () => Promise<T>): Promise<T> {
+export async function holdConnectionList<T>(
+  context: Pick<BrowserContext, "route" | "unroute">,
+  wait: () => Promise<T>,
+  rateLimit: RateLimitWaitOptions = {},
+): Promise<T> {
   const isList = (url: URL) => url.pathname === "/api/v1/connections";
-  let snapshot: { status: number; headers: Record<string, string>; body: Buffer } | undefined;
-  const handler = async (route: Route) => {
-    if (route.request().method() !== "GET") return route.fallback();
+  type Read = { status: number; headers: Record<string, string>; body: Buffer };
+  let snapshot: Read | undefined;
+  // The read in progress, shared: reads that arrive while it is out wait for it
+  // instead of each going to the server (and, on a drained bucket, each waiting out
+  // the window and then reading at once).
+  let reading: Promise<Read> | undefined;
+  let released = false;
+  const taken = new Set<Promise<void>>();
+  const read = (route: Route): Promise<Read> =>
+    (reading ??= (async () => {
+      // A 429 is waited out, never handed to the page: the bucket is shared with
+      // whatever else the lane runs, and a refused read answers nothing (#2413).
+      const res = await fetchAbsorbingReadLimit(route, rateLimit);
+      return { status: res.status(), headers: res.headers(), body: await res.body() };
+    })().finally(() => {
+      reading = undefined;
+    }));
+  const answer = async (route: Route) => {
     if (snapshot) return route.fulfill(snapshot);
-    const res = await route.fetch();
-    const answer = { status: res.status(), headers: res.headers(), body: await res.body() };
+    const got = await read(route);
     // Only a successful read stands in for the server; anything else passes through as it came.
-    if (answer.status === 200) snapshot = answer;
-    await route.fulfill(answer);
+    if (got.status === 200) snapshot = got;
+    await route.fulfill(got);
+  };
+  const handler = async (route: Route) => {
+    if (released || route.request().method() !== "GET") return route.fallback();
+    const answering = answer(route);
+    taken.add(answering);
+    try {
+      await answering;
+    } finally {
+      taken.delete(answering);
+    }
   };
   await context.route(isList, handler);
   try {
     return await wait();
   } finally {
+    // Removing the context's last route makes Playwright send every request still
+    // inside a handler on to the network, so a read still being fetched at that
+    // moment is answered twice: its own fulfill then throws "Route is already
+    // handled!" into the test (Playwright 1.58, `notifyRoutesInFlightAboutRemovedHandler`).
+    // Measured at --workers=2 on the palette spec's canvas tests, which hold the list
+    // for a whole test (#2413). So: take no new read, answer every read already taken,
+    // and only then remove the route.
+    released = true;
+    while (taken.size > 0) await Promise.allSettled([...taken]);
     await context.unroute(isList, handler);
   }
 }
