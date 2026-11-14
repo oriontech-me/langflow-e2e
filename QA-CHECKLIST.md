@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-13
+> **Last updated:** 2026-11-14
 
 ---
 
@@ -1756,7 +1756,7 @@
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
-| `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
+| `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
 | `flow-functionality/` | 57 | 34 | 20 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
@@ -1770,7 +1770,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **838** | **701 (84%)** | **82 (10%)** | **14 (2%)** | **41 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **839** | **702 (84%)** | **82 (10%)** | **14 (2%)** | **41 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1786,7 +1786,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 805 `test()` calls carrying the `@stable` tag, distributed across 297 spec
+> 807 `test()` calls carrying the `@stable` tag, distributed across 298 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2146,6 +2146,8 @@
 - [x] a flow without chat input and output cannot be published → `a2a-server-agent-tab-publish.spec.ts`
 - [x] publishing from the Agent tab serves a card at the advertised URL → `a2a-server-agent-tab-publish.spec.ts`
 - [x] the card editor changes what the API serves → `a2a-server-agent-tab-publish.spec.ts`
+- [x] the Try it panel forwards the typed key and round-trips a sentinel on a restricted agent → `a2a-server-agent-tab-try-it-apikey.spec.ts`
+- [x] the Try it panel blocks a keyless send and renders the 401 for an unknown key → `a2a-server-agent-tab-try-it-apikey.spec.ts`
 - [x] the Try it panel round-trips a sentinel over the published endpoint → `a2a-server-agent-tab-try-it.spec.ts`
 - [x] the api-key gate follows the project the flow lives in → `a2a-server-auth-apikey.spec.ts`
 - [x] discovery lists only agent-typed, A2A-enabled flows → `a2a-server-discovery.spec.ts`
