@@ -84,7 +84,8 @@ panel that renders the user's own message and never receives a reply would produ
   in `a2a-server-jsonrpc-message-send.md`). For a restricted agent the panel shows
   an API-key field (`agent-test-apikey`) that this spec does not fill; left in the
   default project, the unmodified spec timed out on `agent-test-send`
-  (`1.14.0.dev25`). That restricted variant is not covered here — #2433.
+  (`1.14.0.dev25`). That restricted variant is covered by
+  `a2a-server-agent-tab-try-it-apikey.md` (#2433).
 
 ---
 
