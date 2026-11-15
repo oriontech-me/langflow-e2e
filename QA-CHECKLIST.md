@@ -1667,6 +1667,17 @@
 - [ ] A Google transport failure (`network-error`) versus a provider outage (`provider-unavailable`), as produced live — raised inside the Langflow process, so a Playwright route cannot reach it; needs an instance without egress to `googleapis.com`. The suite's flow-error gate is pinned not to take a genuine integration error for a provider outage (`flow-error-policy.test.ts`) (langflow#15775)
 - [ ] A planted Google token that Google itself rejects leaves the row `ready` (run-time rejection is persisted only on the OAuth refresh path and for a pasted Slack token) — recorded in `docs/api/connections/api-connections-health.md`, not asserted
 
+#### 24.11 One trigger per flow (#2450)
+
+- [x] A flow write carrying a second trigger — a Schedule beside an Inbound Webhook, or two Schedules — is refused `422` *"A flow can have only one trigger. Remove the extra triggers and try again."* by create, `PATCH`, `PUT`, fork and overwrite (with a current `If-Match`), each with the `loc` its route produces; a refused create or fork leaves no flow, and a refused update leaves the stored graph, the version token and the trigger row unchanged → api/triggers/api-triggers-one-per-flow.spec.ts
+- [x] An import carrying one bad flow writes none of them: `/flows/batch/`, `/flows/upload/` and `/projects/upload/` refuse `[one trigger, two triggers]` at index 1 and create no flow (nor, for the project upload, the project), while a `[one trigger, no trigger]` batch creates both → api/triggers/api-triggers-one-per-flow.spec.ts
+- [x] A flow with no trigger is created with no trigger row, and a description-only `PATCH` saves on a one-trigger flow → api/triggers/api-triggers-one-per-flow.spec.ts
+- [x] The palette marks every trigger and no action: Schedule and Inbound Webhook sit in the core *Triggers* category, a provider trigger (Gmail: On message) carries the mark too, Chat Output does not, and no row carries a drag grip → core-functionality/integrations/trigger-placement.spec.ts
+- [x] With a trigger on the canvas every other trigger row, core and provider, is blocked — no add button, not draggable, *"This flow already has a trigger. A flow has one trigger."* on hover — and neither a drag nor `Enter` adds one; the legacy Webhook stays addable, and deleting the trigger unblocks the rows (each gesture with its positive control) → core-functionality/integrations/trigger-placement.spec.ts
+- [x] Pasting a copied trigger, pasting a selection holding a trigger and another node, and duplicating the trigger add no trigger and show *"A flow has one trigger, so the pasted trigger was left out."*, while the other node is still pasted → core-functionality/integrations/trigger-placement.spec.ts
+- [!] Grouping a trigger keeps it under the one-trigger rule (**declared failing** — `test.fail()` against [LE-3453](https://datastax.jira.com/browse/LE-3453): grouping an active Schedule pauses its row as `node_removed` with nothing on the canvas, and both the palette and the server then accept a second trigger, because both counters read top-level nodes only) → core-functionality/integrations/trigger-placement.spec.ts
+- [ ] A flow saved under 1.13 with two triggers (readable, metadata-only edit, `enable` → `409 multiple_triggers`) — no 1.14 route writes one, so it is reachable only by upgrading an instance; belongs to the `e2e-routine-migration` VM routine
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
