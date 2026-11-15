@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-15
 
 ---
 
@@ -1779,9 +1779,9 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 76 | 69 | 0 | 0 | 7 |
+| `integrations/` — Dedicated Integrations | 84 | 75 | 0 | 1 | 8 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **839** | **702 (84%)** | **82 (10%)** | **14 (2%)** | **41 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **847** | **708 (84%)** | **82 (10%)** | **15 (2%)** | **42 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1797,7 +1797,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 807 `test()` calls carrying the `@stable` tag, distributed across 298 spec
+> 813 `test()` calls carrying the `@stable` tag, distributed across 300 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1995,6 +1995,9 @@
 - [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
 
 #### api/triggers/
+- [x] a single-flow write that carries a second trigger is refused, and changes nothing → `api-triggers-one-per-flow.spec.ts`
+- [x] an import that carries one bad flow creates none of the flows in it → `api-triggers-one-per-flow.spec.ts`
+- [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
 - [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
@@ -2216,6 +2219,9 @@
 - [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
 - [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
 - [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
+- [x] the Triggers category holds Schedule and Inbound Webhook, and every trigger row is marked apart from the actions → `trigger-placement.spec.ts`
+- [x] with a trigger on the canvas every other trigger is blocked in the palette, and removing it unblocks them → `trigger-placement.spec.ts`
+- [x] pasting or duplicating a trigger leaves it out with a notice, and keeps the rest of the selection → `trigger-placement.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
