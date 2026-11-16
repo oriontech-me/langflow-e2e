@@ -344,3 +344,170 @@ export async function restorePolicyBundle(
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// API v2 (#2451): `/api/v2/policy-bundle`, where two sets are tri-state.
+// ---------------------------------------------------------------------------
+
+/**
+ * How API v1 spells "deny every integration". v1 reads an unrestricted
+ * (`null`) integration set as `[]`, so deny-all needs a value of its own there;
+ * v2 refuses this marker with a `422` and spells deny-all as `[]`.
+ */
+export const INTEGRATION_DENY_ALL_MARKER = "langflow-reserved.integration-policy.deny-all";
+
+/** The v2 sets that are plain lists: absent or empty both mean "nothing set". */
+export const POLICY_BUNDLE_V2_LIST_SETS = [
+  "approved_provider_ids",
+  "blocked_component_keys",
+  "blocked_template_keys",
+  "blocked_model_keys",
+  "blocked_integration_action_keys",
+] as const;
+
+/**
+ * The v2 sets that are tri-state: `null` is unrestricted, `[]` denies every
+ * provider or trigger kind, and a list approves exactly those.
+ */
+export const POLICY_BUNDLE_V2_NULLABLE_SETS = ["approved_integration_provider_ids", "approved_trigger_kinds"] as const;
+
+export type PolicyBundleV2ListSet = (typeof POLICY_BUNDLE_V2_LIST_SETS)[number];
+export type PolicyBundleV2NullableSet = (typeof POLICY_BUNDLE_V2_NULLABLE_SETS)[number];
+export type PolicyBundleV2Sets = Record<PolicyBundleV2ListSet, string[]> &
+  Record<PolicyBundleV2NullableSet, string[] | null>;
+
+export interface PolicyBundleV2Response extends Partial<PolicyBundleV2Sets> {
+  revision?: number;
+  source?: string;
+  initialized?: boolean;
+  content_hash?: string;
+  reason?: string | null;
+  rollback_of_revision?: number | null;
+  managed_externally?: boolean;
+}
+
+/**
+ * The seven sets of a v2 read. An absent list reads `[]`; an absent tri-state
+ * set reads `null`, because a server that does not send it has no such
+ * restriction.
+ */
+export function bundleV2Sets(bundle: PolicyBundleV2Response): PolicyBundleV2Sets {
+  const sets = {} as PolicyBundleV2Sets;
+  for (const name of POLICY_BUNDLE_V2_LIST_SETS) sets[name] = [...(bundle[name] ?? [])];
+  for (const name of POLICY_BUNDLE_V2_NULLABLE_SETS) {
+    const value = bundle[name];
+    sets[name] = value === null || value === undefined ? null : [...value];
+  }
+  return sets;
+}
+
+/**
+ * True when no list is populated and both tri-state sets are `null`. Unlike
+ * {@link isBundlePristine}, `[]` in a tri-state set is NOT pristine: it denies
+ * every integration or every trigger kind.
+ */
+export function isBundleV2Pristine(bundle: PolicyBundleV2Response): boolean {
+  const sets = bundleV2Sets(bundle);
+  return (
+    POLICY_BUNDLE_V2_LIST_SETS.every((name) => sets[name].length === 0) &&
+    POLICY_BUNDLE_V2_NULLABLE_SETS.every((name) => sets[name] === null)
+  );
+}
+
+/** Names every set that is not pristine, for a skip message that says what to clear (#1012). */
+export function describeBundleV2(bundle: PolicyBundleV2Response): string {
+  const sets = bundleV2Sets(bundle);
+  const parts: string[] = [];
+  for (const name of POLICY_BUNDLE_V2_LIST_SETS) {
+    if (sets[name].length > 0) parts.push(`${name}: ${sets[name].join(", ")}`);
+  }
+  for (const name of POLICY_BUNDLE_V2_NULLABLE_SETS) {
+    const value = sets[name];
+    if (value !== null) parts.push(`${name}: ${value.length > 0 ? value.join(", ") : "[] (denies all)"}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : "pristine";
+}
+
+const sortedEqual = (left: string[], right: string[]) => {
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.length === b.length && a.every((value, i) => value === b[i]);
+};
+
+/** Same members, order ignored, and `null` never equal to `[]`. */
+export function sameBundleV2Sets(a: PolicyBundleV2Sets, b: PolicyBundleV2Sets): boolean {
+  return (
+    POLICY_BUNDLE_V2_LIST_SETS.every((name) => sortedEqual(a[name], b[name])) &&
+    POLICY_BUNDLE_V2_NULLABLE_SETS.every((name) => {
+      const left = a[name];
+      const right = b[name];
+      if (left === null || right === null) return left === right;
+      return sortedEqual(left, right);
+    })
+  );
+}
+
+/**
+ * The body of a `PUT /api/v2/policy-bundle`: every set of the current bundle
+ * with `overrides` applied, and the current revision as `expected_revision`.
+ * The tri-state sets are always sent, so a write can never fall back to "keep
+ * the active value" by omission.
+ */
+export function buildBundleV2Write(
+  current: PolicyBundleV2Response,
+  overrides: Partial<PolicyBundleV2Sets>,
+  reason: string,
+): PolicyBundleV2Sets & { expected_revision: number; reason: string } {
+  return {
+    ...bundleV2Sets(current),
+    ...overrides,
+    expected_revision: current.revision ?? 0,
+    reason,
+  };
+}
+
+export async function readPolicyBundleV2(request: APIRequestContext, auth: string): Promise<PolicyBundleV2Response> {
+  return (await okJson(request, "get", "/api/v2/policy-bundle", auth)) as PolicyBundleV2Response;
+}
+
+/** Write the current v2 bundle with `overrides` applied. Throws on a non-2xx answer. */
+export async function writePolicyBundleV2(
+  request: APIRequestContext,
+  auth: string,
+  overrides: Partial<PolicyBundleV2Sets>,
+  reason: string,
+): Promise<PolicyBundleV2Response> {
+  const current = await readPolicyBundleV2(request, auth);
+  return (await okJson(
+    request,
+    "put",
+    "/api/v2/policy-bundle",
+    auth,
+    buildBundleV2Write(current, overrides, reason),
+  )) as PolicyBundleV2Response;
+}
+
+/**
+ * Put all seven sets back as `snapshot` had them, through v2.
+ *
+ * {@link restorePolicyBundle} cannot undo a v2 write: v1 reads an unrestricted
+ * integration set and a deny-all one differently, and a v1 write that leaves
+ * `approved_trigger_kinds` out keeps the active value. Writes only when the
+ * active bundle differs, and throws when it still differs afterwards.
+ */
+export async function restorePolicyBundleV2(
+  request: APIRequestContext,
+  auth: string,
+  snapshot: PolicyBundleV2Sets,
+  reason = "Restored by the e2e suite",
+): Promise<void> {
+  const current = await readPolicyBundleV2(request, auth);
+  if (sameBundleV2Sets(bundleV2Sets(current), snapshot)) return;
+  await okJson(request, "put", "/api/v2/policy-bundle", auth, buildBundleV2Write(current, snapshot, reason));
+  const after = await readPolicyBundleV2(request, auth);
+  if (!sameBundleV2Sets(bundleV2Sets(after), snapshot)) {
+    throw new Error(
+      `policy bundle not restored: expected ${describeBundleV2(snapshot)}, found ${describeBundleV2(after)}`,
+    );
+  }
+}

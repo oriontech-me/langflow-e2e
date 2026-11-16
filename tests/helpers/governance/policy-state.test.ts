@@ -1,15 +1,26 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { APIRequestContext } from "@playwright/test";
 import {
+  buildBundleV2Write,
   buildBundleWrite,
   bundleSets,
+  bundleV2Sets,
   describeBundleSets,
+  describeBundleV2,
   describePolicyState,
   isBundlePristine,
+  isBundleV2Pristine,
   isPolicyPristine,
   POLICY_BUNDLE_SETS,
+  POLICY_BUNDLE_V2_LIST_SETS,
+  POLICY_BUNDLE_V2_NULLABLE_SETS,
+  type PolicyBundleV2Response,
+  restorePolicyBundleV2,
   sameBundleSets,
+  sameBundleV2Sets,
   singleNodeFlow,
+  writePolicyBundleV2,
 } from "./policy-state";
 
 describe("isPolicyPristine", () => {
@@ -137,5 +148,127 @@ describe("bundle writes (#2299)", () => {
       assert.equal(sameBundleSets(empty(), { ...empty(), [name]: ["x"] }), false, name);
     }
     assert.equal(sameBundleSets({ ...empty(), blocked_model_keys: ["a", "a"] }, { ...empty(), blocked_model_keys: ["a"] }), false);
+  });
+});
+
+describe("v2 bundle (#2451)", () => {
+  const pristine = () => bundleV2Sets({});
+
+  it("reads an absent list as [] and an absent tri-state set as null", () => {
+    const sets = bundleV2Sets({ revision: 1 });
+    for (const name of POLICY_BUNDLE_V2_LIST_SETS) assert.deepEqual(sets[name], [], name);
+    for (const name of POLICY_BUNDLE_V2_NULLABLE_SETS) assert.equal(sets[name], null, name);
+  });
+
+  it("keeps [] apart from null in a tri-state set", () => {
+    // [] denies every integration or trigger kind; null is unrestricted. A reader
+    // that folded one into the other would restore deny-all as "unrestricted".
+    assert.deepEqual(bundleV2Sets({ approved_trigger_kinds: [] }).approved_trigger_kinds, []);
+    assert.equal(bundleV2Sets({ approved_trigger_kinds: null }).approved_trigger_kinds, null);
+  });
+
+  it("isBundleV2Pristine refuses [] in a tri-state set and any populated list", () => {
+    assert.equal(isBundleV2Pristine({ revision: 1, source: "migration" }), true);
+    for (const name of POLICY_BUNDLE_V2_NULLABLE_SETS) {
+      assert.equal(isBundleV2Pristine({ [name]: [] }), false, `${name}: []`);
+      assert.equal(isBundleV2Pristine({ [name]: ["x"] }), false, `${name}: [x]`);
+    }
+    for (const name of POLICY_BUNDLE_V2_LIST_SETS) {
+      assert.equal(isBundleV2Pristine({ [name]: ["x"] }), false, name);
+    }
+  });
+
+  it("describeBundleV2 names deny-all explicitly", () => {
+    assert.equal(describeBundleV2({}), "pristine");
+    assert.equal(
+      describeBundleV2({ approved_integration_provider_ids: [], approved_trigger_kinds: ["schedule"] }),
+      "approved_integration_provider_ids: [] (denies all); approved_trigger_kinds: schedule",
+    );
+  });
+
+  it("sameBundleV2Sets ignores order but never equates null with []", () => {
+    const a = { ...pristine(), approved_trigger_kinds: ["schedule", "inbound_webhook"] };
+    const b = { ...pristine(), approved_trigger_kinds: ["inbound_webhook", "schedule"] };
+    assert.equal(sameBundleV2Sets(a, b), true);
+    for (const name of POLICY_BUNDLE_V2_NULLABLE_SETS) {
+      assert.equal(sameBundleV2Sets(pristine(), { ...pristine(), [name]: [] }), false, name);
+    }
+    for (const name of POLICY_BUNDLE_V2_LIST_SETS) {
+      assert.equal(sameBundleV2Sets(pristine(), { ...pristine(), [name]: ["x"] }), false, name);
+    }
+  });
+
+  it("a write carries every set, null included, and the current revision", () => {
+    const body = buildBundleV2Write(
+      { revision: 4, blocked_component_keys: ["Agent"], approved_integration_provider_ids: null },
+      { approved_trigger_kinds: ["schedule"] },
+      "why",
+    );
+    assert.equal(body.expected_revision, 4);
+    assert.equal(body.reason, "why");
+    assert.deepEqual(body.blocked_component_keys, ["Agent"]);
+    assert.deepEqual(body.approved_trigger_kinds, ["schedule"]);
+    // Sent as null, never omitted: v2 reads an omitted trigger facet as "keep it".
+    assert.ok("approved_integration_provider_ids" in body);
+    assert.equal(body.approved_integration_provider_ids, null);
+  });
+
+  /** A fake that answers GETs from `reads` in order (the last repeats) and records PUTs. */
+  function fakeBundle(reads: PolicyBundleV2Response[], putStatus = 200) {
+    const puts: Array<{ url: string; data: unknown }> = [];
+    let i = 0;
+    const answer = (status: number, body: unknown) => ({
+      ok: () => status >= 200 && status < 300,
+      status: () => status,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+    const request = {
+      get: async () => answer(200, reads[Math.min(i++, reads.length - 1)]),
+      put: async (url: string, o: { data: unknown }) => {
+        puts.push({ url, data: o.data });
+        return answer(putStatus, putStatus === 200 ? o.data : { detail: "refused" });
+      },
+    } as unknown as APIRequestContext;
+    return { request, puts };
+  }
+
+  it("writePolicyBundleV2 sends the current sets with the override to the v2 route", async () => {
+    const { request, puts } = fakeBundle([{ revision: 9, approved_trigger_kinds: null }]);
+    await writePolicyBundleV2(request, "Bearer x", { approved_trigger_kinds: [] }, "deny all kinds");
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].url, "/api/v2/policy-bundle");
+    const data = puts[0].data as Record<string, unknown>;
+    assert.equal(data.expected_revision, 9);
+    assert.deepEqual(data.approved_trigger_kinds, []);
+    assert.equal(data.approved_integration_provider_ids, null);
+  });
+
+  it("restorePolicyBundleV2 writes nothing when the bundle already matches", async () => {
+    const { request, puts } = fakeBundle([{ revision: 3 }]);
+    await restorePolicyBundleV2(request, "Bearer x", pristine());
+    assert.equal(puts.length, 0);
+  });
+
+  it("restorePolicyBundleV2 puts null back over a deny-all", async () => {
+    const { request, puts } = fakeBundle([{ revision: 5, approved_trigger_kinds: [] }, { revision: 6 }]);
+    await restorePolicyBundleV2(request, "Bearer x", pristine());
+    assert.equal(puts.length, 1);
+    const data = puts[0].data as Record<string, unknown>;
+    assert.equal(data.expected_revision, 5);
+    assert.equal(data.approved_trigger_kinds, null);
+  });
+
+  it("restorePolicyBundleV2 throws when the bundle still differs after the write", async () => {
+    const { request } = fakeBundle([{ revision: 5, approved_trigger_kinds: [] }]);
+    await assert.rejects(
+      restorePolicyBundleV2(request, "Bearer x", pristine()),
+      /not restored: expected pristine, found approved_trigger_kinds: \[\] \(denies all\)/,
+    );
+  });
+
+  it("restorePolicyBundleV2 throws naming the status when the write is refused", async () => {
+    const { request } = fakeBundle([{ revision: 5, approved_trigger_kinds: [] }], 409);
+    await assert.rejects(restorePolicyBundleV2(request, "Bearer x", pristine()), /answered 409/);
   });
 });
