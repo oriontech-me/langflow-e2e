@@ -9,6 +9,13 @@ import {
   mintSigningSecret,
   signedWebhookHeaders as signedHeaders,
 } from "../../../../helpers/triggers/sign-webhook";
+import {
+  createTrigger as createTriggerAs,
+  listTriggers,
+  setTriggerEnabled,
+  type TriggerCreate,
+  type TriggerRead,
+} from "../../../../helpers/triggers/trigger-api";
 
 // Inbound webhook ingress: signing, the uniform 404, events, test and replay (#2308).
 // Spec doc: docs/api/triggers/api-triggers-webhook-ingress.md
@@ -36,14 +43,6 @@ test.describe("Triggers — inbound webhook ingress", () => {
   const NODE_ID = "InboundWebhookTrigger-e2e01";
 
   const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-
-  interface TriggerRead {
-    id: string;
-    kind: string;
-    node_id: string | null;
-    state: string;
-    last_error: string | null;
-  }
 
   interface TriggerEventRead {
     id: string;
@@ -118,12 +117,10 @@ test.describe("Triggers — inbound webhook ingress", () => {
     );
   }
 
-  async function triggersOf(request: APIRequestContext, flowId: string): Promise<TriggerRead[]> {
-    const res = await request.get(`/api/v1/triggers?flow_id=${flowId}`, { headers: headers() });
-    const text = await res.text();
-    expect(res.status(), text).toBe(200);
-    return JSON.parse(text) as TriggerRead[];
-  }
+  // The /api/v1/triggers calls live in `helpers/triggers/trigger-api.ts` since #2448;
+  // these bind them to this file's owner.
+  const triggersOf = (request: APIRequestContext, flowId: string): Promise<TriggerRead[]> =>
+    listTriggers(request, headers(), { flow_id: flowId });
 
   /** The row flow save reconciled out of the trigger node — the one whose runs receive `event_payload`. */
   async function nodeTrigger(request: APIRequestContext, flowId: string): Promise<TriggerRead> {
@@ -140,19 +137,14 @@ test.describe("Triggers — inbound webhook ingress", () => {
     return row;
   }
 
-  async function createTrigger(request: APIRequestContext, data: Record<string, unknown>): Promise<TriggerRead> {
-    const res = await request.post("/api/v1/triggers", { headers: headers(), data });
-    const text = await res.text();
-    expect(res.status(), text).toBe(201);
-    return JSON.parse(text) as TriggerRead;
-  }
+  const createTrigger = (request: APIRequestContext, data: TriggerCreate): Promise<TriggerRead> =>
+    createTriggerAs(request, headers(), data);
 
-  async function triggerAction(request: APIRequestContext, triggerId: string, action: string): Promise<TriggerRead> {
-    const res = await request.post(`/api/v1/triggers/${triggerId}/${action}`, { headers: headers() });
-    const text = await res.text();
-    expect(res.status(), `${action}: ${text}`).toBe(200);
-    return JSON.parse(text) as TriggerRead;
-  }
+  const triggerAction = (
+    request: APIRequestContext,
+    triggerId: string,
+    action: "enable" | "disable",
+  ): Promise<TriggerRead> => setTriggerEnabled(request, headers(), triggerId, action === "enable");
 
   function mintSecret(request: APIRequestContext, triggerId: string): Promise<Ingress> {
     return mintSigningSecret(request, triggerId, headers());
