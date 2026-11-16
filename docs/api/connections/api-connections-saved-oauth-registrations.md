@@ -4,8 +4,8 @@
 
 **Last validated:** Langflow 1.14.x (`1.14.0.dev28`)
 
-Owning issue: #2421, a follow-up of #2409 (directive 3). The page half is
-`docs/core-functionality/integrations/manage-providers-panel.md`.
+Owning issue: #2421, a follow-up of #2409 (directive 3). Test 6 and the last two rows of test 2 come from
+#2452. The page half is `docs/core-functionality/integrations/manage-providers-panel.md`.
 
 ---
 
@@ -63,10 +63,30 @@ Each refusal answers `422` with this exact `detail`, and saves nothing:
 | Microsoft with no tenant | `Microsoft OAuth requires a fixed tenant UUID` |
 | a field the registration does not define | `OAuth registration contains unsupported fields.` |
 | `Bad_ID` as the path ID | FastAPI's `string_pattern_mismatch` on `["path", "registration_id"]` |
+| a key beside `registration` in the request body | FastAPI's `extra_forbidden` on `["body", "<key>"]` |
+| an empty `scopes` list | `OAuth registration field 'scopes' is invalid.` |
 
 **No refusal echoes the input.** `OAuthRegistration` sets `hide_input_in_errors`, and the server builds every
 message itself (`_registration_validation_message`). So neither a secret sent with a bad redirect nor the value of
-an unknown field appears in a `422` body.
+an unknown field appears in a `422` body. Nor does the value of an extra body key: Langflow has dropped `input` from
+FastAPI's own `422` since `1.13.0.dev10` (upstream #15038).
+
+### A saved secret is carried into a replace, and only null clears it (premise 6)
+
+A replace that omits `client_secret` keeps the saved one (premise 1). The carried secret is applied **before** the
+registration is validated, and `null` is the only way to drop it. Measured on a Slack `user` registration:
+
+- **A confidential client's secret can be replaced, never removed.** `client_secret: null` on a saved confidential
+  registration answers `422` `"Confidential clients require exactly one secret or private key"`. The entry is
+  unchanged.
+- **The carried secret is validated.** Switching to `client_type: "public"` without the secret field answers `422`
+  `"Public clients cannot contain registration secrets"`: the saved secret was carried into the public client. The
+  entry is unchanged.
+- **`null` clears it.** The same switch with `client_secret: null` answers `204`. The entry reads
+  `has_secret: false` and `client_type: "public"`.
+
+The Slack `bot` profile cannot reach the last step: a public bot client answers `422` `"Only confidential Slack
+clients support the bot profile"`. Hence the `user` profile.
 
 ### The environment wins (premise 3)
 
@@ -129,6 +149,11 @@ provider/profile pair:
 - the wizard spec asserts there is no registration picker for **Google**, and it reconnects **Microsoft**;
 - its Slack step reads the sign-in methods, not the registrations.
 
+Test 6 is the one exception. It saves a Slack **`user`** registration, because a bot client cannot be public
+(premise 6). It saves it with `context: "hosted"` and `owner: "langflow"`. This instance's context is
+`self_managed` (`GET /api/v1/integrations` → `deployment_context`), so a `hosted` registration never joins the
+registration list, and test 6 asserts that it does not.
+
 The override in test 3 uses `e2e-slack-bot`, which the environment keeps using whatever is saved. The UI spec
 overrides `e2e-slack-user` instead, so the two files never write the same ID. Each test removes what it saved in
 `finally`, through the API, so the process's own environment is re-merged too.
@@ -165,8 +190,8 @@ secret kept, and removed.**
 
 **Test 2 — an invalid registration is refused with a message that names the problem, and never echoes what was
 sent.**
-1. The six refusals in the premise 2 table, each `422` with its exact `detail`. Each body contains neither the
-   secret sent nor the unknown field's value.
+1. The eight refusals in the premise 2 table, each `422` with its exact `detail`. Each body contains neither the
+   secret sent nor the unknown field's or extra key's value.
 2. The saved list does not carry the ID.
 
 **Test 3 — an ID the environment defines stays the environment's: saved as overridden, not used, and removable
@@ -195,11 +220,22 @@ without touching it.**
    message.
 4. The owner's saved list still carries the entry, unchanged.
 
+**Test 6 — a saved secret is carried into a replace, and only null clears it.**
+1. `PUT` a confidential Slack `user` registration (`context: "hosted"`, `owner: "langflow"`) with a
+   `client_secret` → `204`. The entry reads `has_secret: true`. The Slack registration list does not carry the ID.
+2. `PUT` it again with `client_secret: null` → `422` `"Confidential clients require exactly one secret or private
+   key"`. The entry still reads `has_secret: true`.
+3. `PUT` it as `client_type: "public"` with no secret field → `422` `"Public clients cannot contain registration
+   secrets"`. The entry still reads `has_secret: true`, and its `registration` has no `client_type`.
+4. `PUT` it as `client_type: "public"` with `client_secret: null` → `204`. The entry reads `has_secret: false` and
+   `client_type: "public"`. The Slack registration list still does not carry the ID.
+5. `DELETE` in `finally`.
+
 ---
 
 ## Validation criterion *(required)*
 
-All five tests pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev28`, and once at
+All six tests pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev28`, and once at
 `--workers=2`. On every run:
 - each refusal carries its exact status and `detail`;
 - no secret sent appears in any response;

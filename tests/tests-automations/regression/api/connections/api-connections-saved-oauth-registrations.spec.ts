@@ -28,7 +28,9 @@ import registrations from "../../../../../scripts/lib/fake-oauth-registrations.j
 //
 // A saved registration is instance-wide, so every one this file saves is a Slack
 // `bot` registration with an ID of its own, a pair no other spec reads, removed
-// through the API in `finally`. One worker, so one throwaway superuser per run.
+// through the API in `finally`. The one exception is test 6's Slack `user`
+// registration, saved as `hosted`, which this `self_managed` instance never lists
+// (#2452). One worker, so one throwaway superuser per run.
 test.describe.configure({ mode: "default" });
 
 const COLLECTION = "/api/v1/connections";
@@ -240,6 +242,11 @@ test.describe("Connections — saved OAuth registrations (Manage providers API)"
           registration: { ...valid, e2e_unknown_field: secret },
           detail: "OAuth registration contains unsupported fields.",
         },
+        {
+          name: "an empty scopes list",
+          registration: { ...valid, scopes: [] },
+          detail: "OAuth registration field 'scopes' is invalid.",
+        },
       ];
 
       for (const refusal of refusals) {
@@ -261,6 +268,20 @@ test.describe("Connections — saved OAuth registrations (Manage providers API)"
           { type: "string_pattern_mismatch", loc: ["path", "registration_id"] },
         ]);
         expect(text).not.toContain(secret);
+      });
+
+      await test.step("a key beside the registration in the body is refused, without its value", async () => {
+        const res = await request.put(`${SAVED_REGISTRATIONS}/${id}`, {
+          headers: owner.headers,
+          data: { registration: valid, e2e_extra_key: secret },
+        });
+        const text = await res.text();
+        expect(res.status(), text).toBe(422);
+        const detail = (JSON.parse(text) as { detail: Array<{ type: string; loc: string[]; msg: string }> }).detail;
+        expect(detail.map(({ type, loc, msg }) => ({ type, loc, msg }))).toEqual([
+          { type: "extra_forbidden", loc: ["body", "e2e_extra_key"], msg: "Extra inputs are not permitted" },
+        ]);
+        expect(text, "the refusal does not echo the extra key's value").not.toContain(secret);
       });
 
       await test.step("nothing was saved", async () => {
@@ -426,6 +447,76 @@ test.describe("Connections — saved OAuth registrations (Manage providers API)"
       } finally {
         if (user) await deleteThrowawayUser(request, superHeaders, user);
       }
+    },
+  );
+
+  test(
+    "a saved secret is carried into a replace, and only null clears it",
+    { tag: ["@stable", "@api", "@integrations"] },
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare([OPS.save, OPS.listSaved, OPS.listActive]);
+      const id = newId("nullclear");
+      // Slack `user`, because a bot client cannot be public; `hosted`, because this
+      // instance is `self_managed`, so the registration never joins the list the
+      // connection wizard reads.
+      const confidential: Record<string, unknown> = {
+        provider: "slack",
+        profile: "user",
+        client_id: `e2e-client-${id}`,
+        redirect_uri: SLACK_CALLBACK,
+        scopes: ["search:read"],
+        context: "hosted",
+        owner: "langflow",
+      };
+      const notListed = async () => {
+        const active = await listActiveRegistrations(request, owner.headers, "slack");
+        expect(active.registrations.map((item) => item.id), `a hosted registration stays out of ${ACTIVE}`).not.toContain(
+          id,
+        );
+      };
+      const refused = async (registration: Record<string, unknown>, detail: string) => {
+        const res = await putSavedRegistration(request, owner.headers, id, registration);
+        const text = await res.text();
+        expect(res.status(), text).toBe(422);
+        expect(JSON.parse(text)).toEqual({ detail });
+      };
+
+      await test.step("a confidential user registration is saved with its secret, and is not listed", async () => {
+        const res = await putSavedRegistration(request, owner.headers, id, {
+          ...confidential,
+          client_secret: secretSentinel("nullclear"),
+        });
+        expect(res.status(), await res.text()).toBe(204);
+        const entry = await savedEntry(request, id);
+        expect(entry?.has_secret).toBe(true);
+        expect(entry?.registration).toEqual(confidential);
+        await notListed();
+      });
+
+      await test.step("null on a confidential client is refused: its secret can be replaced, never removed", async () => {
+        await refused({ ...confidential, client_secret: null }, "Confidential clients require exactly one secret or private key");
+        expect((await savedEntry(request, id))?.has_secret).toBe(true);
+      });
+
+      await test.step("a switch to public without the field is refused: the saved secret was carried into it", async () => {
+        await refused({ ...confidential, client_type: "public" }, "Public clients cannot contain registration secrets");
+        const entry = await savedEntry(request, id);
+        expect(entry?.has_secret).toBe(true);
+        expect(entry?.registration, "the entry is unchanged, still confidential").toEqual(confidential);
+      });
+
+      await test.step("the same switch with null clears the secret", async () => {
+        const res = await putSavedRegistration(request, owner.headers, id, {
+          ...confidential,
+          client_type: "public",
+          client_secret: null,
+        });
+        expect(res.status(), await res.text()).toBe(204);
+        const entry = await savedEntry(request, id);
+        expect(entry?.has_secret).toBe(false);
+        expect(entry?.registration).toEqual({ ...confidential, client_type: "public" });
+        await notListed();
+      });
     },
   );
 });

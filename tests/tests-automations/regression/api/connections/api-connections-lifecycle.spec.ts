@@ -7,6 +7,7 @@ import {
 } from "../../../../helpers/integrations/create-connection";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
 import { deleteConnection } from "../../../../helpers/integrations/delete-connection";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 
 // The create / list / update / delete lifecycle of /api/v1/connections.
 // Spec doc: docs/api/connections/api-connections-lifecycle.md
@@ -393,4 +394,121 @@ test.describe("Connections API — lifecycle contract", () => {
     delete rest[key];
     return rest;
   }
+
+  // From 1.14 a pasted credential is checked against the provider before it is
+  // stored (#2452). The fake token never passes, so every row is a refusal. Where
+  // the check reaches the provider, its answer depends on what the provider says
+  // (measured: Discord answered "rejected this connection configuration", then
+  // "rejected this token", for the same fake token) or, with no egress, "could
+  // not reach" — so those rows accept any refusal the check can produce, and never
+  // the ones it cannot (no manual credentials, a WhatsApp server setting, a 201).
+  // Each request carries the identity of the provider's manual-token profile,
+  // which changes WhatsApp's answer.
+  test(
+    "a pasted credential is checked against the provider, and the same create without one is pending",
+    { tag: ["@stable", "@api", "@integrations"] },
+    async ({ request, playwright, apiCoverage }, testInfo) => {
+      test.skip(
+        !(await servedVersionAtLeast(request, "1.14.0.dev26")),
+        "pasted credentials are checked against the provider from the 1.14 batch (1.14.0.dev26)",
+      );
+      apiCoverage.declare([
+        "POST /api/v1/connections",
+        "GET /api/v1/connections",
+        "DELETE /api/v1/connections/{connection_id}",
+      ]);
+      // Every answer `ConnectionService` gives for a credential the provider checked
+      // and refused, or could not be asked about (services/connection/service.py).
+      const CHECKED = [
+        "The provider rejected this token. Paste a valid token and try again.",
+        "The provider denied this token check. Check the token's permissions and account access.",
+        "The provider rate limited this token check. Wait and try again.",
+        "Langflow could not reach the provider. Check this server's outbound network and DNS settings, then try again.",
+        "The provider rejected this connection configuration. Check the setup guide and token settings.",
+        "The provider could not check this token. Try again.",
+      ];
+      const GITHUB_CHECKED = [
+        "GitHub rejected this token. Paste a valid GitHub App installation token and try again.",
+        "GitHub rejected this token. Use a GitHub App installation token with repository access.",
+        ...CHECKED,
+      ];
+      const NO_MANUAL = "This integration does not support manually entered credentials.";
+      const inAnHour = new Date(Date.now() + 3_600_000).toISOString();
+      const refusals: Array<{ provider: string; identity: string; expiresAt?: string; answers: string[] }> = [
+        {
+          provider: "github",
+          identity: "service",
+          answers: ["This integration requires a future token expiration time with a time zone."],
+        },
+        {
+          provider: "github",
+          identity: "service",
+          expiresAt: inAnHour,
+          answers: GITHUB_CHECKED,
+        },
+        { provider: "gitlab", identity: "user_delegated", answers: CHECKED },
+        { provider: "telegram", identity: "bot", answers: CHECKED },
+        { provider: "discord", identity: "bot", answers: CHECKED },
+        {
+          provider: "whatsapp",
+          identity: "service",
+          answers: ["Configure the WhatsApp app, app secret, WABA, phone ID and Graph API version on this server."],
+        },
+        ...["jira", "confluence", "servicenow", "salesforce"].map((provider) => ({
+          provider,
+          identity: "user_delegated",
+          answers: [NO_MANUAL],
+        })),
+      ];
+      const identityOf: Record<string, string> = { github: "service", gitlab: "user_delegated", whatsapp: "service", telegram: "bot" };
+
+      // Its own owner: 18 writes would crowd the file's (see the spec doc).
+      const pasting = await createConnectionsOwner(
+        () => playwright.request.newContext({ baseURL: testInfo.project.use.baseURL }),
+        "connpaste",
+      );
+      try {
+        const headers = pasting.headers;
+        const create = (provider: string, identity: string, credentials?: Record<string, string>) =>
+          request.post(COLLECTION, {
+            headers,
+            data: {
+              provider_key: provider,
+              name: uniqueConnectionName(`paste_${provider}`),
+              display_name: `E2E paste ${provider}`,
+              executing_identity: { identity },
+              ...(credentials ? { credentials } : {}),
+            },
+          });
+
+        for (const { provider, identity, expiresAt, answers } of refusals) {
+          await test.step(`${provider} (${identity}${expiresAt ? ", a future expiry" : ""}) refuses a fake token`, async () => {
+            const res = await create(provider, identity, {
+              access_token: `e2e-fake-${provider}-token`,
+              ...(expiresAt ? { expires_at: expiresAt } : {}),
+            });
+            const text = await res.text();
+            expect(res.status(), text).toBe(422);
+            expect(answers, `${provider}'s refusal`).toContain(JSON.parse(text).detail);
+          });
+        }
+
+        for (const [provider, identity] of Object.entries(identityOf)) {
+          await test.step(`${provider} without credentials is stored pending`, async () => {
+            const res = await create(provider, identity);
+            const text = await res.text();
+            expect(res.status(), text).toBe(201);
+            const row = JSON.parse(text) as ConnectionRead;
+            expect(row).toMatchObject({ provider_key: provider, status: "pending", has_credentials: false });
+            const removed = await request.delete(`${COLLECTION}/${row.id}`, { headers });
+            expect(removed.status()).toBe(204);
+          });
+        }
+
+        expect(await listConnections(request, headers), "the refusals stored nothing").toEqual([]);
+      } finally {
+        await pasting.dispose();
+      }
+    },
+  );
 });
