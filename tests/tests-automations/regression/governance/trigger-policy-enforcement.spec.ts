@@ -17,6 +17,13 @@ import {
   writePolicyBundleV2,
 } from "../../../helpers/governance/policy-state";
 import { servedVersionAtLeast } from "../../../helpers/other/served-version";
+import {
+  createTrigger,
+  getTrigger,
+  listTriggers,
+  setTriggerEnabled,
+  type TriggerRead,
+} from "../../../helpers/triggers/trigger-api";
 
 // Which trigger kinds may run: the palette, arming, live triggers and dispatch (#2451).
 // Spec doc: docs/governance/trigger-policy-enforcement.md
@@ -47,15 +54,6 @@ test.describe("governance — which trigger kinds may run", () => {
   let headers: Record<string, string> = {};
   let snapshot: PolicyBundleV2Sets | undefined;
   let skipReason = "";
-
-  interface TriggerRead {
-    id: string;
-    kind: string;
-    state: string;
-    reason: string | null;
-    last_error: string | null;
-    last_error_code: string | null;
-  }
 
   interface AuditRow {
     action: string;
@@ -103,18 +101,11 @@ test.describe("governance — which trigger kinds may run", () => {
     return id;
   }
 
-  async function triggersOf(request: APIRequestContext, flowId: string): Promise<TriggerRead[]> {
-    const res = await request.get(`/api/v1/triggers?flow_id=${flowId}`, { headers });
-    const text = await res.text();
-    expect(res.status(), text).toBe(200);
-    return JSON.parse(text) as TriggerRead[];
-  }
-
   /** The one row flow save reconciled out of the flow's trigger node. */
   async function nodeTrigger(request: APIRequestContext, flowId: string): Promise<TriggerRead> {
     let rows: TriggerRead[] = [];
     await expect
-      .poll(async () => (rows = await triggersOf(request, flowId)).length, {
+      .poll(async () => (rows = await listTriggers(request, headers, { flow_id: flowId })).length, {
         message: "flow save reconciles the trigger node into one row",
         timeout: 15_000,
       })
@@ -132,7 +123,7 @@ test.describe("governance — which trigger kinds may run", () => {
     });
     const trigger = await nodeTrigger(request, flowId);
     expect(trigger.kind).toBe("inbound_webhook");
-    if (enable) expect((await triggerAction(request, trigger.id, "enable")).status()).toBe(200);
+    if (enable) expect((await setTriggerEnabled(request, headers, trigger.id, true)).state).toBe("active");
     return { flowId, trigger };
   }
 
@@ -144,27 +135,21 @@ test.describe("governance — which trigger kinds may run", () => {
     return { flowId, trigger };
   }
 
-  function triggerAction(request: APIRequestContext, triggerId: string, action: string) {
-    return request.post(`/api/v1/triggers/${triggerId}/${action}`, { headers });
-  }
-
-  async function readTrigger(request: APIRequestContext, triggerId: string): Promise<TriggerRead> {
-    const res = await request.get(`/api/v1/triggers/${triggerId}`, { headers });
-    const text = await res.text();
-    expect(res.status(), text).toBe(200);
-    return JSON.parse(text) as TriggerRead;
+  /** A raw `enable`, for the refusals: `setTriggerEnabled` throws on anything but `200`. */
+  function enableResponse(request: APIRequestContext, triggerId: string) {
+    return request.post(`/api/v1/triggers/${triggerId}/enable`, { headers });
   }
 
   /** Waits for the policy refresh to pause the row, then checks it says why. */
   async function expectPausedByPolicy(request: APIRequestContext, triggerId: string): Promise<void> {
     await expect
-      .poll(async () => (await readTrigger(request, triggerId)).state, {
+      .poll(async () => (await getTrigger(request, headers, triggerId)).state, {
         message: "the policy refresh pauses a live trigger of a denied kind",
         timeout: REFRESH_TIMEOUT,
         ...POLL,
       })
       .toBe("paused");
-    const row = await readTrigger(request, triggerId);
+    const row = await getTrigger(request, headers, triggerId);
     expect(row.reason).toBe("paused");
     expect(row.last_error_code).toBe("policy_blocked");
     expect(row.last_error).toBe(POLICY_MESSAGE);
@@ -228,26 +213,24 @@ test.describe("governance — which trigger kinds may run", () => {
 
       await test.step("the active webhook trigger is paused by the policy; the Schedule one is left alone", async () => {
         await expectPausedByPolicy(request, webhook.trigger.id);
-        expect((await readTrigger(request, schedule.trigger.id)).state).toBe("pending");
+        expect((await getTrigger(request, headers, schedule.trigger.id)).state).toBe("pending");
       });
 
       await test.step("arming a denied kind is refused, creating it unarmed is not", async () => {
-        await expectPolicyRefusal(await triggerAction(request, webhook.trigger.id, "enable"));
+        await expectPolicyRefusal(await enableResponse(request, webhook.trigger.id));
         const armed = await request.post("/api/v1/triggers", {
           headers,
           data: { flow_id: paletteFlow, name: `E2E armed ${run}`, kind: "inbound_webhook", state: "active" },
         });
         await expectPolicyRefusal(armed);
-        const unarmed = await request.post("/api/v1/triggers", {
-          headers,
-          data: { flow_id: paletteFlow, name: `E2E unarmed ${run}`, kind: "inbound_webhook" },
+        const created = await createTrigger(request, headers, {
+          flow_id: paletteFlow,
+          name: `E2E unarmed ${run}`,
+          kind: "inbound_webhook",
         });
-        const text = await unarmed.text();
-        expect(unarmed.status(), text).toBe(201);
-        const created = JSON.parse(text) as TriggerRead;
         expect(created.state).toBe("pending");
         expect(
-          (await triggersOf(request, paletteFlow)).map((row) => row.id),
+          (await listTriggers(request, headers, { flow_id: paletteFlow })).map((row) => row.id),
           "the refused create left no row",
         ).toEqual([created.id]);
         await expectPausedByPolicy(request, created.id);
@@ -292,22 +275,19 @@ test.describe("governance — which trigger kinds may run", () => {
         await searchSidebar(page, "schedule");
         await expect(page.getByTestId("triggers_schedule_draggable")).toHaveCount(0);
         await expectPausedByPolicy(request, schedule.trigger.id);
-        await expectPolicyRefusal(await triggerAction(request, schedule.trigger.id, "enable"));
+        await expectPolicyRefusal(await enableResponse(request, schedule.trigger.id));
       });
 
       await test.step("null brings both kinds back, but the Schedule trigger stays paused", async () => {
         await setTriggerKinds(request, null);
         expect(await paletteTriggers(request)).toEqual(["InboundWebhookTrigger", "ScheduleTrigger"]);
-        const row = await readTrigger(request, schedule.trigger.id);
+        const row = await getTrigger(request, headers, schedule.trigger.id);
         expect(row.state, "lifting a policy does not resume what it paused").toBe("paused");
         expect(row.last_error_code).toBe("policy_blocked");
       });
 
       await test.step("its owner can resume it", async () => {
-        const res = await triggerAction(request, schedule.trigger.id, "enable");
-        const text = await res.text();
-        expect(res.status(), text).toBe(200);
-        expect(JSON.parse(text).state).toBe("active");
+        expect((await setTriggerEnabled(request, headers, schedule.trigger.id, true)).state).toBe("active");
       });
     },
   );
@@ -323,7 +303,7 @@ test.describe("governance — which trigger kinds may run", () => {
       await test.step("deny only Schedule, and wait for the refresh to pause the canary", async () => {
         await setTriggerKinds(request, ["inbound_webhook"]);
         await expectPausedByPolicy(request, canary.trigger.id);
-        expect((await readTrigger(request, webhook.trigger.id)).state, "an approved kind keeps running").toBe("active");
+        expect((await getTrigger(request, headers, webhook.trigger.id)).state, "an approved kind keeps running").toBe("active");
       });
 
       await test.step("at once, queue an event and deny Inbound Webhook", async () => {
@@ -349,7 +329,7 @@ test.describe("governance — which trigger kinds may run", () => {
           )
           .toBe("failed");
         expect(event?.error, "refused by the policy, not by a paused trigger").toBe("policy_blocked");
-        const row = await readTrigger(request, webhook.trigger.id);
+        const row = await getTrigger(request, headers, webhook.trigger.id);
         expect(row.state).toBe("paused");
         expect(row.last_error_code).toBe("policy_blocked");
       });

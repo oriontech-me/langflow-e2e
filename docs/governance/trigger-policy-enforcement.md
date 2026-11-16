@@ -186,6 +186,7 @@ Tests 1–3 pass three consecutive times at `--retries=0 --workers=1` with `PW_D
 - `src/backend/base/langflow/api/v1/authz_audit.py` — the audit read.
 - `src/lfx/src/lfx/components/triggers/inbound_webhook_trigger.py` and
   `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the two core trigger components.
-- `tests/helpers/governance/policy-state.ts`, `tests/helpers/flows/build-catalog-flow.ts`,
-  `tests/helpers/flows/open-flow-by-id.ts`, `tests/helpers/flows/unmount-editor-for-cleanup.ts`,
-  `tests/helpers/flows/delete-flow.ts` and `tests/helpers/other/served-version.ts`.
+- `tests/helpers/governance/policy-state.ts`, `tests/helpers/triggers/trigger-api.ts`,
+  `tests/helpers/flows/build-catalog-flow.ts`, `tests/helpers/flows/open-flow-by-id.ts`,
+  `tests/helpers/flows/unmount-editor-for-cleanup.ts`, `tests/helpers/flows/delete-flow.ts` and
+  `tests/helpers/other/served-version.ts`.

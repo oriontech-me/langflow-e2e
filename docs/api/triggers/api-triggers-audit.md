@@ -7,7 +7,8 @@
 Owning issue: #2451. The audit row a policy writes (`trigger:policy_denied`) needs a policy change, so it
 is asserted in `docs/governance/trigger-policy-enforcement.md`, which runs in the destructive lane. The
 actions themselves are covered elsewhere: an owner's `enable`, `disable`, `test` and `replay` by
-`docs/api/triggers/api-triggers-webhook-ingress.md`, and an operator's bulk pause and resume by #2448.
+`docs/api/triggers/api-triggers-webhook-ingress.md`, and an operator's bulk pause and resume by
+`docs/api/triggers/api-triggers-operator.md` (#2448), which leaves their audit rows to this file.
 Upstream: #16271 (`v1.14.0.dev23`), #16374 and #16384 (`v1.14.0.dev26`).
 
 ---
@@ -131,5 +132,6 @@ Tests 1–3 pass three consecutive times at `--retries=0 --workers=1` and once a
 - `src/backend/base/langflow/services/triggers/ingress/intake.py` — the ingress rows written only when
   audit is enabled.
 - `src/lfx/src/lfx/components/triggers/inbound_webhook_trigger.py` — the trigger component.
-- `tests/helpers/integrations/connections-owner.ts`, `tests/helpers/flows/build-catalog-flow.ts`,
+- `tests/helpers/triggers/trigger-api.ts` (the trigger calls, shared since #2448),
+  `tests/helpers/integrations/connections-owner.ts`, `tests/helpers/flows/build-catalog-flow.ts`,
   `tests/helpers/flows/delete-flow.ts` and `tests/helpers/other/served-version.ts`.

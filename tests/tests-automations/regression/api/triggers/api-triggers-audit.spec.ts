@@ -5,6 +5,13 @@ import { createCatalogFlow, fetchComponentCatalog } from "../../../../helpers/fl
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
 import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
+import {
+  bulkTriggers,
+  getTrigger,
+  listTriggers,
+  setTriggerEnabled,
+  type TriggerRead,
+} from "../../../../helpers/triggers/trigger-api";
 
 // The audit trail of trigger actions, read through GET /api/v1/authz/audit (#2451).
 // Spec doc: docs/api/triggers/api-triggers-audit.md
@@ -25,12 +32,6 @@ test.describe("Triggers — the audit trail of owner and operator actions", () =
   const flowIds: string[] = [];
   let headers: Record<string, string> = {};
   let superuserId = "";
-
-  interface TriggerRead {
-    id: string;
-    state: string;
-    reason: string | null;
-  }
 
   interface AuditRow {
     action: string;
@@ -78,30 +79,12 @@ test.describe("Triggers — the audit trail of owner and operator actions", () =
     flowIds.push(flowId);
     let rows: TriggerRead[] = [];
     await expect
-      .poll(
-        async () => {
-          const res = await request.get(`/api/v1/triggers?flow_id=${flowId}`, { headers });
-          rows = res.status() === 200 ? await res.json() : [];
-          return rows.length;
-        },
-        { message: "flow save reconciles the trigger node into one row", timeout: 15_000 },
-      )
+      .poll(async () => (rows = await listTriggers(request, headers, { flow_id: flowId })).length, {
+        message: "flow save reconciles the trigger node into one row",
+        timeout: 15_000,
+      })
       .toBe(1);
     return { flowId, trigger: rows[0] };
-  }
-
-  async function triggerAction(request: APIRequestContext, triggerId: string, action: string): Promise<TriggerRead> {
-    const res = await request.post(`/api/v1/triggers/${triggerId}/${action}`, { headers });
-    const text = await res.text();
-    expect(res.status(), `${action}: ${text}`).toBe(200);
-    return JSON.parse(text) as TriggerRead;
-  }
-
-  async function readTrigger(request: APIRequestContext, triggerId: string): Promise<TriggerRead> {
-    const res = await request.get(`/api/v1/triggers/${triggerId}`, { headers });
-    const text = await res.text();
-    expect(res.status(), text).toBe(200);
-    return JSON.parse(text) as TriggerRead;
   }
 
   /** The audit rows of one action on one trigger. */
@@ -130,9 +113,9 @@ test.describe("Triggers — the audit trail of owner and operator actions", () =
       let replay = "";
 
       await test.step("enable, disable and enable the trigger", async () => {
-        expect((await triggerAction(request, trigger.id, "enable")).state).toBe("active");
-        expect((await triggerAction(request, trigger.id, "disable")).state).toBe("paused");
-        expect((await triggerAction(request, trigger.id, "enable")).state).toBe("active");
+        expect((await setTriggerEnabled(request, headers, trigger.id, true)).state).toBe("active");
+        expect((await setTriggerEnabled(request, headers, trigger.id, false)).state).toBe("paused");
+        expect((await setTriggerEnabled(request, headers, trigger.id, true)).state).toBe("active");
       });
 
       await test.step("send a test event and replay it", async () => {
@@ -181,18 +164,16 @@ test.describe("Triggers — the audit trail of owner and operator actions", () =
     async ({ request }) => {
       const selected = (await webhookTrigger(request, "selected")).trigger;
       const other = (await webhookTrigger(request, "other")).trigger;
-      expect((await triggerAction(request, selected.id, "enable")).state).toBe("active");
-      expect((await triggerAction(request, other.id, "enable")).state).toBe("active");
+      expect((await setTriggerEnabled(request, headers, selected.id, true)).state).toBe("active");
+      expect((await setTriggerEnabled(request, headers, other.id, true)).state).toBe("active");
 
       await test.step("a bulk pause by id pauses only the trigger it names", async () => {
-        const res = await request.post("/api/v1/triggers/bulk/pause", { headers, data: { trigger_ids: [selected.id] } });
-        const text = await res.text();
-        expect(res.status(), text).toBe(200);
-        expect((JSON.parse(text) as { changed: string[] }).changed).toEqual([selected.id]);
-        const paused = await readTrigger(request, selected.id);
+        const result = await bulkTriggers(request, headers, "pause", { trigger_ids: [selected.id] });
+        expect(result.changed).toEqual([selected.id]);
+        const paused = await getTrigger(request, headers, selected.id);
         expect(paused.state).toBe("paused");
         expect(paused.reason).toBe("paused_by_admin");
-        expect((await readTrigger(request, other.id)).state).toBe("active");
+        expect((await getTrigger(request, headers, other.id)).state).toBe("active");
       });
 
       await test.step("the pause writes one admin row for that trigger and none for the other", async () => {
@@ -203,11 +184,9 @@ test.describe("Triggers — the audit trail of owner and operator actions", () =
       });
 
       await test.step("the resume puts it back and writes one admin row for it", async () => {
-        const res = await request.post("/api/v1/triggers/bulk/resume", { headers, data: { trigger_ids: [selected.id] } });
-        const text = await res.text();
-        expect(res.status(), text).toBe(200);
-        expect((JSON.parse(text) as { changed: string[] }).changed).toEqual([selected.id]);
-        expect((await readTrigger(request, selected.id)).state).toBe("active");
+        const result = await bulkTriggers(request, headers, "resume", { trigger_ids: [selected.id] });
+        expect(result.changed).toEqual([selected.id]);
+        expect((await getTrigger(request, headers, selected.id)).state).toBe("active");
         const rows = await auditRows(request, "trigger:admin_resume", selected.id);
         expect(rows).toHaveLength(1);
         expectRowOf(rows[0], selected.id);
