@@ -1839,7 +1839,7 @@
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
-| `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
+| `core-functionality/templates/` | 46 | 42 | 0 | 0 | 4 |
 | `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
 | `flow-functionality/` | 57 | 34 | 20 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
@@ -1854,7 +1854,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 126 | 108 | 0 | 2 | 16 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **899** | **741 (82%)** | **91 (10%)** | **16 (2%)** | **51 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **899** | **746 (83%)** | **91 (10%)** | **16 (2%)** | **46 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1870,7 +1870,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 850 `test()` calls carrying the `@stable` tag, distributed across 309 spec
+> 855 `test()` calls carrying the `@stable` tag, distributed across 310 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2570,6 +2570,11 @@
 - [x] should run Knowledge Retrieval and show the ingested sentinel in its reply → `templates-run-knowledge.spec.ts`
 - [x] should run Document Q&A with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 - [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
+- [x] should run Basic Prompting and build all four of its components → `templates-run-prompts.spec.ts`
+- [x] should run Blog Writer on a source URL served by the echo endpoint → `templates-run-prompts.spec.ts`
+- [x] should run Multi Agent Flow through all three of its Agents → `templates-run-prompts.spec.ts`
+- [x] should run SEO Keyword Generator, which has no Chat Input, from the Playground → `templates-run-prompts.spec.ts`
+- [x] should run Twitter Thread Generator to a non-empty thread → `templates-run-prompts.spec.ts`
 
 #### flow-functionality/
 - [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
@@ -2813,5 +2818,5 @@
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 20 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
-| `core-functionality/templates/` | 0 | 9 |
+| `core-functionality/templates/` | 0 | 4 |
 | `ui-ux/` — Settings | 0 | 0 |
