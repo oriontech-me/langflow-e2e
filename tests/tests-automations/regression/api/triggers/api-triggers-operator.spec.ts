@@ -317,6 +317,7 @@ test.describe("Triggers — the operator API", () => {
         "POST /api/v1/triggers",
         "GET /api/v1/triggers",
         "GET /api/v1/triggers/{trigger_id}",
+        "POST /api/v1/triggers/{trigger_id}/enable",
         "POST /api/v1/triggers/{trigger_id}/test",
       ]);
       type Expected = {
@@ -408,6 +409,9 @@ test.describe("Triggers — the operator API", () => {
         expect(row?.reason).toBe("degraded");
       });
 
+      const INVALID_CRON = "Invalid cron expression: a valid five-field cron expression is required.";
+      let invalid: TriggerRead | undefined;
+
       await test.step("config_invalid: a canvas Schedule with an invalid cron reconciles into a pending row that says so", async () => {
         const catalog = await fetchComponentCatalog(request, ownerHeaders());
         const flowId = await createCatalogFlow(
@@ -430,8 +434,32 @@ test.describe("Triggers — the operator API", () => {
           state: "pending",
           reason: "config_invalid",
           last_error_code: "invalid_cron",
-          last_error: "Invalid cron expression: a valid five-field cron expression is required.",
+          last_error: INVALID_CRON,
         });
+        invalid = rows[0];
+      });
+
+      await test.step("config_invalid: enable refuses the row for the reason it reports, and changes nothing", async () => {
+        const id = (invalid as TriggerRead).id;
+        const res = await request.post(`/api/v1/triggers/${id}/enable`, { headers: ownerHeaders() });
+        await expectDetail(res, 409, { detail: { code: "invalid_cron", message: INVALID_CRON } });
+        expect(await getTrigger(request, ownerHeaders(), id)).toMatchObject({ state: "pending", reason: "config_invalid" });
+      });
+
+      // DECLARED FAILING from here on: LE-3454 (#2464). The server lists `resume`
+      // as allowed on a config_invalid row although `enable` refuses it (above),
+      // against capabilities.py's own rule that an allowed action is one the route
+      // accepts: `_decide()` blocks resume by reason on needs_reconnect, never on
+      // pending. Everything above runs undeclared, so a broken setup or a changed
+      // refusal still reddens the test. The day the fix ships this step passes,
+      // Playwright reports "expected to fail, but passed", and that is the signal
+      // to delete this line.
+      test.fail(true, "LE-3454: resume is listed as allowed on a config_invalid trigger that enable refuses");
+
+      await test.step("config_invalid: resume is blocked with the reason enable refuses it for", async () => {
+        const row = await getTrigger(request, ownerHeaders(), (invalid as TriggerRead).id);
+        expect(row.allowed_actions, "an action enable refuses is not listed as allowed").not.toContain("resume");
+        expect(row.blocked_actions.resume, "resume is blocked by the row's own reason").toBe("config_invalid");
       });
     },
   );
