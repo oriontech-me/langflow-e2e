@@ -2,13 +2,13 @@
 
 **File:** `tests/tests-automations/regression/api/triggers/api-triggers-operator.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev28`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev29`)
 
 Owning issue: #2448 (the 1.14 triggers and connectors batch). The page that renders this API is
 `docs/core-functionality/integrations/triggers-settings-page.md`, from the same issue. The trigger
 lifecycle (CRUD, the state machine, flow-save reconciliation) is #2303's, the failing-run state is #2328's,
 and the audit rows these actions write are #2451's. This file asserts what TRG-7 (upstream LE-2485,
-API #15786) added on top of them.
+API #15786) added on top of them. #2464 added the declared-failing pin for LE-3454 (test 3, step 6).
 
 ---
 
@@ -123,9 +123,6 @@ and a lookup that labels the Playground sessions a trigger started. The contract
   (paused by an operator) and never calls `enable`, so on the measured run the active `e2e.event` row is
   `changed` in the dry run and `failed` in the real one. The spec asserts the dry run's sets as measured
   and records this, since the dialog's count can therefore exceed what the confirm changes.
-- **`config_invalid` lists `resume` as allowed, and `POST …/enable` answers `409 invalid_cron`.**
-  `capabilities.py` states that an action listed as allowed is one the route accepts. Not asserted either
-  way — a candidate upstream ticket, reported on #2448.
 - **The owner's own `enable` on an operator-paused trigger clears `admin_paused_at` too**, as the issue's
   *"any other state write clears the marker"* says. The spec asserts the owner's `disable`, the case the
   operator's resume has to respect.
@@ -201,6 +198,17 @@ triggers with it.
 4. `config_invalid`: create a flow (`buildCatalogFlow`) holding a `ScheduleTrigger` whose
    `cron_expression` is `not a cron`; its reconciled row reads `pending`, `config_invalid`,
    `last_error_code: "invalid_cron"`.
+5. `POST …/enable` on that row answers `409`
+   `{"detail": {"code": "invalid_cron", "message": "Invalid cron expression: a valid five-field cron expression is required."}}`,
+   and a re-read shows the row unchanged (`pending`, `config_invalid`).
+6. **Declared failing — [LE-3454](https://datastax.jira.com/browse/LE-3454) (#2464).** The row's
+   `allowed_actions` do not hold `resume`, and `blocked_actions.resume` is `"config_invalid"`. Today the
+   server lists `resume` as allowed, against `capabilities.py`'s own rule that an action listed as allowed is
+   one the route accepts. In `_decide()`, `resume` is blocked by its reason on a `needs_reconnect` row but
+   never on a `pending` one. Steps 1–5 run before the declaration, so a broken setup or a changed refusal
+   still fails the test. Only this step is declared failing (`test.fail(true, "LE-3454: …")`). When the fix
+   ships, Playwright reports *"expected to fail, but passed"*, and that is the signal to delete the
+   declaration.
 
 ### 4. Bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused
 
@@ -233,7 +241,7 @@ triggers with it.
 
 ## Validation criterion *(required)*
 
-Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev28`, and once at
+Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev29`, and once at
 `--workers=2` together with `api/triggers/`, with:
 
 - the exact 28-key set and the action table, row by row;
@@ -241,13 +249,19 @@ Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1
 - every bulk result asserted as exact id sets per bucket plus `matched` and `owners`, and every bulk
   effect re-read from `GET` — never inferred from the bulk response alone;
 - the declared coverage matching what the fixture recorded: `GET /api/v1/triggers`,
-  `POST /api/v1/triggers`, `GET /api/v1/triggers/{trigger_id}`, `POST /api/v1/triggers/{trigger_id}/disable`,
+  `POST /api/v1/triggers`, `GET /api/v1/triggers/{trigger_id}`, `POST /api/v1/triggers/{trigger_id}/enable`,
+  `POST /api/v1/triggers/{trigger_id}/disable`,
   `POST /api/v1/triggers/{trigger_id}/test`, `GET /api/v1/triggers/{trigger_id}/events`,
   `POST /api/v1/triggers/bulk/pause`, `POST /api/v1/triggers/bulk/resume`,
   `GET /api/v1/triggers/sessions`, `POST /api/v1/flows/`, `POST /api/v1/connections`.
 
+Until LE-3454 ships, test 3 passes as an **expected failure**: its steps 1–5 must pass, and the failure
+must come from step 6's `resume` assertion. A pass of step 6 turns the test red ("expected to fail, but
+passed"). That is the fix arriving, and the response is to delete the `test.fail()` line, not to weaken
+the assertion.
+
 The file drives only the `request` fixture, so the fixture's HTTP-error monitor sees none of the
-deliberate `403`s, `404`s and `422`s. After the run the instance holds no flow, user or trigger left by
+deliberate `403`s, `404`s, `409`s and `422`s. After the run the instance holds no flow, user or trigger left by
 this file.
 
 ---
