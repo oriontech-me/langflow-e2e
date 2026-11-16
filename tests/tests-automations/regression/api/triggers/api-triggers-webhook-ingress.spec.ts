@@ -1,9 +1,14 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { createCatalogFlow, fetchComponentCatalog } from "../../../../helpers/flows/build-catalog-flow";
 import { createCustomComponentGraphFlow } from "../../../../helpers/flows/build-custom-component-graph";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
+import {
+  type MintedSecret,
+  mintSigningSecret,
+  signedWebhookHeaders as signedHeaders,
+} from "../../../../helpers/triggers/sign-webhook";
 
 // Inbound webhook ingress: signing, the uniform 404, events, test and replay (#2308).
 // Spec doc: docs/api/triggers/api-triggers-webhook-ingress.md
@@ -52,11 +57,9 @@ test.describe("Triggers — inbound webhook ingress", () => {
     error: string | null;
   }
 
-  interface Ingress {
-    path: string;
-    publicId: string;
-    secret: string;
-  }
+  // The signature and the mint live in `helpers/triggers/sign-webhook.ts` since #2449,
+  // which signs with the value the node's secret dialog showed.
+  type Ingress = MintedSecret;
 
   // One throwaway owner per worker, not per test. Its login counts against the
   // login route's per-IP budget (5/min, `helpers/auth/login-request.ts`); an owner
@@ -80,20 +83,6 @@ test.describe("Triggers — inbound webhook ingress", () => {
   const headers = () => (owner as ConnectionsOwner).headers;
   const now = () => Math.floor(Date.now() / 1000);
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  /** `X-Langflow-Signature` exactly as `verify_webhook` checks it: `v1=` HMAC-SHA256 over `v1:{ts}:{body}`. */
-  function signature(secret: string, timestamp: number, body: Buffer): string {
-    const mac = createHmac("sha256", secret).update(`v1:${timestamp}:`).update(body).digest("hex");
-    return `v1=${mac}`;
-  }
-
-  function signedHeaders(secret: string, timestamp: number, body: Buffer): Record<string, string> {
-    return {
-      "content-type": "application/json",
-      "X-Langflow-Signature": signature(secret, timestamp, body),
-      "X-Langflow-Timestamp": String(timestamp),
-    };
-  }
 
   const json = (value: unknown) => Buffer.from(JSON.stringify(value));
 
@@ -165,17 +154,8 @@ test.describe("Triggers — inbound webhook ingress", () => {
     return JSON.parse(text) as TriggerRead;
   }
 
-  async function mintSecret(request: APIRequestContext, triggerId: string): Promise<Ingress> {
-    const res = await request.post(`/api/v1/triggers/${triggerId}/signing-secret`, { headers: headers() });
-    const text = await res.text();
-    expect(res.status(), text).toBe(200);
-    const body = JSON.parse(text) as { public_id: string; ingress_url: string; signing_secret: string };
-    expect(body.signing_secret, "the secret is answered").toBeTruthy();
-    const path = new URL(body.ingress_url).pathname;
-    expect(path, "the URL names the webhook provider and the public id").toBe(
-      `/api/v1/triggers/ingress/webhook/${body.public_id}`,
-    );
-    return { path, publicId: body.public_id, secret: body.signing_secret };
+  function mintSecret(request: APIRequestContext, triggerId: string): Promise<Ingress> {
+    return mintSigningSecret(request, triggerId, headers());
   }
 
   /** A webhook flow, its node trigger enabled, and an armed ingress. */
