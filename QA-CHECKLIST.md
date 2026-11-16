@@ -1852,9 +1852,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 119 | 102 | 0 | 2 | 15 |
+| `integrations/` — Dedicated Integrations | 126 | 108 | 0 | 2 | 16 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **892** | **735 (82%)** | **91 (10%)** | **16 (2%)** | **50 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **899** | **741 (82%)** | **91 (10%)** | **16 (2%)** | **51 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1870,7 +1870,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 841 `test()` calls carrying the `@stable` tag, distributed across 307 spec
+> 850 `test()` calls carrying the `@stable` tag, distributed across 309 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1894,6 +1894,7 @@
 - [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a pasted credential is checked against the provider, and the same create without one is pending → `api-connections-lifecycle.spec.ts`
 - [x] a callback without the binding cookie is refused and leaves the state usable, and the state completes neither on another provider's path nor twice → `api-connections-oauth-callback.spec.ts`
 - [x] a newer start supersedes the older one, and a denied consent keeps the saved credential → `api-connections-oauth-callback.spec.ts`
 - [x] the OAuth routes a browser reaches answer an HTML 429, and oauth/start answers the JSON one → `api-connections-oauth-callback.spec.ts`
@@ -1923,6 +1924,7 @@
 - [x] an ID the server environment defines stays the environment's: saved as overridden, not used, and removable without touching it → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] a saved registration's secrets reach no read, and its storage cannot be written as a global variable → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] a regular user is refused on all three routes and changes nothing → `api-connections-saved-oauth-registrations.spec.ts`
+- [x] a saved secret is carried into a replace, and only null clears it → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] a planted token reaches no client response across the connection's lifecycle, and scope coverage describes the request rather than the credential → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a hyphenated name does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
@@ -2293,6 +2295,10 @@
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
+- [x] the picker reads availability only while open, and says when it cannot → `connector-inline-add.spec.ts`
+- [x] Add connection opens a dialog locked to the field, names the row by its handle, and cancelling leaves nothing → `connector-inline-add.spec.ts`
+- [x] a connection created from the picker is selected when it fits the field → `connector-inline-add.spec.ts`
+- [x] a connection that does not fit the field is reported, not selected → `connector-inline-add.spec.ts`
 - [x] the Bundles palette holds every manifest action in its provider's group, and its triggers only from 1.14.0.dev4 → `connector-node-picker.spec.ts`
 - [x] every <provider.label> action in the manifest lands on the canvas with an unbound connection field → `connector-node-picker.spec.ts`
 - [x] the picker lists its provider's connections and names why each unusable one cannot run → `connector-node-picker.spec.ts`
@@ -2305,6 +2311,9 @@
 - [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
 - [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
 - [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
+- [x] every dedicated integration action offers Tool Mode → `connector-tool-mode.spec.ts`
+- [x] an action in Tool Mode is one tool whose arguments exclude the connection → `connector-tool-mode.spec.ts`
+- [x] an action with a pagination output becomes two tools → `connector-tool-mode.spec.ts`
 - [x] the environment's registrations are listed as Active from the server environment with no action, Add provider opens a form prefilled for this instance, and with no registration at all the panel says so → `manage-providers-panel.spec.ts`
 - [x] the form catches five mistakes before sending anything → `manage-providers-panel.spec.ts`
 - [x] a saved registration shows its status and saver, Replace keeps the secret, and Remove deletes it → `manage-providers-panel.spec.ts`
