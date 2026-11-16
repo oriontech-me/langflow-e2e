@@ -1825,12 +1825,12 @@
 | `security/` — Validation, SSRF, Secrets | 30 | 26 | 0 | 0 | 4 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 16 | 0 | 0 | 0 |
-| `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
+| `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 104 | 91 | 0 | 1 | 12 |
+| `integrations/` — Dedicated Integrations | 108 | 94 | 0 | 1 | 13 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **867** | **724 (84%)** | **82 (9%)** | **15 (2%)** | **46 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **881** | **727 (83%)** | **91 (10%)** | **15 (2%)** | **48 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1846,7 +1846,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 828 `test()` calls carrying the `@stable` tag, distributed across 304 spec
+> 831 `test()` calls carrying the `@stable` tag, distributed across 305 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2044,6 +2044,9 @@
 - [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
 
 #### api/triggers/
+- [x] an owner's resume, pause and replay each write one audit row naming the trigger → `api-triggers-audit.spec.ts`
+- [x] an operator's bulk pause and resume write admin rows only for the triggers it selected → `api-triggers-audit.spec.ts`
+- [x] the audit log answers only a superuser and is left out of the OpenAPI schema → `api-triggers-audit.spec.ts`
 - [x] a single-flow write that carries a second trigger is refused, and changes nothing → `api-triggers-one-per-flow.spec.ts`
 - [x] an import that carries one bad flow creates none of the flows in it → `api-triggers-one-per-flow.spec.ts`
 - [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
