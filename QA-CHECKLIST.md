@@ -781,9 +781,9 @@
 
 #### 11.4 Execution — file input
 
-- [ ] Financial Report Parser — a plain-text fixture uploaded into the File component passes through the Parser to the Agent, and Chat Output builds with a non-empty output and a clean flow-error report
-- [ ] Portfolio Website Code Generator — a plain-text fixture uploaded into the File component reaches the Agent, and Chat Output builds with a non-empty output and a clean flow-error report
-- [ ] Text Sentiment Analysis — a plain-text fixture uploaded into the File component reaches its three Agents, and both Chat Outputs build with a non-empty output and a clean flow-error report
+- [x] Financial Report Parser — a plain-text report uploaded into the Read File node reaches the Agent, whose structured output the Parser formats into the template's metrics table; Chat Output replies non-empty and the flow-error report is clean → `core-functionality/templates/templates-run-file-input.spec.ts`
+- [x] Portfolio Website Code Generator — a plain-text resume uploaded into the Read File node reaches the Agent, and Chat Output replies non-empty with a clean flow-error report → `core-functionality/templates/templates-run-file-input.spec.ts`
+- [x] Text Sentiment Analysis — a plain-text digest uploaded into the Read File node feeds two of its Agents directly and the third through the Prompt, every Agent runs with its input wired, and both Chat Outputs reply non-empty with a clean flow-error report → `core-functionality/templates/templates-run-file-input.spec.ts`
 
 #### 11.5 Execution — knowledge base
 
