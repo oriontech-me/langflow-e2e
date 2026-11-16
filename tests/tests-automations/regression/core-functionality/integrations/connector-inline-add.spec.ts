@@ -234,8 +234,11 @@ test.describe("Connectors on the canvas — Add connection from the picker", () 
       const gmail = picker(page, "gmail");
 
       await test.step("no availability read until the popover opens", async () => {
+        // The node's connection read can be held behind an absorbed 429 (the shared
+        // superuser's read bucket), so it gets the absorption's ceiling.
         const listed = page.waitForResponse(
           (res) => new URL(res.url()).pathname === COLLECTION && new URL(res.url()).searchParams.get("provider") === "google",
+          AFTER_A_READ,
         );
         await openFlowById(page, flowId);
         await listed;
