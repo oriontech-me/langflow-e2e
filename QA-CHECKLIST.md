@@ -770,14 +770,14 @@
 
 > One configured model. The assertion is that the run completed — the terminal node's build badge, a non-empty output, and `page.flowErrorReport()` evaluated and clean — never the model's wording. Execution is deliberately **not** scoped for 12 templates, each of which keeps its §11.2 bullet: Content Aggregator, Deep Research Agent, Instagram Copywriter, Market Research, Price Deal Finder, Sequential Tasks Agents, Social Media Agent and Travel Planning Agents (public web search), Hybrid Search RAG and Meeting Summary (Astra DB / AssemblyAI credentials), SaaS Pricing (a SQL database) and Custom Component Generator (deferred). Reasons in the scope doc.
 
-- [ ] Basic Prompting — running Chat Output builds all four components and renders a non-empty reply with a clean flow-error report
-- [ ] Blog Writer — with the URL component pointed at the self-hosted echo endpoint instead of `docs.langflow.org`, the run builds and renders a non-empty reply with a clean flow-error report
+- [x] Basic Prompting — run from the Playground on a pinned model, all four components build (each node's output inspection goes from disabled to enabled), the reply is non-empty and the flow-error report is evaluated and clean → `core-functionality/templates/templates-run-prompts.spec.ts`
+- [x] Blog Writer — with its source URL pointed at the self-hosted echo endpoint instead of `docs.langflow.org`, the run's input and the system prompt the Agent receives name the echo URL, every non-tool component builds, and the reply is non-empty with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
 - [ ] Image Sentiment Analysis — an image attached in the Playground reaches a vision-capable model, and the run completes with a non-empty reply and a clean flow-error report
 - [x] Memory Chatbot — retains context within a session across consecutive messages and a Playground reopen, and a new session starts without it → `llm-agents/memory-history-regression.spec.ts`
-- [ ] Multi Agent Flow — all three Agents build and Chat Output renders a non-empty reply with a clean flow-error report
-- [ ] SEO Keyword Generator — run from its Chat Output (the template has no Chat Input), the build completes with a non-empty output and a clean flow-error report
+- [x] Multi Agent Flow — all three Agents run the pinned model and build, and Chat Output renders a non-empty reply with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
+- [x] SEO Keyword Generator — the template has no Chat Input, so the Playground renders no text input and its send control runs the flow; Prompt, Agent and Chat Output build, and the reply is non-empty with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
 - [x] Simple Agent — the template as shipped, URL and Web Search tools wired, answers three Playground turns with non-empty replies → `llm-agents/agent-component-regression.spec.ts`
-- [ ] Twitter Thread Generator — running Chat Output renders a non-empty thread with a clean flow-error report
+- [x] Twitter Thread Generator — run from the Playground on its own message, Chat Input, Prompt and Agent build, and the thread is non-empty with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
 
 #### 11.4 Execution — file input
 
