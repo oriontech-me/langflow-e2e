@@ -119,8 +119,9 @@ moment a ticket is filed. Not counted in the indicator.
 
 | Found | Area / Test | Regression | Severity | Report |
 |-------|-------------|------------|----------|--------|
+| 2026-11-15 | integrations · manage-providers-panel.spec.ts | **Settings › Connections › Manage providers cannot save a Slack registration.** The panel (langflow#16251, `c1df9a637db`, first nightly `1.14.0.dev22`, `release-1.14.0` only) sends the manifest's auth-profile ID as the registration's `profile`. For Slack that ID is `slack-user-oauth`, and `OAuthRegistration.profile` accepts only `user` or `bot`, so *Add provider* answers `422` *"OAuth registration field 'profile' is invalid."* every time (measured on `1.14.0.dev28`; the release line's tip carries the same `ManageProvidersPanel.tsx`). Google Workspace and Microsoft 365 map to `user` and save. The form has no field to pick a Slack user registration or a bot one. Not a regression of earlier behaviour: the panel is new and never worked for Slack. Saving through the API or `LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS` still works. The spec asserts the intended save and is declared failing (`test.fail()` mid-body), so it turns red when the fix lands | Medium | #2421 |
 
-*(none pending. The cancelled-ingestion `finished_at` regression (#2417) was promoted to the Ledger on 2026-11-12 when LE-3447 was filed; the agent-reply truncation regression (#2176) was promoted to the Ledger on
+*(Earlier candidates, all promoted. The cancelled-ingestion `finished_at` regression (#2417) was promoted to the Ledger on 2026-11-12 when LE-3447 was filed; the agent-reply truncation regression (#2176) was promoted to the Ledger on
 2026-10-06 when LE-2919 was filed; the Knowledge-component stats regression (#2186) was promoted to the Ledger on
 2026-10-05 when LE-2912 was filed; the flow-lock regression (#2075) was promoted to the Ledger on
 2026-09-28 when LE-2785 was filed; the model-substitution regression (#1678) was promoted to the
