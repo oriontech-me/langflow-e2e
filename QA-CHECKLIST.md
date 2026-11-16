@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-15
+> **Last updated:** 2026-11-16
 
 ---
 
@@ -1793,9 +1793,9 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 84 | 75 | 0 | 1 | 8 |
+| `integrations/` — Dedicated Integrations | 95 | 83 | 0 | 1 | 11 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **847** | **708 (84%)** | **82 (10%)** | **15 (2%)** | **42 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **858** | **716 (83%)** | **82 (10%)** | **15 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1811,7 +1811,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 813 `test()` calls carrying the `@stable` tag, distributed across 300 spec
+> 820 `test()` calls carrying the `@stable` tag, distributed across 302 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2233,6 +2233,13 @@
 - [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
 - [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
 - [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
+- [x] the events drawer pages 50 at a time and filters on the server → `trigger-events-drawer.spec.ts`
+- [x] replaying an event confirms, queues a new event, selects it and shows its lineage → `trigger-events-drawer.spec.ts`
+- [x] the payload tree opens only its root and labels every type → `trigger-events-drawer.spec.ts`
+- [x] a trigger node is unsaved until its flow saves, then shows a badge that follows the trigger → `trigger-node-controls.spec.ts`
+- [x] the Enabled switch resumes and pauses the trigger, and a refused resume says why → `trigger-node-controls.spec.ts`
+- [x] background-run consent is the connection owner's switch, persists, and the fix path allows and resumes → `trigger-node-controls.spec.ts`
+- [x] the webhook secret is shown once, signs deliveries, and rotating it refuses the old one → `trigger-node-controls.spec.ts`
 - [x] the Triggers category holds Schedule and Inbound Webhook, and every trigger row is marked apart from the actions → `trigger-placement.spec.ts`
 - [x] with a trigger on the canvas every other trigger is blocked in the palette, and removing it unblocks them → `trigger-placement.spec.ts`
 - [x] pasting or duplicating a trigger leaves it out with a notice, and keeps the rest of the selection → `trigger-placement.spec.ts`
