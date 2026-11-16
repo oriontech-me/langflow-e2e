@@ -1320,6 +1320,22 @@
 - [-] An accepted rollback **appends** rather than rewinds — new higher revision, `source: "rollback"`, `rollback_of_revision` pointing at the target, `reason` echoed — and the restored content is enforced, not just recorded → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
 - [-] `GET /api/v1/catalog-policy/usage` and `usage/flows` report the blast radius of a block before an operator applies it — exactly the flows using the component, another user's included (a flow the superuser cannot even open), a two-node flow counted once, a class-name alias folded into the canonical key, `total` untouched by `limit`, superuser-only — and the block then refuses a re-save of exactly the reported set while an unreported control still saves → `governance/catalog-policy/usage-blast-radius.spec.ts`
 
+#### 21.5 Trigger Kind Policy (#2451)
+
+- [-] Approving only `schedule` (`approved_trigger_kinds` through `PUT /api/v2/policy-bundle`, read back by v1 too) drops Inbound Webhook from the *Triggers* category of `/api/v1/all` and from the sidebar's search, while Schedule stays → governance/trigger-policy-enforcement.spec.ts
+- [-] A denied kind cannot be armed: `enable` and `POST /api/v1/triggers` with `state: "active"` answer `403` `{"code": "policy_blocked", …}`, while the same create without `state` answers `201` `pending` and the next refresh pauses it → governance/trigger-policy-enforcement.spec.ts
+- [-] The policy refresh pauses a live trigger of a denied kind (`paused` / `policy_blocked` with the policy message), leaves an approved kind alone, and writes `trigger:policy_denied` (`deny`, `purpose: enable`) for the pause and for each refused enable → governance/trigger-policy-enforcement.spec.ts
+- [-] `[]` denies every kind and empties the *Triggers* category; back to `null` the palette returns but a paused trigger stays paused until its owner resumes it; a v1 write that leaves the facet out keeps it → governance/trigger-policy-enforcement.spec.ts
+- [-] An event dispatched under a newly denied kind fails `policy_blocked`, pauses its trigger and writes one `trigger:policy_denied` with `purpose: dispatch` — reached on every run by aligning with the refresh first, since the refresh and the dispatcher otherwise race → governance/trigger-policy-enforcement.spec.ts
+- [ ] Provider triggers that need a real tenant (GitHub, GitLab, WhatsApp, Telegram, the polling ones, Discord) — internal signing secrets, provider calls on enable, planted credentials refused; recorded in the spec doc's *Not covered*
+
+#### 21.6 Integration Deny-all through the v2 Bundle (#2451)
+
+- [-] In v2, `approved_integration_provider_ids: []` makes `GET /api/v1/integrations` list no provider and `null` lists them all again; v1 reads deny-all as `["langflow-reserved.integration-policy.deny-all"]`; a model-provider write keeps it; v2 refuses the marker `422` → governance/integration-policy-v2.spec.ts
+- [-] A v1 write of `[]` stays unrestricted (v2 reads `null`), and only the marker denies every integration through v1 → governance/integration-policy-v2.spec.ts
+- [-] The v2 history keeps `[]` apart from `null`, a stale `expected_revision` answers `409` naming both revisions, a rollback appends a new `source: "rollback"` revision whose deny-all is enforced, and a missing target answers `404` → governance/integration-policy-v2.spec.ts
+- [-] Under deny-all, the connection picker of a Gmail node reads *"This integration is unavailable. An administrator controls which providers and actions can be used."* with *Add connection* disabled, and the palette offers no Gmail component; lifted, both come back → governance/integration-policy-v2.spec.ts
+
 ## enterprise/ — Enterprise-only Surfaces (EE)
 
 > **New area (2026-08-19).** The remainder § 21 names as Enterprise-owned: a
@@ -1703,6 +1719,13 @@
 - [x] Each row's menu holds exactly the server's actions (an action it does not list is absent); a blocked one stays focusable with `aria-disabled="true"` and an `aria-describedby` reason (*"This trigger stopped permanently. Delete it instead."*) and does nothing when chosen; the test button of a paused row is blocked the same way (*"Resume the trigger first."*); Delete deletes only after the confirmation → core-functionality/integrations/triggers-settings-page.spec.ts
 - [x] A superuser's *All triggers* scope shows an Owner column, a provider filter listing only the providers present, bulk buttons `disabled` until a provider is chosen, a bulk dialog counted by a server dry run (*"Pause 2 active … triggers?"*) that changes exactly those rows, and per-row *Pause as admin* / *Resume admin pause*, which tells an owner-paused row apart (*"… wasn't paused by an admin, so nothing changed."*) → core-functionality/integrations/triggers-settings-page.spec.ts
 - [ ] `config_invalid` lists `resume` as allowed while `POST …/enable` answers `409 invalid_cron` — contradicts `capabilities.py`'s own contract (an allowed action is one the route accepts); recorded in `docs/api/triggers/api-triggers-operator.md`, not asserted, candidate upstream ticket
+
+#### 24.14 The trigger audit trail (#2451)
+
+- [x] An owner's `enable`, `disable` and replay write exactly one `trigger:resume`, `trigger:pause` and `trigger:replay` row each, naming the trigger (`resource_type`/`resource_id`), the actor, `allow`, `event: mutation` and the flow; the replay row names both events → api/triggers/api-triggers-audit.spec.ts
+- [x] An operator's bulk pause and resume by `trigger_ids` write one `trigger:admin_pause` / `trigger:admin_resume` row for the trigger they change (`paused_by_admin`), and none for a trigger they did not select → api/triggers/api-triggers-audit.spec.ts
+- [x] `GET /api/v1/authz/audit` answers a non-superuser `403` *"The user doesn't have enough privileges"*, and is left out of `/openapi.json` → api/triggers/api-triggers-audit.spec.ts
+- [ ] `trigger_ingress:accept` / `trigger_ingress:reject` — written only with `LANGFLOW_AUTHZ_AUDIT_ENABLED=true`, which no OSS lane sets (only `scripts/start-langflow-enterprise.sh`)
 
 ---
 
