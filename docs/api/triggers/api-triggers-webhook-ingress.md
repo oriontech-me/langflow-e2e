@@ -287,3 +287,5 @@ After the run, the instance has no flow, trigger or user left from this file.
   node the flow-save reconciler turns into a row.
 - `tests/helpers/integrations/connections-owner.ts`, `tests/helpers/flows/build-catalog-flow.ts` and
   `tests/helpers/flows/build-custom-component-graph.ts`.
+- `tests/helpers/triggers/sign-webhook.ts` — the signature and the secret mint, extracted from this spec
+  in #2449 so the trigger node specs sign deliveries the same way.
