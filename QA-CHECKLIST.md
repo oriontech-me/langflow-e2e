@@ -1741,6 +1741,15 @@
 - [ ] *Active* for a saved registration, and *"Removed. Restart Langflow to finish removing it"* — both need the instance to restart, which no lane does mid-run
 - [ ] A successful *Add provider* for Google Workspace or Microsoft 365 — a second registration for either is offered by every user's connection wizard, which `connection-oauth-wizard.spec.ts` asserts against while it runs in parallel
 
+#### 24.16 Connectors on 1.14 (#2452)
+
+- [x] A connector node's picker reads `GET /api/v1/integrations?provider=…` only once its popover opens, enables *Add connection* when the provider is approved, and reads *"Could not load integration availability. Refresh to try again."* with the button disabled when that read fails → core-functionality/integrations/connector-inline-add.spec.ts
+- [x] *Add connection* opens the dialog locked to the field's provider, offers *Share with the whole instance* only where the field's `ownership_mode` is not `user`, has no display-name field and creates the row with its handle as `display_name`; *Cancel* during consent deletes that row, and the canvas, the palette and the catalog's flow scope survive (langflow#16375) → core-functionality/integrations/connector-inline-add.spec.ts
+- [x] Once consent lands, *Done* selects the new connection when it fits the field (the flow saves `provider/handle`), and otherwise toasts *"The connection was created, but it cannot be used by this component."* with what is missing, leaving the field as it was → core-functionality/integrations/connector-inline-add.spec.ts
+- [x] Every dedicated integration action of the twelve providers offers Tool Mode; in Tool Mode an action becomes one tool per output (Gmail Send one, Slack Search two), the connection is never a tool argument, and the picker stays on the node → core-functionality/integrations/connector-tool-mode.spec.ts
+- [x] A pasted credential is checked against the provider before it is stored: GitHub, GitLab, Telegram, Discord and WhatsApp refuse a fake token with their reason (or *could not reach* with no egress), Jira, Confluence, ServiceNow and Salesforce refuse manual credentials, and the same create without credentials is `pending` → api/connections/api-connections-lifecycle.spec.ts
+- [ ] A consent that completes at a real provider, and an Agent calling an action as a tool — both need a real account
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)

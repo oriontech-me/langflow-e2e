@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-connections-lifecycle.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev28`) for test 9; tests 1–8 on 1.13.x (`1.13.0.dev47`)
 
 Owning issue: #1966 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order and dependencies in the #1971 comment). The seeding helpers this issue builds,
@@ -46,6 +46,48 @@ echoed, so the assertion is on `type` and `loc`):
 | `name` with a hyphen (the repo's `uniqueName` idiom) | `string_pattern_mismatch` | `["body", "name"]` |
 | an undeclared key (`provider_id` next to `provider_key`) | `extra_forbidden` | `["body", "provider_id"]` |
 | `executing_identity` as the string `"user_delegated"` | `model_attributes_type` | `["body", "executing_identity"]` |
+
+### A pasted credential is checked against the provider (test 9, #2452)
+
+From 1.14 the providers that accept a pasted token check it before storing it. Measured on `1.14.0.dev28`
+with a fake token, each sent with the identity of the provider's manual-token profile
+(`GET /api/v1/integrations` → `manual_token_profiles`), `POST /api/v1/connections` with `credentials`
+answers `422` and:
+
+| Provider (identity) | `detail` | Needs the network |
+|---|---|---|
+| `github` (`service`), no `expires_at` | *"This integration requires a future token expiration time with a time zone."* | no |
+| `github` (`service`), a future `expires_at` | *"GitHub rejected this token. Paste a valid GitHub App installation token and try again."* (measured) | yes |
+| `gitlab` (`user_delegated`) | *"The provider rejected this token. Paste a valid token and try again."* (measured) | yes |
+| `telegram`, `discord` (`bot`) | *"The provider rejected this connection configuration. Check the setup guide and token settings."* (measured; Discord also *"rejected this token"*) | yes |
+| `whatsapp` (`service`) | *"Configure the WhatsApp app, app secret, WABA, phone ID and Graph API version on this server."* | no |
+| `jira`, `confluence`, `servicenow`, `salesforce` | *"This integration does not support manually entered credentials."* | no |
+
+The same create without `credentials` answers `201` `pending` for each.
+
+- **A network-bound answer is whatever the provider says, so the spec accepts any refusal the check can
+  give.** Measured twice with the same fake token, Discord answered *"…rejected this connection
+  configuration…"* and then *"The provider rejected this token. Paste a valid token and try again."*. An
+  instance with no outbound network answers *"Langflow could not reach the provider. Check this server's
+  outbound network and DNS settings, then try again."* (the wording the issue quoted). For those rows the
+  spec accepts every answer `ConnectionService` maps a checked credential to (`services/connection/service.py`):
+  - rejected token;
+  - denied check;
+  - rate limited;
+  - could not reach;
+  - rejected configuration;
+  - could not check.
+
+  For GitHub it also accepts its own two *"GitHub rejected this token…"* answers. It never accepts *"does not
+  support manually entered credentials"*, a WhatsApp server setting or a `201`: those would mean the
+  credential was not checked.
+- **The identity changes WhatsApp's answer.** Sent as `user_delegated`, WhatsApp answers *"WhatsApp requires
+  your own system-user token on a configured hosted or self-managed server."* instead, so the spec sends
+  each profile's own identity.
+- **Google and Microsoft accept a planted token** (`201` `ready`) and offer no pasted token in the UI. Test 1
+  already asserts it; it is what every other connection spec plants through.
+
+This is why #2451 records these providers' triggers as needing a real tenant.
 
 ### Where the measurement disagrees with the issue
 
@@ -136,6 +178,8 @@ the unique marker in its `display_name`) the test itself sent.
 
 `@api` `@integrations` `@stable`
 
+Test 9 skips below `1.14.0.dev26`, the first nightly serving the whole 1.14 batch.
+
 `@stable`: no provider key, no model, no run, no network egress — the planted
 credential never leaves the instance. `@stable` enters in this PR rather than after a
 seasoning period.
@@ -179,6 +223,16 @@ Eight tests over the `request` fixture, each declaring its operations through
 7. `GET /api/v1/connections` → the row still reads `status: "ready"`, its original
    `granted_scopes` and `allow_non_interactive: true` — the refusals changed nothing.
 
+**Test 9 — `a pasted credential is checked against the provider, and the same create without one is pending`**
+1. Create a throwaway owner for this test alone: it spends 18 writes (10 refused creates, which count because
+   the check runs inside the handler, then 4 creates and 4 deletes), which would crowd the file's own owner.
+2. For each row of the table, `POST /api/v1/connections` with a fake `credentials.access_token` and the
+   profile's identity. Expect `422`, and `detail` equal to the row's answer or, for a network-bound row, one
+   of the check's refusals listed above.
+3. For `github`, `gitlab`, `whatsapp` and `telegram`, the same create without `credentials`. Expect `201`
+   `pending` with `has_credentials: false`, then delete it.
+4. `GET /api/v1/connections` as that owner → no row left.
+
 **Tests 3–8 — `a create body with <cause> is refused with one 422 naming it`**, one test
 per cause in the table above (`no provider_key`, `no name`, `no executing_identity`,
 `a hyphenated name`, `an undeclared key`, `executing_identity as a string`):
@@ -190,8 +244,9 @@ per cause in the table above (`no provider_key`, `no name`, `no executing_identi
 
 ## Validation criterion *(required)*
 
-All eight tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev19`, with the create and list shapes asserted as the exact 16-key set, every
+All nine tests pass three consecutive times at `--retries=0 --workers=1` against
+`1.14.0.dev28` (tests 1–8 also against `1.13.0.dev19`), with the create and list shapes asserted as the
+exact 16-key set, every
 `422` asserted on a one-entry `detail` by `type` and `loc`, the removal proven by the
 list re-read **and** the second `DELETE`'s `"Connection not found"` (never by a `GET`
 on the item path, which answers `404` for a live connection too), and the declared
@@ -204,7 +259,8 @@ the run.
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or
+- A running Langflow **1.13** instance (**1.14**, `1.14.0.dev26` or later, for test 9) at
+  `PLAYWRIGHT_BASE_URL`, auto-login or
   superuser — the superuser creates and deletes the throwaway owner — with the default
   rate limits (`rate_limit_enabled` on — the lanes set nothing).
 - `src/backend/base/langflow/api/v1/connections.py` — the router under test, and the
