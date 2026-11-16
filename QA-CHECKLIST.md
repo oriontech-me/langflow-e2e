@@ -1839,7 +1839,7 @@
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
-| `core-functionality/templates/` | 46 | 42 | 0 | 0 | 4 |
+| `core-functionality/templates/` | 46 | 45 | 0 | 0 | 1 |
 | `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
 | `flow-functionality/` | 57 | 34 | 20 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
@@ -1854,7 +1854,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 126 | 108 | 0 | 3 | 15 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **899** | **746 (83%)** | **91 (10%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **899** | **749 (83%)** | **91 (10%)** | **17 (2%)** | **42 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1870,7 +1870,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 855 `test()` calls carrying the `@stable` tag, distributed across 310 spec
+> 858 `test()` calls carrying the `@stable` tag, distributed across 311 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2567,6 +2567,9 @@
 - [x] <template.name> instantiates with the template's components, edges and notes → `templates-instantiate.spec.ts`
 - [x] the registered template set matches the committed baseline → `templates-registration.spec.ts`
 - [x] every declared absence is still absent → `templates-registration.spec.ts`
+- [x] should run Financial Report Parser on an uploaded report through its Parser → `templates-run-file-input.spec.ts`
+- [x] should run Portfolio Website Code Generator on an uploaded resume → `templates-run-file-input.spec.ts`
+- [x] should run Text Sentiment Analysis on an uploaded digest to both of its Chat Outputs → `templates-run-file-input.spec.ts`
 - [x] should run Knowledge Retrieval and show the ingested sentinel in its reply → `templates-run-knowledge.spec.ts`
 - [x] should run Document Q&A with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 - [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
@@ -2818,5 +2821,5 @@
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 20 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
-| `core-functionality/templates/` | 0 | 4 |
+| `core-functionality/templates/` | 0 | 1 |
 | `ui-ux/` — Settings | 0 | 0 |
