@@ -1805,9 +1805,9 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 95 | 83 | 0 | 1 | 11 |
+| `integrations/` — Dedicated Integrations | 104 | 91 | 0 | 1 | 12 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **858** | **716 (83%)** | **82 (10%)** | **15 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **867** | **724 (84%)** | **82 (9%)** | **15 (2%)** | **46 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1823,7 +1823,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 820 `test()` calls carrying the `@stable` tag, distributed across 302 spec
+> 828 `test()` calls carrying the `@stable` tag, distributed across 304 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2024,6 +2024,11 @@
 - [x] a single-flow write that carries a second trigger is refused, and changes nothing → `api-triggers-one-per-flow.spec.ts`
 - [x] an import that carries one bad flow creates none of the flows in it → `api-triggers-one-per-flow.spec.ts`
 - [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
+- [x] lists the caller's own triggers across flows, newest first, filtered by provider and state → `api-triggers-operator.spec.ts`
+- [x] scope=all is superuser-only and shows every user's triggers with their owner and no actions on rows the caller does not own → `api-triggers-operator.spec.ts`
+- [x] computes each trigger's actions on the server, by state and by kind → `api-triggers-operator.spec.ts`
+- [x] bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused → `api-triggers-operator.spec.ts`
+- [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
 - [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
@@ -2255,6 +2260,9 @@
 - [x] the Triggers category holds Schedule and Inbound Webhook, and every trigger row is marked apart from the actions → `trigger-placement.spec.ts`
 - [x] with a trigger on the canvas every other trigger is blocked in the palette, and removing it unblocks them → `trigger-placement.spec.ts`
 - [x] pasting or duplicating a trigger leaves it out with a notice, and keeps the rest of the selection → `trigger-placement.spec.ts`
+- [x] reaches Settings › Triggers and lists, searches and filters the caller's triggers → `triggers-settings-page.spec.ts`
+- [x] renders each row's menu from the server's actions, blocks with a reason, and deletes only after confirming → `triggers-settings-page.spec.ts`
+- [x] gives a superuser an operator view across users, with a provider bulk previewed by a dry run and per-row admin actions → `triggers-settings-page.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
