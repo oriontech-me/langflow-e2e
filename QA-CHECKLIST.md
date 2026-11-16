@@ -1842,9 +1842,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 108 | 94 | 0 | 1 | 13 |
+| `integrations/` — Dedicated Integrations | 119 | 102 | 0 | 2 | 15 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **881** | **727 (83%)** | **91 (10%)** | **15 (2%)** | **48 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **892** | **735 (82%)** | **91 (10%)** | **16 (2%)** | **50 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1860,7 +1860,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 831 `test()` calls carrying the `@stable` tag, distributed across 305 spec
+> 841 `test()` calls carrying the `@stable` tag, distributed across 307 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1908,6 +1908,11 @@
 - [x] a KB connector ingest fails closed without the opt-in, before any ingestion run exists → `api-connections-resolution-non-interactive.spec.ts`
 - [x] an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a Slack app-level token is refused outside the trigger listener, interactive or not → `api-connections-resolution-non-interactive.spec.ts`
+- [x] a saved registration is listed without its secrets, used by the next consent at once, replaced with its secret kept, and removed → `api-connections-saved-oauth-registrations.spec.ts`
+- [x] an invalid registration is refused with a message that names the problem, and never echoes what was sent → `api-connections-saved-oauth-registrations.spec.ts`
+- [x] an ID the server environment defines stays the environment's: saved as overridden, not used, and removable without touching it → `api-connections-saved-oauth-registrations.spec.ts`
+- [x] a saved registration's secrets reach no read, and its storage cannot be written as a global variable → `api-connections-saved-oauth-registrations.spec.ts`
+- [x] a regular user is refused on all three routes and changes nothing → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] a planted token reaches no client response across the connection's lifecycle, and scope coverage describes the request rather than the credential → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a hyphenated name does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
@@ -2290,6 +2295,11 @@
 - [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
 - [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
 - [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
+- [x] the environment's registrations are listed as Active from the server environment with no action, Add provider opens a form prefilled for this instance, and with no registration at all the panel says so → `manage-providers-panel.spec.ts`
+- [x] the form catches five mistakes before sending anything → `manage-providers-panel.spec.ts`
+- [x] a saved registration shows its status and saver, Replace keeps the secret, and Remove deletes it → `manage-providers-panel.spec.ts`
+- [x] an environment ID saved here reads Not in use → `manage-providers-panel.spec.ts`
+- [x] Add provider saves a Slack registration (declared failing: the form sends the manifest's auth profile id) → `manage-providers-panel.spec.ts`
 - [x] the events drawer pages 50 at a time and filters on the server → `trigger-events-drawer.spec.ts`
 - [x] replaying an event confirms, queues a new event, selects it and shows its lineage → `trigger-events-drawer.spec.ts`
 - [x] the payload tree opens only its root and labels every type → `trigger-events-drawer.spec.ts`
