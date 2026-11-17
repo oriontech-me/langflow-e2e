@@ -173,6 +173,11 @@ else
     # long; a run that waited 50 min and has been testing for 10 is on time. The last
     # such line in today's log is the wait so far, or the whole wait once it ended.
     dns_waited_s="$(sed -n -E 's/^dns-wait: (waited|still failing after) ([0-9]+)s.*/\2/p' "$LOG_DIR/latest.log" 2>/dev/null | tail -1)"
+    # A wait that began minutes ago has only its first line ("cannot resolve") until the
+    # 5th attempt: nothing to discount yet, but the run is waiting, so it is followed.
+    if [ -z "$dns_waited_s" ] && grep -q '^dns-wait: cannot resolve:' "$LOG_DIR/latest.log" 2>/dev/null; then
+      dns_waited_s=0
+    fi
     if [ -n "$dns_waited_s" ]; then
       elapsed_min=$(( elapsed_min - dns_waited_s / 60 ))
       [ "$elapsed_min" -ge 0 ] || elapsed_min=0
@@ -189,6 +194,8 @@ Last log: $LOG_DIR/latest.log"
       follow_until="${WATCHDOG_FOLLOW_UNTIL:-$(( $(date -u +%s) + WATCHDOG_FOLLOW_MAX_MIN * 60 ))}"
       if [ -n "$dns_waited_s" ] && [ "$(date -u +%s)" -lt "$follow_until" ]; then
         say "following: still running, ${elapsed_min} min in after a DNS wait; looking again in ${WATCHDOG_FOLLOW_STEP_S}s"
+        # A DRY_RUN by hand would otherwise sit silent for up to the follow bound.
+        [ "$DRY_RUN" = "1" ] && echo "following: the daily waited for DNS and is still running; looking again in ${WATCHDOG_FOLLOW_STEP_S}s (until $(date -u -d "@$follow_until" +%H:%M 2>/dev/null || echo "$follow_until") UTC)"
         sleep "$WATCHDOG_FOLLOW_STEP_S"
         WATCHDOG_FOLLOW_UNTIL="$follow_until" exec bash "${BASH_SOURCE[0]}"
       fi
@@ -308,7 +315,9 @@ if [ -r "$(dirname "${BASH_SOURCE[0]}")/lib/wait-for-dns.sh" ]; then
   wait_for_dns "$webhook_host" 2>&1 | while IFS= read -r line; do say "$line"; done
 fi
 
-http="$(curl -sS -o /tmp/watchdog-slack.out -w '%{http_code}' -X POST \
+# --max-time: the unit's TimeoutStartSec is sized to the follow plus the DNS wait, and
+# a post that hangs must not take the rest of it.
+http="$(curl -sS --max-time 60 -o /tmp/watchdog-slack.out -w '%{http_code}' -X POST \
   -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" 2>>"$WATCHDOG_LOG")"
 say "posted: HTTP $http"
 [ "$http" = "200" ] || { say "the alarm itself could not be delivered"; exit 1; }

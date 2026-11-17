@@ -195,10 +195,22 @@ test("the unit's timeout covers following the run and the delivery's own DNS wai
   assert.ok(m, "no TimeoutStartSec in hours or minutes");
   const minutes = Number(m[1]) * (m[2] === "h" ? 60 : 1);
   const script = readFileSync(SCRIPT, "utf8");
-  const follow = Number(script.match(/WATCHDOG_FOLLOW_MAX_MIN:-(\d+)/)[1]);
+  // The follow can overrun its bound by one step, the wait by a step plus its lookups,
+  // and the post is capped by curl's --max-time.
+  const follow = Number(script.match(/WATCHDOG_FOLLOW_MAX_MIN:-(\d+)/)[1]) + Math.ceil(Number(script.match(/WATCHDOG_FOLLOW_STEP_S:-(\d+)/)[1]) / 60);
+  const curlMin = Math.ceil(Number(script.match(/curl -sS --max-time (\d+)/)[1]) / 60);
   const lib = readFileSync(join(HERE, "..", "ops", "vm", "lib", "wait-for-dns.sh"), "utf8");
   const attempts = Number(lib.match(/DNS_WAIT_ATTEMPTS:-(\d+)/)[1]);
   const step = Number(lib.match(/DNS_WAIT_STEP_S:-(\d+)/)[1]);
-  const dnsWaitMin = Math.ceil(((attempts - 1) * step) / 60);
-  assert.ok(minutes > follow + dnsWaitMin + 10, `TimeoutStartSec=${minutes}min does not cover ${follow} + ${dnsWaitMin} min`);
+  const dnsWaitMin = Math.ceil(((attempts - 1) * step) / 60) + 2;
+  assert.ok(minutes > follow + dnsWaitMin + curlMin + 10, `TimeoutStartSec=${minutes}min does not cover ${follow} + ${dnsWaitMin} min`);
+});
+
+test("a wait that has only begun at the check is followed too", () => {
+  // A daily started by hand minutes before the check: only the first wait line exists.
+  const r = runWatchdog({ DRY_RUN: "1", WATCHDOG_FOLLOW_STEP_S: "0" }, { systemctl: endsAfter(3, 2) },
+    "=== daily start\ndns-wait: cannot resolve: github.com -- waiting up to 3540s\n");
+  assert.match(r.watchdogLog, /following: still running/);
+  assert.match(r.stdout, /^following: the daily waited for DNS/m, "a DRY_RUN by hand says why it waits");
+  assert.match(r.stdout, /would post/);
 });

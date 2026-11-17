@@ -129,3 +129,14 @@ test("with a single attempt the state is diagnosed once, not twice in a row", ()
   const r = waitFor(["github.com"], { failFor: Infinity, env: { DNS_WAIT_ATTEMPTS: "1" } });
   assert.equal((r.stdout.match(/nameserver 10\.0\.0\.1/g) || []).length, 1);
 });
+
+test("without getent it does not wait at all", () => {
+  const dir = makeTempDir("dns-wait-nogetent-");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  for (const tool of ["sh", "sleep"]) symlinkSync(execFileSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim(), join(bin, tool));
+  const r = spawnSync(BASH, ["-c", `. ${JSON.stringify(LIB)}; wait_for_dns github.com`], { encoding: "utf8", env: { PATH: bin } });
+  rmSync(dir, { recursive: true, force: true });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /getent is not installed -- not waiting/);
+});

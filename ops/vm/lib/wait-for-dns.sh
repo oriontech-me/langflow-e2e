@@ -45,6 +45,8 @@ wait_for_dns() {
   case "$step" in '' | *[!0-9]*) echo "dns-wait: DNS_WAIT_STEP_S must be a whole number of seconds, got '$step' -- not waiting"; return 2 ;; esac
   case "$lookup" in '' | *[!0-9]* | 0) echo "dns-wait: DNS_WAIT_LOOKUP_S must be a positive whole number of seconds, got '$lookup' -- not waiting"; return 2 ;; esac
   [ "$#" -gt 0 ] || return 0
+  # Without getent every lookup would "fail", and every day would wait the full hour.
+  command -v getent >/dev/null 2>&1 || { echo "dns-wait: getent is not installed -- not waiting"; return 0; }
 
   local capped=()
   command -v timeout >/dev/null 2>&1 && capped=(timeout "$lookup")
