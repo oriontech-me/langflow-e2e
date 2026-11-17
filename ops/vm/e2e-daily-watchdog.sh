@@ -153,6 +153,16 @@ else
   # somebody adds a line to that unit for an unrelated reason.
   exit_raw="$(systemctl show "$UNIT" -p ExecMainExitTimestamp --value --timestamp=unix 2>/dev/null | tr -d '@')"
   if [ -z "$exit_raw" ] || [ "$exit_raw" -lt "$start_raw" ]; then
+    # Time spent waiting for DNS is not time stuck. The wrapper waits for public names
+    # before it pulls (ops/vm/lib/wait-for-dns.sh), up to about an hour, and logs how
+    # long; a run that waited 50 min and has been testing for 10 is on time. The last
+    # such line in today's log is the wait so far, or the whole wait once it ended.
+    dns_waited_s="$(sed -n -E 's/^dns-wait: (waited|still failing after) ([0-9]+)s.*/\2/p' "$LOG_DIR/latest.log" 2>/dev/null | tail -1)"
+    if [ -n "$dns_waited_s" ]; then
+      elapsed_min=$(( elapsed_min - dns_waited_s / 60 ))
+      [ "$elapsed_min" -ge 0 ] || elapsed_min=0
+      say "the run waited ${dns_waited_s}s for DNS; counting ${elapsed_min} min of it as running"
+    fi
     if [ "$elapsed_min" -ge "$STILL_RUNNING_ALARM_AFTER_MIN" ]; then
       headline="VM daily: still running after ${elapsed_min} min"
       body="The run started at ${start_hm} UTC and has not finished. Four shards went end to end in 18.5 min on 2026-09-13, so this is stuck rather than slow. It will be killed by TimeoutStartSec=4h; until then today produces no verdict.
@@ -260,6 +270,19 @@ print(json.dumps({"blocks": [
 ]}))
 ')" ;;
 esac
+
+# The alarm that matters most is the one for a run that died because the network did:
+# on 2026-11-16 and -17 this check found the dead run at 09:00 and could not post it,
+# because hooks.slack.com did not resolve either. So it waits for the webhook's host
+# first, at most about an hour, and the wait goes in this log. Not fatal: giving up
+# leaves curl to fail as it did before, and the log says so.
+if [ -r "$(dirname "${BASH_SOURCE[0]}")/lib/wait-for-dns.sh" ]; then
+  # shellcheck source=lib/wait-for-dns.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/wait-for-dns.sh"
+  webhook_host="${SLACK_WEBHOOK_URL#*://}"
+  webhook_host="${webhook_host%%/*}"
+  wait_for_dns "$webhook_host" >> "$WATCHDOG_LOG" 2>&1 || true
+fi
 
 http="$(curl -sS -o /tmp/watchdog-slack.out -w '%{http_code}' -X POST \
   -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" 2>>"$WATCHDOG_LOG")"
