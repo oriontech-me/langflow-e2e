@@ -79,6 +79,18 @@ main() {
     echo "=== daily start $STAMP — target: published distribution ==="
 
     cd "$REPO" || { echo "FATAL: $REPO is missing"; exit 1; }
+    # Every step from here to the tests needs public names: the pull, the published
+    # image listing, the upstream refs, the install from PyPI. On 2026-11-16 and -17
+    # they did not resolve from about 08:00 to 09:00 UTC and both runs died in a minute
+    # with no verdict. So the run waits for them first, at most about an hour, and says
+    # so; on a normal day this is one silent lookup per host. Giving up is not fatal:
+    # the steps below then fail with their own messages, as they did before. Sourced
+    # from the clone, so a clone that predates the file runs as before.
+    if [ -r "$REPO/ops/vm/lib/wait-for-dns.sh" ]; then
+      # shellcheck source=lib/wait-for-dns.sh
+      . "$REPO/ops/vm/lib/wait-for-dns.sh"
+      wait_for_dns github.com hub.docker.com pypi.org || true
+    fi
     # Handed to the second pass, which runs main's code and so knows what to compare.
     export E2E_DAILY_PRE_PULL="$(git rev-parse -q --verify HEAD 2>/dev/null || true)"
     git pull --ff-only || echo "WARNING: pull failed — running the suite as it stands"
