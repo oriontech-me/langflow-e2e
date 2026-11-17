@@ -498,3 +498,42 @@ test("a holder named for no listed unit is unknown: every routine is stopped", (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The wait for public names, before the pull (ops/vm/lib/wait-for-dns.sh). On 2026-11-16
+// and -17 the names did not resolve at 08:00 UTC and both runs died in a minute. The
+// library is copied into the fake clone, as the wrapper sources it from there.
+const DNS_LIB = { "ops/vm/lib/wait-for-dns.sh": readFileSync(join(ROOT, "ops", "vm", "lib", "wait-for-dns.sh"), "utf8") };
+function getentFailing(n) {
+  return `#!/bin/sh\nf=$(dirname "$0")/getent-calls\nc=$(cat "$f" 2>/dev/null || echo 0); c=$((c+1)); echo $c > "$f"\n[ $c -le ${n} ] && exit 2\necho "192.0.2.1 $2"\n`;
+}
+const DNS_ENV = { DNS_WAIT_STEP_S: "0", DNS_WAIT_RESOLV_CONF: "/nonexistent" };
+
+test("names that do not resolve at the start are waited for, before the pull", () => {
+  const dir = makeTempDir("wrapper-dns-wait");
+  // Three hosts, two failed rounds, then they answer.
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, DNS_LIB, { getent: getentFailing(6) }, DNS_ENV);
+  const wait = r.log.indexOf("dns-wait: cannot resolve: github.com hub.docker.com pypi.org");
+  const resolved = r.log.indexOf("dns-wait: waited");
+  const pulled = r.log.indexOf("suite at:");
+  assert.ok(wait >= 0, `no wait in the log:\n${r.log}`);
+  assert.ok(resolved > wait, "the wait never said the names came back");
+  assert.ok(pulled > resolved, "the pull ran before the names resolved");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a wait that gives up does not end the daily: the steps after it fail on their own", () => {
+  const dir = makeTempDir("wrapper-dns-giveup");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, DNS_LIB, { getent: "#!/bin/sh\nexit 2\n" }, { ...DNS_ENV, DNS_WAIT_ATTEMPTS: "2" });
+  assert.match(r.log, /dns-wait: still failing after \d+s: github\.com hub\.docker\.com pypi\.org -- giving up/);
+  assert.match(r.log, /suite at:/, "the pull was skipped");
+  assert.match(r.log, /wrapper at:/, "the second pass never ran");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("on a day the names resolve, the wait leaves no trace in the log", () => {
+  const dir = makeTempDir("wrapper-dns-quiet");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, DNS_LIB, { getent: getentFailing(0) }, DNS_ENV);
+  assert.doesNotMatch(r.log, /dns-wait/);
+  assert.match(r.log, /suite at:/);
+  rmSync(dir, { recursive: true, force: true });
+});

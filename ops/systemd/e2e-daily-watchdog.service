@@ -16,6 +16,9 @@ Type=oneshot
 Environment=HOME=/root
 # Versioned since #1994 and run from the clone. The /root copy is left as the rollback.
 ExecStart=/root/e2e-qa/ops/vm/e2e-daily-watchdog.sh
-# It reads systemd state, one directory and one log, then posts once. If it cannot
-# finish in five minutes something is wrong with the machine itself.
-TimeoutStartSec=5min
+# It reads systemd state, one directory and one log, then posts once. Five minutes
+# was enough for that, and was the bound until #2472. Since then it can follow a daily
+# that waited for DNS (up to WATCHDOG_FOLLOW_MAX_MIN, 150 min) and then wait for the
+# webhook's host itself (about an hour) before it posts: 4h covers both with room. A
+# kill in the middle of either would lose the one alarm the wait exists to deliver.
+TimeoutStartSec=4h
