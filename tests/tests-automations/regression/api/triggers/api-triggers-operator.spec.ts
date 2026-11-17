@@ -309,7 +309,7 @@ test.describe("Triggers — the operator API", () => {
 
   test(
     "computes each trigger's actions on the server, by state and by kind",
-    { tag: ["@api", "@integrations", "@stable"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",

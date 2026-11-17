@@ -116,7 +116,7 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
     }
   });
 
-  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@stable", "@api", "@a2a"] }, async ({
+  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };

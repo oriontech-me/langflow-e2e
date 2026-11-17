@@ -426,7 +426,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
 
   test(
     "a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ playwright, request, apiCoverage }, testInfo) => {
       // Up to a minute for the cron boundary, plus the dispatcher's polls.
       test.setTimeout(240_000);
