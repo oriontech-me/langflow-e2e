@@ -77,6 +77,15 @@ WATCHDOG_LOG="$LOG_DIR/watchdog.log"
 # running when this fires is stuck, not slow.
 STILL_RUNNING_ALARM_AFTER_MIN="${STILL_RUNNING_ALARM_AFTER_MIN:-45}"
 DRY_RUN="${DRY_RUN:-0}"
+# Following a run that waited for DNS (ops/vm/lib/wait-for-dns.sh). Such a run can
+# still be going at this 09:00 check and end after it -- with a verdict, or dead -- and
+# this is the only check of the day. So instead of going quiet, the check looks again
+# every WATCHDOG_FOLLOW_STEP_S seconds, by re-running itself, until the run ends or
+# WATCHDOG_FOLLOW_MAX_MIN minutes pass, and then decides as it always does. 150 min
+# covers the hour of the wait plus a run end to end with room; the unit's
+# TimeoutStartSec is sized to this plus the delivery's own DNS wait.
+WATCHDOG_FOLLOW_STEP_S="${WATCHDOG_FOLLOW_STEP_S:-300}"
+WATCHDOG_FOLLOW_MAX_MIN="${WATCHDOG_FOLLOW_MAX_MIN:-150}"
 # Exactly 0 or 1, refused before anything runs (#2056). It is read below as `= "1"`, so
 # a typo'd `yes` meant NOT a dry run: the one invocation whose purpose is to post
 # nothing sent a fake incident to the channel. Same rule as run-e2e.sh's require_flag.
@@ -90,6 +99,11 @@ esac
 case "$STILL_RUNNING_ALARM_AFTER_MIN" in
   '' | *[!0-9]*) echo "STILL_RUNNING_ALARM_AFTER_MIN must be a whole number of minutes, got: '$STILL_RUNNING_ALARM_AFTER_MIN'" >&2; exit 1 ;;
 esac
+for knob in WATCHDOG_FOLLOW_STEP_S WATCHDOG_FOLLOW_MAX_MIN WATCHDOG_FOLLOW_UNTIL; do
+  case "${!knob-0}" in
+    '' | *[!0-9]*) echo "$knob must be a whole number, got: '${!knob}'" >&2; exit 1 ;;
+  esac
+done
 
 mkdir -p "$LOG_DIR"
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$WATCHDOG_LOG"; }
@@ -97,7 +111,8 @@ say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$WATCHDOG_LOG
 # Every decision is written down, including the quiet ones. A watchdog whose silence
 # leaves no trace cannot be distinguished from a watchdog that never ran — which is
 # the same confusion it exists to remove, one level up.
-say "--- check start"
+# A follow-up look (below) is the same check, not a new one: one start line per day.
+[ -n "${WATCHDOG_FOLLOW_UNTIL:-}" ] || say "--- check start"
 
 TODAY_UTC="$(date -u +%Y-%m-%d)"
 TODAY_STAMP="$(date -u +%Y%m%d)"
@@ -168,6 +183,15 @@ else
       body="The run started at ${start_hm} UTC and has not finished. Four shards went end to end in 18.5 min on 2026-09-13, so this is stuck rather than slow. It will be killed by TimeoutStartSec=4h; until then today produces no verdict.
 Last log: $LOG_DIR/latest.log"
     else
+      # Not stuck. But a run that waited for DNS may end after this check, and nothing
+      # else looks at it today: on 2026-11-16 a run still waiting at 09:00 would have
+      # given up at 09:01, aborted with no report, and gone unannounced. So follow it.
+      follow_until="${WATCHDOG_FOLLOW_UNTIL:-$(( $(date -u +%s) + WATCHDOG_FOLLOW_MAX_MIN * 60 ))}"
+      if [ -n "$dns_waited_s" ] && [ "$(date -u +%s)" -lt "$follow_until" ]; then
+        say "following: still running, ${elapsed_min} min in after a DNS wait; looking again in ${WATCHDOG_FOLLOW_STEP_S}s"
+        sleep "$WATCHDOG_FOLLOW_STEP_S"
+        WATCHDOG_FOLLOW_UNTIL="$follow_until" exec bash "${BASH_SOURCE[0]}"
+      fi
       say "quiet: still running, ${elapsed_min} min in — under the ${STILL_RUNNING_ALARM_AFTER_MIN} min alarm point"
     fi
   elif [ "$start_day" != "$TODAY_UTC" ]; then
@@ -281,7 +305,7 @@ if [ -r "$(dirname "${BASH_SOURCE[0]}")/lib/wait-for-dns.sh" ]; then
   . "$(dirname "${BASH_SOURCE[0]}")/lib/wait-for-dns.sh"
   webhook_host="${SLACK_WEBHOOK_URL#*://}"
   webhook_host="${webhook_host%%/*}"
-  wait_for_dns "$webhook_host" >> "$WATCHDOG_LOG" 2>&1 || true
+  wait_for_dns "$webhook_host" 2>&1 | while IFS= read -r line; do say "$line"; done
 fi
 
 http="$(curl -sS -o /tmp/watchdog-slack.out -w '%{http_code}' -X POST \
