@@ -29,21 +29,31 @@
 #
 # ## The bound
 #
-# DNS_WAIT_ATTEMPTS (default 60) lookups, DNS_WAIT_STEP_S (default 60) seconds apart:
-# about an hour. Reaching it returns 1 and the caller goes on; whatever needed the
-# network then fails the way it always did, with its own message. Waiting longer would
-# hold the machine's other routines behind the daily for a day that may not come back.
+# By the clock: DNS_WAIT_ATTEMPTS (default 60) lookups, DNS_WAIT_STEP_S (default 60)
+# seconds apart, so about an hour, and the wait gives up at whichever comes first, the
+# attempt count or (attempts - 1) * step seconds. Counting attempts alone was wrong:
+# a lookup against a resolver that does not answer can hang for many seconds, and
+# getent asks twice per host (IPv6, then IPv4), so an "hour" of attempts could run for
+# hours. Each lookup is also capped at DNS_WAIT_LOOKUP_S (default 10) seconds with
+# timeout(1) where it exists. Reaching the bound returns 1 and the caller goes on;
+# whatever needed the network then fails the way it always did, with its own message.
+# Waiting longer would hold the machine's other routines behind the daily for a day
+# that may not come back.
 wait_for_dns() {
-  local attempts="${DNS_WAIT_ATTEMPTS:-60}" step="${DNS_WAIT_STEP_S:-60}"
+  local attempts="${DNS_WAIT_ATTEMPTS:-60}" step="${DNS_WAIT_STEP_S:-60}" lookup="${DNS_WAIT_LOOKUP_S:-10}"
   case "$attempts" in '' | *[!0-9]* | 0) echo "dns-wait: DNS_WAIT_ATTEMPTS must be a positive whole number, got '$attempts' -- not waiting"; return 2 ;; esac
   case "$step" in '' | *[!0-9]*) echo "dns-wait: DNS_WAIT_STEP_S must be a whole number of seconds, got '$step' -- not waiting"; return 2 ;; esac
+  case "$lookup" in '' | *[!0-9]* | 0) echo "dns-wait: DNS_WAIT_LOOKUP_S must be a positive whole number of seconds, got '$lookup' -- not waiting"; return 2 ;; esac
   [ "$#" -gt 0 ] || return 0
 
-  local attempt=1 started="$SECONDS" failing host waited
+  local capped=()
+  command -v timeout >/dev/null 2>&1 && capped=(timeout "$lookup")
+  local attempt=1 started="$SECONDS" deadline failing host waited
+  deadline=$(( SECONDS + (attempts - 1) * step ))
   while :; do
     failing=""
     for host in "$@"; do
-      getent hosts "$host" >/dev/null 2>&1 || failing="$failing $host"
+      ${capped[@]+"${capped[@]}"} getent hosts "$host" >/dev/null 2>&1 || failing="$failing $host"
     done
     waited=$(( SECONDS - started ))
     if [ -z "$failing" ]; then
@@ -55,10 +65,13 @@ wait_for_dns() {
       # shellcheck disable=SC2086  # one word per failing host; the first is diagnosed
       _dns_wait_diagnose $failing
     fi
-    if [ "$attempt" -ge "$attempts" ]; then
+    # With step 0 the deadline is now, so only the count can end the wait: that is how
+    # the tests drive the loop without sleeping.
+    if [ "$attempt" -ge "$attempts" ] || { [ "$step" -gt 0 ] && [ "$SECONDS" -ge "$deadline" ]; }; then
       echo "dns-wait: still failing after ${waited}s:$failing -- giving up"
+      # The state at the end is evidence too, unless it was diagnosed a moment ago.
       # shellcheck disable=SC2086
-      _dns_wait_diagnose $failing
+      [ "$attempt" -gt 1 ] && _dns_wait_diagnose $failing
       return 1
     fi
     [ $(( attempt % 5 )) -eq 0 ] && echo "dns-wait: still failing after ${waited}s:$failing"
@@ -80,7 +93,8 @@ _dns_wait_diagnose() {
   [ -r "$conf" ] || { echo "dns-wait: $conf is unreadable -- no per-nameserver detail"; return 0; }
   # Each line says which of three things the server did, because a ticket needs the
   # difference: "timed out" (it did not answer at all), a status such as NXDOMAIN or
-  # SERVFAIL (it answered and refused), or NOERROR and the first address (it works).
+  # SERVFAIL (it answered and refused), or NOERROR and the first A record (it works;
+  # a CNAME chain is skipped, so the address is the one the name lands on).
   local out status addr
   while read -r ns; do
     out="$(dig +time=3 +tries=1 "@$ns" "$host" 2>&1)"
@@ -89,7 +103,7 @@ _dns_wait_diagnose() {
       continue
     fi
     status="$(printf '%s\n' "$out" | sed -n 's/.*status: \([A-Z]*\).*/\1/p' | head -1)"
-    addr="$(printf '%s\n' "$out" | awk '/ANSWER SECTION/ { f = 1; next } f && NF { print $NF; exit }')"
+    addr="$(printf '%s\n' "$out" | awk '/ANSWER SECTION/ { f = 1; next } f && $4 == "A" { print $5; exit }')"
     echo "dns-wait: nameserver $ns: ${status:-unreadable answer}${addr:+ $addr} ($host)"
   done < <(awk '$1 == "nameserver" { print $2 }' "$conf")
 }

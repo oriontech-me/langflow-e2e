@@ -14,19 +14,20 @@ import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), "..", "ops", "vm", "lib", "wait-for-dns.sh");
+const HAS_TIMEOUT = spawnSync("/bin/sh", ["-c", "command -v timeout"]).status === 0;
 const BASH = execFileSync("/usr/bin/env", ["bash", "-c", "command -v bash"], { encoding: "utf8" }).trim();
 
 /**
  * Runs `wait_for_dns <hosts>` with getent failing its first `failFor` calls per run
  * (counted across hosts) and answering after. `failFor: Infinity` never answers.
  */
-function waitFor(hosts, { failFor = 0, env = {}, dig = true, resolvConf = "nameserver 10.0.0.1\nnameserver 10.0.0.2\nnameserver 10.0.0.3\n" } = {}) {
+function waitFor(hosts, { failFor = 0, env = {}, dig = true, getentDelayS = 0, resolvConf = "nameserver 10.0.0.1\nnameserver 10.0.0.2\nnameserver 10.0.0.3\n" } = {}) {
   const dir = makeTempDir("dns-wait-test-");
   const bin = join(dir, "bin");
   mkdirSync(bin);
   // PATH is this directory alone: the stubs, plus links to the few real tools the library
   // uses. A real dig elsewhere on the developer's PATH must not answer for the stub.
-  for (const tool of ["awk", "head", "grep", "cat", "sleep", "sh", "sed"]) {
+  for (const tool of ["awk", "head", "grep", "cat", "sleep", "sh", "sed", ...(HAS_TIMEOUT ? ["timeout"] : [])]) {
     const real = execFileSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
     symlinkSync(real, join(bin, tool));
   }
@@ -34,10 +35,10 @@ function waitFor(hosts, { failFor = 0, env = {}, dig = true, resolvConf = "names
   const limit = failFor === Infinity ? 1e9 : failFor;
   writeFileSync(
     join(bin, "getent"),
-    `#!/bin/sh\nn=$(cat ${JSON.stringify(count)} 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > ${JSON.stringify(count)}\n[ $n -le ${limit} ] && exit 2\necho "192.0.2.1 $2"\n`,
+    `#!/bin/sh\n${getentDelayS ? `sleep ${getentDelayS}\n` : ""}n=$(cat ${JSON.stringify(count)} 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > ${JSON.stringify(count)}\n[ $n -le ${limit} ] && exit 2\necho "192.0.2.1 $2"\n`,
     { mode: 0o755 },
   );
-  if (dig) writeFileSync(join(bin, "dig"), `#!/bin/sh\ncase "$*" in\n  *@10.0.0.1*) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\\n;; ANSWER SECTION:\\nhost. 60 IN A 192.0.2.1\\n' ;;\n  *@10.0.0.3*) printf ';; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 1\\n' ;;\n  *) echo ";; connection timed out; no servers could be reached" ;;\nesac\nexit 0\n`, { mode: 0o755 });
+  if (dig) writeFileSync(join(bin, "dig"), `#!/bin/sh\ncase "$*" in\n  *@10.0.0.1*) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\\n;; ANSWER SECTION:\\nhost. 60 IN CNAME edge.example.\\nedge.example. 60 IN A 192.0.2.1\\n' ;;\n  *@10.0.0.3*) printf ';; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 1\\n' ;;\n  *) echo ";; connection timed out; no servers could be reached" ;;\nesac\nexit 0\n`, { mode: 0o755 });
   const conf = join(dir, "resolv.conf");
   writeFileSync(conf, resolvConf);
   const r = spawnSync(BASH, ["-c", `. ${JSON.stringify(LIB)}; wait_for_dns "$@"`, "x", ...hosts], {
@@ -101,9 +102,30 @@ test("no dig, or no resolv.conf, is said and does not stop the wait", () => {
 });
 
 test("a malformed bound refuses to wait instead of waiting forever or not at all", () => {
-  for (const [key, value] of [["DNS_WAIT_ATTEMPTS", "0"], ["DNS_WAIT_ATTEMPTS", "abc"], ["DNS_WAIT_STEP_S", "1m"]]) {
+  for (const [key, value] of [["DNS_WAIT_ATTEMPTS", "0"], ["DNS_WAIT_ATTEMPTS", "abc"], ["DNS_WAIT_STEP_S", "1m"], ["DNS_WAIT_LOOKUP_S", "0"]]) {
     const r = waitFor(["github.com"], { failFor: Infinity, env: { [key]: value } });
     assert.equal(r.status, 2, `${key}=${value} was accepted`);
     assert.equal(r.calls, 0, `${key}=${value} looked something up`);
   }
+});
+
+test("the bound is the clock, not only the count: slow lookups end the wait on time", () => {
+  // Each lookup takes 2s and fails; 3 attempts 1s apart is a 2s bound. Counting attempts
+  // alone would run all 3 (about 8s); the clock ends it after the first.
+  const r = waitFor(["github.com"], { failFor: Infinity, getentDelayS: 2, env: { DNS_WAIT_ATTEMPTS: "3", DNS_WAIT_STEP_S: "1" } });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /giving up/);
+  assert.ok(r.calls < 3, `the wait ran ${r.calls} attempts past its 2s bound`);
+});
+
+test("a lookup that hangs is cut at DNS_WAIT_LOOKUP_S", { skip: !HAS_TIMEOUT && "no timeout(1) here; the VM has it" }, () => {
+  const started = Date.now();
+  const r = waitFor(["github.com"], { failFor: Infinity, getentDelayS: 30, env: { DNS_WAIT_ATTEMPTS: "1", DNS_WAIT_LOOKUP_S: "1" } });
+  assert.equal(r.status, 1);
+  assert.ok(Date.now() - started < 15000, "the hanging lookup was not cut");
+});
+
+test("with a single attempt the state is diagnosed once, not twice in a row", () => {
+  const r = waitFor(["github.com"], { failFor: Infinity, env: { DNS_WAIT_ATTEMPTS: "1" } });
+  assert.equal((r.stdout.match(/nameserver 10\.0\.0\.1/g) || []).length, 1);
 });
