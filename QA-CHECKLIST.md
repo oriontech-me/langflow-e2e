@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-16
+> **Last updated:** 2026-11-17
 
 ---
 
@@ -1870,7 +1870,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 858 `test()` calls carrying the `@stable` tag, distributed across 311 spec
+> 854 `test()` calls carrying the `@stable` tag, distributed across 311 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2083,12 +2083,10 @@
 - [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
 - [x] lists the caller's own triggers across flows, newest first, filtered by provider and state → `api-triggers-operator.spec.ts`
 - [x] scope=all is superuser-only and shows every user's triggers with their owner and no actions on rows the caller does not own → `api-triggers-operator.spec.ts`
-- [x] computes each trigger's actions on the server, by state and by kind → `api-triggers-operator.spec.ts`
 - [x] bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused → `api-triggers-operator.spec.ts`
 - [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
-- [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
 - [x] the signing secret is answered once, never read back, and a rotation retires the old one at once while the address stays → `api-triggers-webhook-ingress.spec.ts`
 - [x] a signed delivery is accepted once, runs, and reaches the flow through event_payload → `api-triggers-webhook-ingress.spec.ts`
 - [x] every refusal answers the same 404, byte for byte, and writes no ledger row → `api-triggers-webhook-ingress.spec.ts`
@@ -2256,7 +2254,6 @@
 - [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
 - [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
-- [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
 - [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
 - [x] a task id is invisible to another flow → `a2a-server-tasks-lifecycle.spec.ts`
@@ -2430,7 +2427,6 @@
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when a line is longer than the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should ingest a server-side folder through the folder connector and read its chunks back → `memory-base-ingestion.spec.ts`
-- [x] should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back → `memory-base-ingestion.spec.ts`
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal is scoped to the current flow → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
