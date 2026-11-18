@@ -50,6 +50,11 @@ case "$1" in
   build) cat > /dev/null; exit 0 ;;
   exec)
     case "$args" in
+      *"e2e-write-probe"*)
+        # FAKE_PROBE_FAILS: how many probe attempts fail before one succeeds.
+        n="$(cat "$FAKE_LOG.probes" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$FAKE_LOG.probes"
+        if [ "$n" -le "\${FAKE_PROBE_FAILS:-0}" ]; then echo "a non-empty write answered 500; volume topology: Max 5 Free 0"; exit 1; fi
+        exit 0 ;;
       *"weed shell"*)
         input="$(cat)"
         case "$input" in *"s3.bucket.create -name "*)
@@ -196,6 +201,34 @@ test("a start runs the feature on, one worker, the known key, on loopback, with 
   assert.match(r.out, /PW_INSTANCE_MIGRATION=1 npx playwright test --grep @instance-migration/);
 });
 
+test("the bucket's capacity is fixed, not derived from the host's free disk (#2396)", () => {
+  const r = run(START);
+  assert.equal(r.status, 0, r.out);
+  const s3 = runOf(r.calls, "langflow-instance-migration-s3");
+  assert.ok(s3.trim().endsWith("chrislusf/seaweedfs:4.47 server -s3 -s3.port=8333 -master.volumeSizeLimitMB=64 -volume.max=50"), s3);
+});
+
+test("a start writes a real object into the bucket before it calls the lane up, and retries while the volume server registers", () => {
+  const r = run(START, { env: { FAKE_PROBE_FAILS: "2" } });
+  assert.equal(r.status, 0, r.out);
+  const probes = r.calls.filter((c) => c.includes("e2e-write-probe"));
+  assert.equal(probes.length, 3, "two failed attempts, then one that succeeded");
+  // Through the filer, under the bucket's path, with a non-empty body: an empty object
+  // needs no volume, which is how the destination test reported ok over a full bucket.
+  assert.match(probes[0], /exec langflow-instance-migration-s3 sh -c .*8888\/buckets\/\$1\/\.e2e-write-probe.*--data-binary .* sh langflow-migration$/);
+  assert.doesNotMatch(probes[0], /printf "" \|/);
+  const bucket = r.calls.findIndex((c) => c.startsWith("exec -i langflow-instance-migration-s3 weed shell"));
+  assert.ok(bucket >= 0 && bucket < r.calls.indexOf(probes[0]), "probed before the bucket existed");
+});
+
+test("a bucket that cannot store a file fails the start, naming the topology, before anything is seeded", () => {
+  const r = run(START, { env: { FAKE_PROBE_FAILS: "999" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /bucket langflow-migration exists but cannot store a file: a non-empty write answered 500; volume topology: Max 5 Free 0/);
+  assert.equal(r.calls.filter((c) => c.includes("e2e-write-probe")).length, 30);
+  assert.ok(!r.curls.some((c) => c.includes("/api/v1/flows/")), "seeded after the probe failed");
+});
+
 test("LANGFLOW_BIND_HOST opts the source out of loopback, and the probe follows", () => {
   const r = run(START, { env: { LANGFLOW_BIND_HOST: "0.0.0.0" } });
   assert.equal(r.status, 0, r.out);
@@ -268,6 +301,12 @@ test("a reset stops a live run before it removes the record and empties the targ
     target < kill && kill < rm && rm < drop && drop < ext && ext < bucket,
     `order: ${[target, kill, rm, drop, ext, bucket]}`,
   );
+  // The write probe runs on the recreated bucket and before the listing check, which
+  // therefore also proves the probe removed its own object (#2396).
+  const probe = idx((c) => c.includes("e2e-write-probe"));
+  // The object listing (`fs.ls`) is the reset's last call into the bucket.
+  const listing = r.calls.findLastIndex((c) => c.startsWith("exec -i langflow-instance-migration-s3 weed shell"));
+  assert.ok(bucket < probe && probe < listing, `order: bucket ${bucket}, probe ${probe}, listing ${listing}`);
   assert.match(r.out, /Reset the instance migration lane/);
 });
 
@@ -287,6 +326,7 @@ test("a reset refuses a lane that is not running, and touches nothing", () => {
 
 test("a reset that left anything behind fails, naming what", () => {
   for (const [env, said] of [
+    [{ FAKE_PROBE_FAILS: "999" }, /cannot store a file: a non-empty write answered 500/],
     [{ FAKE_TABLES: "64" }, /still holds 64 table/],
     [{ FAKE_EXTENSION: "0" }, /vector extension is missing/],
     [{ FAKE_RECORD_LEFT: "1" }, /migration record is still there/],

@@ -25,7 +25,8 @@
 #   ${IM_SOURCE_CONTAINER}  the nightly + the `pgvector` package, SQLite, flag on, one
 #                          worker, a known LANGFLOW_SECRET_KEY, and seeded data
 #   ${IM_PG_CONTAINER}      PostgreSQL 16 + pgvector, an EMPTY database, extension created
-#   ${IM_S3_CONTAINER}      SeaweedFS's S3 gateway with one empty bucket
+#   ${IM_S3_CONTAINER}      SeaweedFS's S3 gateway with one empty bucket, its capacity
+#                          fixed rather than derived from the host's free disk (#2396)
 #
 # Measured on 1.14.0.dev14 — see docs/instance-migration/instance-migration-lane.md for
 # the contract and the decisions (why SeaweedFS and not MinIO, why the image gains one
@@ -138,7 +139,7 @@ docker run -d \
   --name "${IM_S3_CONTAINER}" \
   --network "${IM_NETWORK}" \
   -p "127.0.0.1:${IM_S3_HOST_PORT}:8333" \
-  "${IM_S3_IMAGE}" server -s3 -s3.port=8333 > /dev/null
+  "${IM_S3_IMAGE}" "${IM_S3_SERVER_ARGS[@]}" > /dev/null
 
 # Fake OAuth registrations, one per provider and Slack profile, as every lane
 # configures them (#2301). Canonical copy: scripts/lib/fake-oauth-registrations.json,
@@ -206,6 +207,13 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [ "${BUCKET_OK}" = "true" ] || fail "SeaweedFS did not create the bucket ${IM_S3_BUCKET} — see: docker logs ${IM_S3_CONTAINER}"
+# A bucket that exists is not a bucket that stores files (#2396): the destination test
+# writes an EMPTY object, which needs no volume, so a bucket with no writable volume
+# passes it and first fails at "Copy files" as "Can't write to the bucket", which reads
+# like a product error. Write a real object before calling the lane up. Retried for a
+# while because the volume server registers with the master a few seconds after start.
+PROBE_ERROR="$(im_bucket_write_probe 30)" \
+  || fail "the bucket ${IM_S3_BUCKET} exists but cannot store a file: ${PROBE_ERROR} — see: docker logs ${IM_S3_CONTAINER}"
 
 echo "Waiting for the source to be ready (up to ${READY_TIMEOUT_S}s)..."
 READY=false

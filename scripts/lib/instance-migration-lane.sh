@@ -77,3 +77,45 @@ IM_SEED_FLOW_NAME="${IM_SEED_FLOW_NAME:-instance-migration-seed-flow}"
 IM_SEED_FILE_NAME="${IM_SEED_FILE_NAME:-instance-migration-seed-file}"
 IM_SEED_KB_NAME="${IM_SEED_KB_NAME:-instance-migration-seed-kb}"
 IM_SEED_KB_CHUNKS="${IM_SEED_KB_CHUNKS:-3}"
+
+# The bucket's capacity, fixed rather than derived (#2396). With no volume settings,
+# SeaweedFS sizes its volume limit from the free disk of the host it runs on (measured:
+# Max 18 with 18.6 GB free, Max 5 with 5.3 GB free), and the first object a collection
+# stores claims 7 volumes. So a host with little free disk gave the bucket's collection
+# none, and every non-empty PutObject failed while the destination test, which writes
+# an EMPTY object, still answered `files: ok`. A small volume size and an explicit limit
+# make the capacity a property of this lane, not of the host's disk. Volumes are
+# append-only and not preallocated, so the limit costs no disk until data is written.
+# Not IM_ knobs on purpose: nothing a spec reads depends on them.
+IM_S3_SERVER_ARGS=(server -s3 -s3.port=8333 -master.volumeSizeLimitMB=64 -volume.max=50)
+
+# Writes a NON-empty object into the bucket and deletes it again, retrying up to $1
+# times one second apart. Prints nothing on success; on failure prints the last status
+# and the volume topology and returns 1. Through the filer (8888, inside the container),
+# not the S3 gateway: a filer write under /buckets/<bucket> lands in the bucket's own
+# collection, so it fails exactly as a PutObject does when that collection has no
+# volume (measured: 500 on both), and it needs no S3 credentials, so it keeps working
+# when the gateway refuses unsigned requests.
+im_bucket_write_probe() {
+  local attempts="$1" out i
+  for i in $(seq 1 "${attempts}"); do
+    if out="$(docker exec "${IM_S3_CONTAINER}" sh -c '
+url="http://127.0.0.1:8888/buckets/$1/.e2e-write-probe"
+put="$(printf "e2e write probe" | curl -s -o /dev/null -w "%{http_code}" -X PUT --data-binary @- "$url")"
+case "$put" in
+  200 | 201) ;;
+  *)
+    status="$(wget -qO- http://127.0.0.1:9333/dir/status 2>/dev/null | head -c 160)"
+    echo "a non-empty write answered ${put:-no response}; volume topology: ${status:-unreadable}"
+    exit 1 ;;
+esac
+del="$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$url")"
+case "$del" in 200 | 202 | 204) ;; *) echo "the probe object could not be deleted (${del:-no response})"; exit 1 ;; esac
+' sh "${IM_S3_BUCKET}" 2>&1)"; then
+      return 0
+    fi
+    [ "${i}" -lt "${attempts}" ] && sleep 1
+  done
+  printf '%s\n' "${out}"
+  return 1
+}
