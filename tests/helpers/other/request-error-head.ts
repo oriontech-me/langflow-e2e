@@ -55,7 +55,8 @@ function rawText(error: unknown): string {
 export function requestErrorHead(error: unknown): string {
   const head = rawText(error)
     .replace(ANSI_SGR, "")
-    .split(/\r?\n/)
+    // `trim` also drops the `\r` of a CRLF line ending, so splitting on `\n` is enough.
+    .split("\n")
     .map((line) => line.trim())
     .find((line) => line.length > 0);
   return head ?? UNREADABLE_REQUEST_ERROR;

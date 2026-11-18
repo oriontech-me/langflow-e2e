@@ -59,7 +59,10 @@ test("a real Playwright request error carries the headers, and the head does not
 
 test("strips colour codes and skips leading blank lines", () => {
   assert.equal(requestErrorHead(new Error("\n  \n\u001b[31mTimeout 15000ms exceeded.\u001b[39m\nCall log:")), "Timeout 15000ms exceeded.");
+  // A CRLF line ending: the `\r` must not survive into the head.
   assert.equal(requestErrorHead(new Error("a\r\nb")), "a");
+  // Inner whitespace is kept: only the ends of the line are trimmed.
+  assert.equal(requestErrorHead(new Error("  connect  ECONNREFUSED \nx")), "connect  ECONNREFUSED");
 });
 
 test("accepts anything thrown, and never throws", () => {
