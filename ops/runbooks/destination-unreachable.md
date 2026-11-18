@@ -138,16 +138,22 @@ if [ -z "${ISSUE_HOST:-}" ] || [ -z "${ISSUE_REPO:-}" ]; then
   echo "ISSUE_HOST or ISSUE_REPO missing from /root/.e2e-lane: stop"
 elif ! GIT_TERMINAL_PROMPT=0 git ls-remote "$dest" HEAD >/dev/null; then
   echo "git over HTTPS is refused: the credential is not in place, stay in temporary mode"
-elif ! ( . /root/.e2e-secrets && . /root/.e2e-lane && export ISSUE_HOST ISSUE_REPO GH_TOKEN GITHUB_TOKEN \
-         && node scripts/check-issue-credential.mjs ); then
-  echo "the API credential is not usable (see the line above): stay in temporary mode"
+elif ( . /root/.e2e-secrets; . /root/.e2e-lane; export ISSUE_HOST ISSUE_REPO GH_TOKEN GITHUB_TOKEN
+        node scripts/check-issue-credential.mjs ); [ $? -eq 3 ]; then
+  # 3 is the one answer the daily dies on. 2 (could not tell) only warns there, so it
+  # does not hold you here either; the line above says which it was.
+  echo "the API credential was refused (see the line above): stay in temporary mode"
 else
   git remote set-url origin "$dest" \
     && GIT_TERMINAL_PROMPT=0 git pull --ff-only \
     && systemctl try-restart e2e-on-demand-worker.service \
     && rm -f /etc/systemd/system/e2e-daily.service.d/90-destination-unreachable.conf \
     && systemctl daemon-reload \
-    && rm -f /root/e2e-qa.origin.before   # left by outages before #2490; holds an SSH URL
+    && rm -f /root/e2e-qa.origin.before \
+    && echo "left temporary mode" \
+    || echo "stopped partway: read the line above, fix it, and paste again"
+  # Expect no CREATE_ISSUE=0 or AUTO_REMOVE=0 here once it has left.
+  systemctl show e2e-daily.service -p Environment | tr ' ' '\n' | grep -E 'CREATE_ISSUE|AUTO_REMOVE'
 fi
 ```
 
@@ -157,7 +163,10 @@ the block again; every step is safe to repeat.
 
 Both checks run as root in this shell, which is not quite the daily's environment. If
 the git check fails here while the daily's credential is wired somewhere this shell
-does not see, the block errs on the safe side and keeps temporary mode.
+does not see, the block errs on the safe side and keeps temporary mode. The API check
+reads the token as the daily does, `GITHUB_TOKEN` or `GH_TOKEN` from
+`/root/.e2e-secrets`, so that is where the App's token has to be. The saved
+`/root/e2e-qa.origin.before`, left by outages before #2490, is removed on the way.
 
 Do not restore `/root/e2e-qa.origin.before` if it is there: it holds the SSH URL the
 destination no longer accepts.

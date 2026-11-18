@@ -185,6 +185,23 @@ test("a recovery with an unconfirmed credential claims the network only", () => 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("headlines follow the cause on fresh outages and the unconfirmed recovery", () => {
+  const hook = "https://hooks.slack.invalid/triggers/T/1/abc";
+  const dir = makeTempDir("reach-headlines");
+  for (let i = 0; i < 2; i++) look(dir, DOWN, { webhook: hook, reason: REFUSED });
+  const fresh = JSON.parse(look(dir, DOWN, { webhook: hook, reason: REFUSED }).posted);
+  assert.equal(fresh.headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  const back = JSON.parse(
+    look(dir, UP, { webhook: hook, reason: "ports open, credential not confirmed (exit 2)" }).posted,
+  );
+  assert.equal(back.headline, "✅ QA VM reaches the destination on the network again");
+  rmSync(dir, { recursive: true, force: true });
+  const dir2 = makeTempDir("reach-headlines-announce");
+  const ann = JSON.parse(look(dir2, DOWN, { webhook: hook, announce: true, reason: REFUSED }).posted);
+  assert.equal(ann.headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  rmSync(dir2, { recursive: true, force: true });
+});
+
 test("an announce look that opens an outage records its cause", () => {
   const dir = makeTempDir("reach-cause-announce");
   look(dir, DOWN, { announce: true, reason: REFUSED });

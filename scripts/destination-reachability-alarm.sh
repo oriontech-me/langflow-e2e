@@ -238,13 +238,11 @@ fi
 # delivered recovery is read as the same one: the channel never heard it end.
 message=""
 mark=""
-headline=""
 case "$ANNOUNCE:$state" in
   1:down)
     if [ -n "$announced_since" ] && [ "$cause" = "credential" ]; then
       # The reminder speaks the cause it sees now. It does not move the mark: a change
       # of cause is the hourly look's to post, and it will.
-      headline="QA VM reaches the destination, but its credential is refused"
       message="Reminder: the daily starts in about 30 minutes. The QA VM reaches ${host_name} on the network, but the credential was refused (outage since $(utc "$announced_since")): ${reason}. Unless the VM gets a credential the destination accepts, the daily will test the suite it already has and will not open its umbrella."
     elif [ -n "$announced_since" ]; then
       message="Reminder: the daily starts in about 30 minutes and the QA VM still cannot reach ${host_name} (since $(utc "$announced_since")): ${reason}. Unless it comes back, the daily will test the suite it already has and will not open its umbrella."
@@ -267,7 +265,6 @@ case "$ANNOUNCE:$state" in
     if [ -n "$announced_since" ]; then
       case "$cause" in
         credential)
-          headline="QA VM reaches the destination, but its credential is refused"
           message="The QA VM reaches ${host_name} on the network again, but the credential was refused: ${reason}. The outage stays open (since $(utc "$announced_since")): until the VM has a credential the destination accepts, the daily cannot pull or open its umbrella."
           ;;
         *)
@@ -317,9 +314,12 @@ case "$SLACK_WEBHOOK_URL" in
   */triggers/*) transport="workflow" ;;
   *)            transport="text" ;;
 esac
-case "$state" in
-  up) glyph="✅"; emoji=":white_check_mark:"; headline="QA VM reaches the destination again" ;;
-  *)  glyph="🚨"; emoji=":rotating_light:"; headline="${headline:-QA VM cannot reach the destination}" ;;
+case "$state:$cause:$reason" in
+  up:*"not confirmed"*) glyph="✅"; emoji=":white_check_mark:"; headline="QA VM reaches the destination on the network again" ;;
+  up:*)                 glyph="✅"; emoji=":white_check_mark:"; headline="QA VM reaches the destination again" ;;
+  # A credential outage keeps its own headline on every path, fresh or announced.
+  *:credential:*)       glyph="🚨"; emoji=":rotating_light:"; headline="QA VM reaches the destination, but its credential is refused" ;;
+  *)                    glyph="🚨"; emoji=":rotating_light:"; headline="QA VM cannot reach the destination" ;;
 esac
 
 status="$(TRANSPORT="$transport" HEADLINE="$glyph $headline" BODY="$message" \
