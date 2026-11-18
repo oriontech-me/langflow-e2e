@@ -85,8 +85,11 @@ not on the Langflow build: the Docker image installs the `1.2.1` its `uv.lock`
 holds and answers `-32600`, while a pip install resolves the newest release and
 answers `-32602`. Measured on `1.14.0.dev31`: the image answers `-32600`, and the
 same container with `a2a-sdk==1.3.1` installed answers `-32602`. That is why the
-VM daily (a pip venv) failed this row on 2026-11-17, a few hours after 1.3.1
-shipped, while the image-based PR lane passed it. Pinning one code would make
+VM lane, whose `scripts/prepare-target-dist.sh` builds a fresh venv with an
+unconstrained `uv pip install langflow==…`, failed this row on `1.14.0.dev30` in
+the run started by hand at 2026-11-17 20:40 UTC (`20261117T204008Z`, #2475), about
+ten hours after 1.3.1 was published, while the image-based PR lane passed it
+(the impacted-specs check of #2474). Pinning one code would make
 the test fail on one of the two lanes over a dependency's choice, so the row
 asserts that the answer is one of the two invalid-input codes. It still fails on
 any other code, a non-200, or a result. The other five rows pin one code each,
