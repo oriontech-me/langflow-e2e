@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/triggers/api-triggers-webhook-ingress.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev0`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev31`)
 
 Owning issue: #2308 (Dedicated Integrations, batch 2). The issue names #2303 as the source of a
 trigger helper; #2303 is still open, so this file makes its own trigger calls, the way #2309 did.
@@ -35,8 +35,8 @@ body alone, so every way the route can refuse is a possible oracle. The contract
 5. **`/test`** appends a synthetic event that goes through the real dispatcher, and is refused with
    `409` on a dead trigger.
 6. **`/replay`** appends a **new** row linked to the original, which runs the original payload again.
-7. **A failing flow** is recorded as failed in the ledger with no retry. The trigger's own health
-   while that happens is a known defect, tracked by #2328 (see *Known defect*).
+7. **A failing flow** is recorded as failed in the ledger with no retry. That the trigger itself
+   still reads `active` meanwhile is recorded and deliberately not pinned (see *Not pinned*).
 
 ### Measured on `1.14.0.dev0`
 
@@ -103,13 +103,52 @@ body alone, so every way the route can refuse is a possible oracle. The contract
   positive control: the same request without the defect answers `202`. The provider-segment probes
   are the exception, and say less than they look like they do: see test 3.
 
-### Known defect — a trigger whose every run fails reads healthy
+### Not pinned — a trigger whose every run fails still reads `active`
 
-TRG-2 recorded it, and it reproduces: a trigger whose flow fails on every delivery stays `active`
-with `last_error: null`. The only trace of the failures is on the events. Nothing an owner reads on
-the trigger (the list, `GET /triggers/{id}`) says it has not completed a run since it was armed.
-The upstream ticket and its `test.fail()` pin are owned by #2328, not by this file's issue. Here,
-test 7 asserts only the ledger half, which is correct behaviour.
+TRG-2's manual QA noted that a trigger whose flow fails on every delivery stays `active` with
+`last_error: null`, and this file once recorded it as a known defect. #2328 measured it and checked
+it against upstream's design. It reproduces. It is not a clear violation of the contract, so it is
+not pinned with `test.fail()`.
+
+Measured on `1.14.0.dev31` (2026-11-18), three deliveries per trigger, by both paths a trigger is
+born from:
+
+| Trigger | Events | `GET /triggers/{id}` |
+| --- | --- | --- |
+| created through `POST /api/v1/triggers` (`max_attempts: 2`) | 3 × `failed`, `job_failed`, `attempt: 0` | `state: "active"`, `last_error: null`, `last_error_code: null`, `reason: null` |
+| created by flow save from an `InboundWebhookTrigger` node, beside a node that raises | 3 × `failed`, `job_failed`, `attempt: 0` | the same |
+
+What upstream says (`release-1.14.0`, the line the nightly is cut from) points both ways:
+
+- **The trigger's own fields describe its machinery.**
+  `design/dedicated-integrations-triggers/trigger-contract.md` defines `last_error` as the *"typed
+  error code and sanitized message behind the trigger's state"*.
+  `design/dedicated-integrations-triggers/frontend-surfaces.md` defines `reason: null` as *"a trigger
+  running cleanly"* and `degraded` as *"`active`, but `last_error` reports a problem (for example a
+  listener that cannot connect)"*. In the code, `trigger_reason` answers `degraded` on an `active`
+  row only when `last_error` is set, and a failed flow run never writes it: `reconcile_dispatched`
+  marks the event `failed` and leaves the trigger row alone.
+- **The design also intends repeated failure to show on the trigger.**
+  `design/dedicated-integrations-triggers/decisions/delivery-semantics.md`: *"A trigger whose events
+  die repeatedly moves to `error` so the failure is visible on the trigger rather than only in the
+  ledger."* Read literally, that covers events that reach `dead`, after exhausting `max_attempts` on a
+  failed submit or an expired lease. A failed flow run is `failed` after one attempt and never
+  reaches `dead`. So the rule's letter does not cover this case, while its intent does. The rule is
+  not implemented either: `TriggerService.record_error` has no caller, and nothing moves a trigger
+  to `error` when its events die. A black-box test cannot provoke `dead`, so that half cannot be
+  asserted here.
+
+What the owner sees (*Settings › Triggers*, same instance): the row reads a green **Active**, and the
+list's *Needs attention* toggle does not appear. `needsAttention`
+(`src/frontend/src/components/core/triggers/helpers/trigger-presentation.ts`) flags `pending` with the
+reason `config_invalid` and the states `needs_reconnect`, `error`, `dead` and `expired`. The failures
+are in the row's *View events* drawer, which marks each event *Flow: Failed* / *"The run didn't
+complete. job_failed"*.
+
+Whether repeated failed runs should surface on the trigger is a product decision, not something this
+suite can settle. The suite pins only clear contract violations with `test.fail()`, so #2328 closed
+without a pin and without an upstream bug, and the question to upstream was not asked. Test 7
+asserts the ledger half.
 
 ### What is not covered here, and why
 
@@ -133,8 +172,7 @@ test 7 asserts only the ledger half, which is correct behaviour.
 `@api` `@integrations` `@stable`
 
 `@stable`: no provider key, no model and no network egress. The ingress and the dispatcher are on
-by default on every lane (`trigger_ingress_enabled`, `trigger_dispatcher_enabled`). `@stable` enters
-in this PR. The `test.fail()` pin #2328 adds (*Known defect*) will carry `@regression` instead.
+by default on every lane (`trigger_ingress_enabled`, `trigger_dispatcher_enabled`).
 
 ---
 
@@ -236,8 +274,8 @@ node's id, which is then enabled (`active`).
 
 ## Validation criterion *(required)*
 
-Tests 1–7 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev0`, and once
-at `--workers=2` together with `api/triggers/`, with:
+Tests 1–7 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev31` (first
+validated on `1.14.0.dev0`), and once at `--workers=2` together with `api/triggers/`, with:
 
 - the secret read back nowhere but the minting response, and an old secret refused immediately after
   a rotation that kept `public_id`;
@@ -280,6 +318,12 @@ After the run, the instance has no flow, trigger or user left from this file.
   and `replay`.
 - `src/backend/base/langflow/services/triggers/ledger.py` — dedupe on `(trigger_id, dedupe_key)` and
   `replay_event`.
+- `src/backend/base/langflow/services/triggers/capabilities.py` — `trigger_reason`: `degraded` on an
+  `active` row only when `last_error` is set, which a failed flow run never writes (*Not pinned*).
+- `src/backend/base/langflow/services/triggers/service.py` — `record_error`, the trigger-level `error`
+  move the design describes, which nothing calls (*Not pinned*).
+- `src/frontend/src/components/core/triggers/helpers/trigger-presentation.ts` — `needsAttention`, what
+  the Settings › Triggers list flags.
 - `src/backend/base/langflow/services/triggers/dispatcher.py` — `build_submit_request` (the
   `event_payload` tweak keyed by `node_id`), `reconcile_dispatched` and `_schedule_retry`.
 - `src/lfx/src/lfx/base/triggers/base.py` and

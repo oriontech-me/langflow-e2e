@@ -91,7 +91,7 @@ and flips red the day the fix ships, which is the signal to drop the pin.
 ## Tags *(required)*
 
 Tests 1–3: `@stable` `@components` `@integrations`. Test 4: `@regression` `@components` `@integrations`
-— a `test.fail()` pin carries `@regression`, not `@stable`, the same convention as #2328's pin.
+— a `test.fail()` pin carries `@regression`, not `@stable`.
 
 `@stable`: no provider key, no model, no network egress; each test owns one flow, deleted by id.
 `@stable` enters in this PR. The placement rule, the sidebar mark and the core category are all present

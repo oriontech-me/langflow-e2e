@@ -29,7 +29,9 @@ import {
 // secret would be refused for the secret's sake and measure nothing.
 //
 // The trigger lifecycle is #2303's and who a run executes as is #2309's. A trigger
-// whose every run fails still reading healthy is a known defect owned by #2328.
+// whose every run fails still reads `active`; that is recorded and deliberately not
+// pinned, since it is a product decision rather than a contract violation (#2328,
+// spec doc → *Not pinned*).
 test.describe("Triggers — inbound webhook ingress", () => {
   // Events a dispatcher has not settled yet.
   const UNSETTLED = ["pending", "claimed", "dispatched"];
