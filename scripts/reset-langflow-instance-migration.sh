@@ -118,6 +118,13 @@ EXTENSION="$(docker exec "${IM_PG_CONTAINER}" psql -At -U "${IM_PG_USER}" -d "${
 LISTING="$(printf 's3.bucket.list\n' | docker exec -i "${IM_S3_CONTAINER}" weed shell 2>/dev/null || true)"
 printf '%s\n' "${LISTING}" | grep -Eq "^[[:space:]]*${IM_S3_BUCKET}[[:space:]]" \
   || fail "the bucket ${IM_S3_BUCKET} was not recreated."
+# The gateway still refuses an unsigned request (#2397). The identity lives in the
+# filer and survives the bucket delete and create above (measured), so this is a guard:
+# an open gateway accepts any key, and the wrong-key spec would then pass a key it
+# exists to see refused.
+UNSIGNED="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${IM_S3_HOST_PORT}/${IM_S3_BUCKET}?list-type=2" || true)"
+[ "${UNSIGNED}" = "403" ] \
+  || fail "the bucket ${IM_S3_BUCKET} answered ${UNSIGNED:-nothing} to an unsigned request, not 403: the gateway accepts any key."
 # The bucket still stores files (#2396). Its capacity is fixed now, so this is a guard
 # rather than an expected failure: a bucket that cannot hold an object would otherwise
 # surface at "Copy files" in the next spec, reading like a product error. Placed before

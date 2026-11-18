@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { APIRequestContext, APIResponse } from "@playwright/test";
 import { getAuthToken } from "../auth/get-auth-token";
 import type { InstanceMigrationLane } from "./instance-migration-lane";
+import { signS3Get } from "./s3-sigv4";
 
 /**
  * Instance migration through its API, and the destinations read from the test host
@@ -444,11 +445,16 @@ export function parseListObjects(xml: string): BucketObject[] {
 }
 
 /**
- * Every object in the lane's bucket. SeaweedFS answers an unsigned listing (measured),
- * so this needs no S3 client and no credentials.
+ * Every object in the lane's bucket, through a signed ListObjectsV2 from the host. The
+ * gateway accepts only the lane's own keys (#2397), so an unsigned listing is refused;
+ * the request is signed with node:crypto (s3-sigv4.ts) rather than an S3 client.
  */
 export async function bucketObjects(request: APIRequestContext, lane: InstanceMigrationLane): Promise<BucketObject[]> {
-  const response = await request.get(`${lane.fromHost.s3Endpoint}/${lane.target.bucket}?list-type=2`);
+  const url = `${lane.fromHost.s3Endpoint}/${lane.target.bucket}?list-type=2`;
+  const headers = signS3Get(url, { accessKeyId: lane.target.accessKeyId, secretAccessKey: lane.target.secretAccessKey });
+  // Signed, but sent by the client from the URL, which carries the same value.
+  delete headers.host;
+  const response = await request.get(url, { headers });
   await expectStatus(response, 200, "listing the bucket");
   return parseListObjects(await response.text());
 }
