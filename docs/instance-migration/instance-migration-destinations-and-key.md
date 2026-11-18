@@ -15,7 +15,7 @@ Two migration steps handle secrets.
 
 Both steps are secret boundaries: a password, a key or the fingerprint that leaves the server can be copied by anyone who reads a page, a log, a file or a support record. Four tests:
 
-1. **Each destination failure names its cause.** A wrong password, a host that does not exist, a database without pgvector and a bucket that does not exist each give their own code, and the server's own words say which one it was, on the API and on the page. A valid destination saves, and the step is `done`.
+1. **Each destination failure names its cause.** A wrong password, a host that does not exist, a database without pgvector, an S3 key the bucket does not accept (#2397) and a bucket that does not exist each give their own code, and the server's own words say which one it was, on the API and on the page. A valid destination saves, and the step is `done`.
 2. **No destination secret or key leaves the server.** The lane's planted secrets, plus the ones the test types, appear nowhere the server answers or writes:
    - the `PUT` answers, `GET /api/v1/migration` and every API answer the page receives;
    - the rendered page;
@@ -29,7 +29,7 @@ Both steps are secret boundaries: a password, a key or the fingerprint that leav
 ### What the measurements changed in the issue's plan
 
 - **A wrong password and an unreachable host have the same code.** Both are `db_unreachable` *(code: `_ask` in `migration_probes.py`)*. They are told apart only by the server's reason: `password authentication failed for user "langflow"` against `failed to resolve host 'im-no-such-host'`. The test asserts the reason, as the issue asks, because asserting the code alone would pass with the two swapped.
-- **A wrong S3 key cannot be tested on this lane.** The lane's SeaweedFS gateway runs with no identities and accepts any key, so `bucket_denied` answers `ok: true`. #2397 tracks turning on authentication in the lane. Doing it inside this spec would break the unsigned bucket listing #2353 and #2354 use, so it is left out here.
+- **A wrong S3 key is `bucket_denied`, whichever key is wrong** (#2397). Until #2397 the lane's SeaweedFS gateway had no identity and accepted any key, so this code was unreachable. The lane now accepts only its own keys, set when it starts, and every other key is refused. Measured on `1.14.0.dev31`: a wrong secret key, a wrong access key and both wrong all answer `bucket_denied` with the reason `An error occurred (403) when calling the HeadBucket operation: Forbidden`. The refusal comes from `HeadBucket`, the first call of the probe *(code: `probe_files` in `migration_probes.py` maps a `403` to `bucket_denied`)*. On the page the files line reads *"Access denied. Check the keys and the bucket's permissions."*, and only the two key fields are marked invalid. The bucket listing #2353 asserts with is now signed, so turning authentication on broke nothing there.
 - **The destination test passes on a bucket that cannot store a file.** Its probe writes an empty object, which needs no storage. Before #2396, on a host with little free disk, the lane's SeaweedFS had no volume for the bucket, and *Copy files* then ended `blocked: bucket_error`. The lane now fixes the bucket's capacity and refuses to start, or to reset, with a bucket that cannot store a non-empty object. Test 2 still reads the events of all three copies whatever their status, so it does not depend on that copy succeeding.
 - **"Read the destinations after a restart" shows a `done` step.** The saved record survives, and only the secrets are lost. What shows the loss is the next run: `409 secrets_missing`, and on the page *"Langflow no longer holds the passwords and keys of the new instance. … Then enter them again in 'Where your data goes'."*. Test 3 pins that, and that entering them again lets the copy run.
 - **A form filled the moment it appears can lose its submit.** Measured once: the destination fields were filled as soon as they rendered, and *Test and save* sent no request. Filled after the page's requests had settled, the `PUT` went out at once. The test fills the form only after that, and every save waits for the page's own `PUT`, so a lost submit fails there and not later as a missing result.
@@ -90,12 +90,17 @@ None is `@stable`: nothing runs `@instance-migration` on a cron (#1010).
    - the database line (`#migration-probe-database`, `role="alert"`) reads *"Can't connect to this database."* and the server's reason, `password authentication failed for user "langflow"`;
    - the address field is `aria-invalid="true"`;
    - the step is `blocked: db_unreachable`.
-3. Enter the right password and click *Test and save*. The step closes on its summary, *"Database: langflow-instance-migration-pg:5432/langflow_target · Knowledge bases: PostgreSQL · Files: langflow-migration"*, and its state is `done`. A valid save shows no *Ready.* line, because the form is replaced at once (measured).
-4. Through the API, one `PUT` per case: an unreachable host, the database without pgvector, a missing bucket. Each one asserts:
+3. Enter the right password and a wrong secret access key `e2e-im-wrong-s3-secret-<id>`, and click *Test and save*:
+   - `files` is `{ok: false, code: "bucket_denied"}` and `database` is `ok`;
+   - the files line (`#migration-probe-files`) reads *"Access denied. Check the keys and the bucket's permissions."*;
+   - the access key and secret key fields are `aria-invalid="true"`, the bucket field is not;
+   - the step is `blocked: bucket_denied`.
+4. Enter the right password and keys and click *Test and save*. The step closes on its summary, *"Database: langflow-instance-migration-pg:5432/langflow_target · Knowledge bases: PostgreSQL · Files: langflow-migration"*, and its state is `done`. A valid save shows no *Ready.* line, because the form is replaced at once (measured).
+5. Through the API, one `PUT` per case: an unreachable host, the database without pgvector, an access key the bucket does not know (`bucket_denied`, reason `(403) when calling the HeadBucket operation`), a missing bucket. Each one asserts:
    - the part's `ok: false`, its code, and the reason text in the table above;
    - the step's `blocked` reason;
    - that the record keeps the code and no `reason`.
-5. A last `PUT` of the lane's destinations: every part `ok`, the step `done`, and the record holds the locations listed above.
+6. A last `PUT` of the lane's destinations: every part `ok`, the step `done`, and the record holds the locations listed above.
 
 ### Test 2 — no destination secret or key leaves the server
 
@@ -144,7 +149,7 @@ None is `@stable`: nothing runs `@instance-migration` on a cron (#1010).
 
 The spec passes only when, on the lane:
 
-- a wrong password, an unreachable host, a database without pgvector and a missing bucket each give their code and the server's reason, on the API and, for the password, on the page; and a valid destination saves to `done`;
+- a wrong password, an unreachable host, a database without pgvector, a wrong S3 key and a missing bucket each give their code and the server's reason, on the API and, for the password and the S3 key, on the page; and a valid destination saves to `done`;
 - no planted secret, key or fingerprint appears in any answer, the page, `migration.json`, the copies' events or the container logs; and an endpoint with credentials and an unescaped `@` are refused and not kept;
 - after a restart, the copy is refused with `secrets_missing`, the page says to enter the secrets again, and after entering them the copy runs to `done`;
 - the secret key step names the environment variable, cuts a pasted key to 12 characters, refuses a wrong fingerprint, accepts the right one, reopens on a later wrong one, and the pause and the copies are refused until it is verified.
@@ -158,10 +163,10 @@ The spec passes only when, on the lane:
 5. Test 3, without the restart: the copy starts (`202`) instead of answering `409 secrets_missing`.
 6. Test 4, expecting the key pasted whole to be accepted (`200`): it is refused with `400`.
 7. Test 4, expecting the field to hold 13 characters: it fails on the field's value.
+8. Test 1, typing the lane's own secret key in the wrong-key step: `files` answers `ok: true` and the step fails on `bucket_denied`, which shows the gateway refuses a key because it is wrong, not every key (#2397).
 
 ## What this does not cover *(and why)*
 
-- **A wrong S3 key (`bucket_denied`).** The lane's gateway accepts any key (#2397).
 - **A database user who cannot create tables (`no_create`) and a database that is not empty (`db_not_empty`).** Both need a second PostgreSQL role or a planted table; each is a separate code with its own page line, and neither is part of the issue.
 - **The downloaded *migration record (for support)*.** `instance-migration-copy.spec.ts` (#2353, its last test) asserts the lane's planted secrets are absent from it after a whole migration. The record is `GET /api/v1/migration` saved by the browser, which test 2 searches here.
 - **A key kept in a file** (`source: "file"`, the page naming the path). The lane sets `LANGFLOW_SECRET_KEY` in the environment; the other branch needs a second source.

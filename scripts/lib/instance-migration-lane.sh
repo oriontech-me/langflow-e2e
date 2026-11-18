@@ -47,7 +47,8 @@ IM_DERIVED_IMAGE="${IM_DERIVED_IMAGE:-langflow-instance-migration:local}"
 # pullable images (minio/minio and quay.io/minio/minio both answer "not found"), and
 # upstream Langflow's own CI moved to this exact image for its S3 tests
 # (.github/workflows/ci.yml, "Start S3 server"). With no S3 config it accepts any
-# credentials.
+# credentials, so the start script gives it one identity, IM_S3_ACCESS_KEY_ID /
+# IM_S3_SECRET_ACCESS_KEY, and every other key is refused (#2397).
 IM_PG_IMAGE="${IM_PG_IMAGE:-pgvector/pgvector:0.8.6-pg16}"
 IM_S3_IMAGE="${IM_S3_IMAGE:-chrislusf/seaweedfs:4.47}"
 
@@ -56,7 +57,7 @@ IM_PG_DATABASE="${IM_PG_DATABASE:-langflow_target}"
 IM_PG_USER="${IM_PG_USER:-langflow}"
 IM_PG_PASSWORD="${IM_PG_PASSWORD:-e2e-im-sentinel-pg-password}"
 
-# The target's bucket and keys.
+# The target's bucket and keys. The gateway accepts these and nothing else (#2397).
 IM_S3_BUCKET="${IM_S3_BUCKET:-langflow-migration}"
 IM_S3_ACCESS_KEY_ID="${IM_S3_ACCESS_KEY_ID:-e2e-im-sentinel-s3-access-key}"
 IM_S3_SECRET_ACCESS_KEY="${IM_S3_SECRET_ACCESS_KEY:-e2e-im-sentinel-s3-secret-key}"

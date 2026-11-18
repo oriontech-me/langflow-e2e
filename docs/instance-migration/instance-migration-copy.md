@@ -67,7 +67,7 @@ A copy run is a `python -m langflow` child: ~10–12 s pass before its first eve
 ### Reading the destinations from the test host
 
 - **PostgreSQL** — `docker exec langflow-instance-migration-pg psql -tAc …`, through the lane helper. No client library is added.
-- **The bucket** — SeaweedFS answers an **unsigned** `GET http://127.0.0.1:58895/langflow-migration?list-type=2` with the ListObjectsV2 XML (measured), so the test reads keys and sizes with Playwright's own request context.
+- **The bucket** — a `GET http://127.0.0.1:58895/langflow-migration?list-type=2` answers the ListObjectsV2 XML, so the test reads keys and sizes with Playwright's own request context. Since #2397 the gateway accepts only the lane's keys, so the request is signed (AWS Signature Version 4, `tests/helpers/instance-migration/s3-sigv4.ts`, pinned against AWS's worked example) rather than sent unsigned. No S3 client is added.
 - **The source's row counts** — `docker exec langflow-instance-migration python` with `sqlite3` on the path `GET /api/v1/migration` reports (`instance.database.path`).
 
 ---

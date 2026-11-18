@@ -237,7 +237,25 @@ test.describe("Instance migration — destinations and the secret key name every
         expect(await stepState("connect_target")).toBe("blocked (db_unreachable)");
       });
 
-      await test.step("With the right password, the step saves and closes on its summary", async () => {
+      await test.step("On the page, a key the bucket does not accept is refused as denied, naming the keys", async () => {
+        // The lane's gateway accepts only its own keys (#2397); before that it accepted any
+        // key and this refusal could not be reached.
+        const wrongSecret = `e2e-im-wrong-s3-secret-${id}`;
+        await fillDestinations(step, lane.target.databaseUrl);
+        await step.locator("#migration-destination-secret_access_key").fill(wrongSecret);
+        const { results } = await saveOnPage(page, step);
+        expect(results.files).toMatchObject({ ok: false, code: "bucket_denied" });
+        expect(results.database, "the database part is unaffected").toEqual({ ok: true });
+        await expect(step.locator("#migration-probe-files")).toContainText(
+          "Access denied. Check the keys and the bucket's permissions.",
+        );
+        await expect(step.locator("#migration-destination-access_key_id")).toHaveAttribute("aria-invalid", "true");
+        await expect(step.locator("#migration-destination-secret_access_key")).toHaveAttribute("aria-invalid", "true");
+        await expect(step.locator("#migration-destination-bucket")).not.toHaveAttribute("aria-invalid", "true");
+        expect(await stepState("connect_target")).toBe("blocked (bucket_denied)");
+      });
+
+      await test.step("With the right password and keys, the step saves and closes on its summary", async () => {
         await fillDestinations(step, lane.target.databaseUrl);
         const { results } = await saveOnPage(page, step);
         expect(results).toEqual({ database: { ok: true }, vectors: { ok: true }, files: { ok: true } });
@@ -259,6 +277,13 @@ test.describe("Instance migration — destinations and the secret key name every
           part: "vectors",
           code: "pgvector_missing",
           reason: /^Run CREATE EXTENSION vector; in this database, then test again\.$/,
+        },
+        {
+          what: "an access key the bucket does not know",
+          data: destinations({ files: { access_key_id: `e2e-im-wrong-s3-access-key-${id}` } }),
+          part: "files",
+          code: "bucket_denied",
+          reason: /\(403\) when calling the HeadBucket operation/,
         },
         {
           what: "a bucket that does not exist",
