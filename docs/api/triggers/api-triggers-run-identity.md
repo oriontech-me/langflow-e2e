@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/triggers/api-triggers-run-identity.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev47`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev31`)
 
 Owning issue: #2309 (Dedicated Integrations, batch 2). It reuses the probe from #2296
 (`tests/helpers/integrations/connection-probe.ts`) and the throwaway owner from #2295
@@ -10,7 +10,9 @@ Owning issue: #2309 (Dedicated Integrations, batch 2). It reuses the probe from 
 `docs/api/connections/api-connections-resolution-non-interactive.md` (#2306) covers the other
 non-interactive families: webhook, HITL resume and KB ingest. The trigger lifecycle itself (CRUD,
 the state machine, validation, flow-save reconciliation) is #2303's; this file uses only the calls
-it needs to fire a run.
+it needs to fire a run. #2477 set the Schedule node's `schedule_type` (upstream #16322) and promoted
+the throwaway owner to superuser (upstream #16383); both are recorded, with what was measured, under
+*Measured on `1.14.0.dev31`*.
 
 ---
 
@@ -77,7 +79,7 @@ after that. On the dispatcher's next pass `reconcile_dispatched` closes the even
   back to `active` with `last_error: null`. (Only Microsoft and Google source triggers are held in
   that state, and those cannot be created through this API.)
 - **A Schedule trigger imported through flow JSON fires.** A `ScheduleTrigger` node
-  (`cron_expression: "* * * * *"`, `timezone: "UTC"`) in a flow created through `POST /api/v1/flows/`
+  (`schedule_type: "Custom (cron)"`, `cron_expression: "* * * * *"`, `timezone: "UTC"`) in a flow created through `POST /api/v1/flows/`
   makes the flow-save reconciler create a `schedule` row in state `pending`, with `node_id` set to the
   node's id and `config` `{cron, timezone, catchup_policy: "coalesce", share_session: false}`.
   `next_fire_at` is still `null` right after `enable`; the scheduler sets it on its next pass (up to
@@ -85,6 +87,27 @@ after that. On the dispatcher's next pass `reconcile_dispatched` closes the even
   before a boundary can arm the boundary after it. The same write moves the row's `updated_at`. At that minute an event with `dedupe_key: "tick:<that instant>"`
   and `payload.scheduled_at` equal to it is appended, dispatched ~4 s later, and the run reports the
   same verdicts as a webhook run. `disable` answers `paused`.
+
+### Measured on `1.14.0.dev31`
+
+- **The schedule type is load-bearing** (#2477): since upstream #16322 (`1.14.0.dev30`) the node's
+  `schedule_type` defaults to `Weekly`, and the reconciler (`_apply_schedule_pick`) compiles the picker
+  fields and discards `cron_expression` — measured on `1.14.0.dev30` and `dev31`, the node left on the
+  default saves `config.cron: "0 8 * * 1-5"` (every weekday at 08:00) and never fires inside the test.
+  Builds before `dev30` have no `schedule_type` field, so the spec sets it only when the catalog template
+  carries it.
+- **The owner is promoted to superuser** (#2477). The probe is custom code, and
+  `custom_component_admin_only` (on by default since upstream #16288, `1.14.0.dev24`) refuses a regular
+  user's run of it as `400 Flow build blocked: outdated components must be updated before running:
+  Probe (CustomComponent-probe)`. Background workflow runs — trigger runs among them — escaped that check
+  until upstream #16383 (`fix: enforce custom component policy in background workflows`,
+  `1.14.0.dev31`) made `_default_frame_source_factory` reload the job's user and validate the graph
+  with that user's privileges — measured on `1.14.0.dev31`: every run of all three tests failed that way and the
+  probe wrote no message (the 2026-11-18 daily failed tests 1 and 2 with *"recorded no probe message
+  within 15 s"*). The promotion keeps what this file asserts, as in
+  `docs/api/connections/api-connections-resolution-non-interactive.md` (#2414): neither the connection
+  floor (`authorize_principal`) nor the trigger principal and dispatcher have a superuser branch, and the
+  owner is still a user of its own, distinct from the superuser that plants the other user's row.
 
 ### What is not covered here, and why
 
@@ -115,7 +138,7 @@ instance, and the dispatcher and the scheduler are on by default on every lane
 ## Step by step *(required)*
 
 Three tests over the `request` fixture, each declaring its operations through `apiCoverage`. Each
-test creates its own throwaway owner (`createConnectionsOwner`) and sends the owner's token on the
+test creates its own throwaway owner (`createConnectionsOwner`), promoted to superuser, and sends the owner's token on the
 test's own `request`. Instance rows are created by the superuser (only a superuser may create one).
 Teardown deletes the instance rows, then the owner, which takes the owner's flows, triggers and
 connections with it.
@@ -152,8 +175,9 @@ connections with it.
 
 **Test 3 — `a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner`**
 1. Plant the owner's `google` row (opt-in off) and an instance row (flag sent `false`).
-2. Create the owner's probe flow with a `ScheduleTrigger` node added (`cron_expression: "* * * * *"`,
-   `timezone: "UTC"`), through `POST /api/v1/flows/`.
+2. Create the owner's probe flow with a `ScheduleTrigger` node added (`schedule_type: "Custom (cron)"`
+   where the template has it, `cron_expression: "* * * * *"`, `timezone: "UTC"`), through
+   `POST /api/v1/flows/`.
 3. `GET /api/v1/triggers?flow_id=…` → exactly one row: `kind: "schedule"`, `node_id` = the node's id,
    `config.cron: "* * * * *"`, `config.timezone: "UTC"`, `state: "pending"`, `user_id` = the owner's.
 4. `POST …/enable` → `active`. Poll the trigger until `next_fire_at` is set. It is a whole minute
@@ -177,8 +201,8 @@ connections with it.
 
 ## Validation criterion *(required)*
 
-All three tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`,
-and once at `--workers=2` together with `api/connections/`, with:
+All three tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`
+and, after #2477, three consecutive times at `--retries=0` against `1.14.0.dev31`, and once at `--workers=2` together with `api/connections/`, with:
 
 - every probe verdict asserted on the **code and the typed reason** for a denial, and on the
   **exact connection id and `owner_kind`** for a resolution, read from the run whose `session_id`
@@ -206,7 +230,7 @@ After the run, the instance has no connection, flow or user left from this file.
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser, with the
+- A running Langflow **1.13** or **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser, with the
   trigger dispatcher and ingress at their defaults (`trigger_dispatcher_enabled`,
   `trigger_ingress_enabled`, a 5 s `trigger_dispatcher_poll_interval_s`).
 - `src/backend/base/langflow/services/triggers/dispatcher.py` — `dispatch_event`: the preflight, the
@@ -225,6 +249,12 @@ After the run, the instance has no connection, flow or user left from this file.
 - `src/backend/base/langflow/services/triggers/scheduler.py` and
   `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the tick's fire time and dedupe key, and
   the node's `trigger_config`.
+- `src/lfx/src/lfx/base/triggers/schedule.py` and
+  `src/backend/base/langflow/services/triggers/reconciliation.py` — `schedule_timing` and
+  `_apply_schedule_pick`: the node's `schedule_type` decides whether `cron_expression` is read (upstream
+  #16322; both on the `release-1.14.0` line).
+- `src/backend/base/langflow/api/v2/workflow.py` — `_default_frame_source_factory`, which validates a
+  background run's graph under the job owner's current privileges (upstream #16383).
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_read_flow`, owner-scoped in OSS, which is
   why scope item 3 is not reachable here.
 - `tests/helpers/integrations/connection-probe.ts`, `tests/helpers/integrations/connections-owner.ts`,

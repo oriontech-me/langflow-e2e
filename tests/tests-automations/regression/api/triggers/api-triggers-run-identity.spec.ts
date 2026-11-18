@@ -2,7 +2,12 @@ import { createHmac } from "node:crypto";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { type CatalogFlowSpec, createCatalogFlow, fetchComponentCatalog } from "../../../../helpers/flows/build-catalog-flow";
+import {
+  type CatalogFlowSpec,
+  createCatalogFlow,
+  fetchComponentCatalog,
+  findCatalogComponent,
+} from "../../../../helpers/flows/build-catalog-flow";
 import { parseProbeOutput, probeFlowSpec, type ProbeTarget } from "../../../../helpers/integrations/connection-probe";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
 import { type CreatedConnection, createConnectionViaApi } from "../../../../helpers/integrations/create-connection";
@@ -83,9 +88,27 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
 
   async function newOwner(
     playwright: { request: { newContext(options: { baseURL?: string }): Promise<APIRequestContext> } },
+    request: APIRequestContext,
     baseURL: string | undefined,
   ): Promise<ConnectionsOwner> {
     owner = await createConnectionsOwner(() => playwright.request.newContext({ baseURL }), "trgrun");
+    // The owner's flows run the probe, which is custom code, and
+    // `custom_component_admin_only` (on by default since langflow-ai/langflow#16288)
+    // refuses a regular user's run of it as "outdated components must be updated".
+    // Trigger runs escaped that check until langflow-ai/langflow#16383
+    // (1.14.0.dev31) began validating every background run's graph with the job
+    // owner's privileges (#2477). Promoting the owner keeps what this file asserts,
+    // as in api-connections-resolution-non-interactive.spec.ts (#2414): the
+    // connection floor and the trigger principal have no superuser branch, and the
+    // owner is still a user of its own, distinct from the superuser that plants
+    // the other user's and the instance's rows.
+    const promoted = await request.patch(`/api/v1/users/${owner.userId}`, {
+      headers: { Authorization: await getAuthToken(request) },
+      data: { is_superuser: true },
+    });
+    const promotedText = await promoted.text();
+    expect(promoted.status(), promotedText).toBe(200);
+    expect(JSON.parse(promotedText).is_superuser, "the owner now reads as a superuser").toBe(true);
     return owner;
   }
 
@@ -268,7 +291,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
         "GET /api/v1/triggers/{trigger_id}/events",
         "GET /api/v1/monitor/messages",
       ]);
-      const me = await newOwner(playwright, testInfo.project.use.baseURL);
+      const me = await newOwner(playwright, request, testInfo.project.use.baseURL);
       const superHeaders = { Authorization: await getAuthToken(request) };
 
       const mine = await plantUserRow(request, me.headers, "trg_mine");
@@ -364,7 +387,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
         "GET /api/v1/triggers/{trigger_id}/events",
         "GET /api/v1/monitor/messages",
       ]);
-      const me = await newOwner(playwright, testInfo.project.use.baseURL);
+      const me = await newOwner(playwright, request, testInfo.project.use.baseURL);
       const mine = await plantUserRow(request, me.headers, "trg_named");
       const flowId = await ownerFlow(request, probeFlowSpec([{ field: "mine", handle: `google/${mine.name}` }]), "named");
 
@@ -426,7 +449,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
 
   test(
     "a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ playwright, request, apiCoverage }, testInfo) => {
       // Up to a minute for the cron boundary, plus the dispatcher's polls.
       test.setTimeout(240_000);
@@ -441,17 +464,29 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
         "GET /api/v1/monitor/messages",
       ]);
       const SCHEDULE_NODE = "ScheduleTrigger-tick";
-      const me = await newOwner(playwright, testInfo.project.use.baseURL);
+      const me = await newOwner(playwright, request, testInfo.project.use.baseURL);
       const mine = await plantUserRow(request, me.headers, "trg_tick");
       const instance = await plantInstanceRow(request, "trg_tick_instance");
       const spec = probeFlowSpec([
         { field: "mine", handle: `google/${mine.name}` },
         { field: "instance", handle: `google/${instance.name}` },
       ]);
+      // `schedule_type: "Custom (cron)"` is what makes the server read
+      // `cron_expression`: since upstream #16322 (1.14.0.dev30) the template
+      // defaults to "Weekly", and the reconciler compiles the picker fields
+      // instead — every weekday at 08:00, `0 8 * * 1-5` — so the cron below
+      // would be ignored and the trigger would never fire inside this test (#2477).
+      // Before dev30 the template has no `schedule_type` and the cron is the
+      // schedule, so the field is set only where the catalog carries it.
+      const scheduleTemplate = findCatalogComponent(
+        await fetchComponentCatalog(request, me.headers),
+        "ScheduleTrigger",
+      ).template;
+      const picker = "schedule_type" in scheduleTemplate ? { schedule_type: "Custom (cron)" } : {};
       spec.nodes.push({
         id: SCHEDULE_NODE,
         type: "ScheduleTrigger",
-        values: { cron_expression: "* * * * *", timezone: "UTC" },
+        values: { ...picker, cron_expression: "* * * * *", timezone: "UTC" },
       });
       const flowId = await ownerFlow(request, spec, "schedule");
 
