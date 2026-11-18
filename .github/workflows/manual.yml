@@ -521,6 +521,8 @@ jobs:
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
+          # Every value is scrubbed from the report before upload (#2486).
+          secrets_json: ${{ toJSON(secrets) }}
           base_url: ${{ needs.detect-target.outputs.base_url }}
           test_tag: ${{ github.event.inputs.test_tag }}
           test_grep: ${{ github.event.inputs.test_grep }}
@@ -691,6 +693,8 @@ jobs:
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
+          # Every value is scrubbed from the report before upload (#2486).
+          secrets_json: ${{ toJSON(secrets) }}
           base_url: ${{ needs.detect-target.outputs.base_url }}
           test_tag: ${{ github.event.inputs.test_tag }}
           test_grep: ${{ github.event.inputs.test_grep }}
