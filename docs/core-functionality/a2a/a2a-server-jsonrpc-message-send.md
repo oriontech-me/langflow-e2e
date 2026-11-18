@@ -1,6 +1,6 @@
 # A2A Server — JSON-RPC `message/send`: round-trip and error envelopes
 
-**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412) · first
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev31`, #2478) · first
 promoted on 1.12.x (`1.12.0.dev18`)
 
 **Issue:** #1242 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T4**) ·
@@ -65,7 +65,7 @@ exact sentinel**. A second run with a different sentinel returns a different
 | envelope missing `method` | `-32600` |
 | envelope missing `jsonrpc` | `-32600` |
 | `jsonrpc: "1.0"` | `-32600` |
-| `method: "message/send"` with no `params` | `-32600` |
+| `method: "message/send"` with no `params` | `-32602` or `-32600` — see below |
 | body that is not valid JSON | `-32700` |
 
 Assertions are on **`error.code` only**. The `message`/`data` strings are
@@ -74,11 +74,33 @@ implementation text — the `-32700` case returns a raw Python parser message
 and `-32600` sometimes embeds a Pydantic validation dump. Matching those would
 break on any upstream dependency bump while the contract held.
 
+**The missing-`params` row accepts two codes, on purpose (#2478).** JSON-RPC 2.0
+lets a Request omit `params`, so `{"jsonrpc": "2.0", "id": …, "method":
+"message/send"}` is a valid envelope and the missing argument belongs to the
+method: `-32602 Invalid params` is the code the specification prescribes.
+a2a-sdk **1.3.1** (released 2026-11-17, a2aproject/a2a-python#1419, *"return
+-32602 for invalid v0.3 JSON-RPC params"*) answers that. Langflow declares only
+`a2a-sdk>=1.2.1,<2.0.0`, so the code depends on how the instance was installed,
+not on the Langflow build: the Docker image installs the `1.2.1` its `uv.lock`
+holds and answers `-32600`, while a pip install resolves the newest release and
+answers `-32602`. Measured on `1.14.0.dev31`: the image answers `-32600`, and the
+same container with `a2a-sdk==1.3.1` installed answers `-32602`. That is why the
+VM daily (a pip venv) failed this row on 2026-11-17, a few hours after 1.3.1
+shipped, while the image-based PR lane passed it. Pinning one code would make
+the test fail on one of the two lanes over a dependency's choice, so the row
+asserts that the answer is one of the two invalid-input codes. It still fails on
+any other code, a non-200, or a result. The other five rows pin one code each,
+and both a2a-sdk versions answer them identically.
+
 ---
 
 ## External dependencies *(required)*
 
 - **`LANGFLOW_A2A_ENABLED=true`** (#1240); enforced by `requireA2aEnabled()`.
+- **a2a-sdk**, the JSON-RPC layer under `src/backend/base/langflow/api/v1/a2a.py`
+  (`JSONRPC03Adapter`, `JsonRpcDispatcher`). Langflow declares it as
+  `a2a-sdk>=1.2.1,<2.0.0` in `src/backend/base/pyproject.toml` and locks `1.2.1`
+  in `uv.lock`; the missing-`params` code differs across that range (see above).
 - **No LLM, no provider key, no external network.** The flow is
   `tests/assets/flows/chat-io-ok-trace-fixture.json` via
   `createRunnableChatFlowInPublicProject()`; Chat Output echoes Chat Input.
@@ -165,7 +187,8 @@ deletes both in a `finally` (`cleanup()`: the flow, then the project).
 - `-32600 "Invalid Request"` covers four distinct shapes (missing `method`,
   missing `jsonrpc`, wrong `jsonrpc` version, missing `params`), each with a
   different `data` payload — one of them a full Pydantic error dump. Hence
-  code-only assertions.
+  code-only assertions. Missing `params` moved to `-32602` with a2a-sdk 1.3.1
+  (#2478, above).
 - The error event's message object elsewhere in this stack carries
   `"error": false` (see `flow-error-policy.ts` in `CLAUDE.md`); do **not** infer
   failure from a truthy `error` field anywhere in the result — the JSON-RPC
