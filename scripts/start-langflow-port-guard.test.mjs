@@ -32,7 +32,7 @@ const PIP = script("start-langflow-pip.sh");
 const SERVING = script("start-langflow-serving-identity.sh");
 const ENTERPRISE = script("start-langflow-enterprise.sh");
 
-function run(path, { portHeld = false, dies = false, env = {} } = {}) {
+function run(path, { portHeld = false, dies = false, inspect = "", env = {} } = {}) {
   const dir = makeTempDir("start-port-guard-test-");
   const log = join(dir, "calls.log");
   const started = join(dir, "started");
@@ -47,9 +47,16 @@ function run(path, { portHeld = false, dies = false, env = {} } = {}) {
     "docker",
     `case "$1" in
   run) [ "$FAKE_DIES" = "1" ] || : > "${started}" ;;
-  container) [ "$2" = "inspect" ] && { [ "$FAKE_DIES" = "1" ] && echo false || echo true; } ;;
+  container)
+    if [ "$2" = "inspect" ]; then
+      case "$FAKE_INSPECT" in
+        error) echo "Cannot connect to the Docker daemon" >&2; exit 1 ;;
+        noisy) echo "Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg." >&2 ;;
+      esac
+      [ "$FAKE_DIES" = "1" ] && echo false || echo true
+    fi ;;
   image) [ "$2" = "inspect" ] && echo abc123 ;;
-  exec) echo 0.0.0-test ;;
+  exec) echo "\${FAKE_CONTAINER_VERSION:-0.0.0-test}" ;;
 esac
 exit 0`,
   );
@@ -65,7 +72,7 @@ exec /bin/sleep 30`,
   stub(
     "curl",
     `[ -e "${started}" ] || [ "$FAKE_PORT_HELD" = "1" ] || exit 7
-echo '{"version":"0.0.0-test","package":"Langflow"}'`,
+echo "\${FAKE_HTTP_BODY:-{\"version\":\"0.0.0-test\",\"package\":\"Langflow\"}}"`,
   );
   // Real but short: the pip poll must give a dying background process time to exit.
   stub("sleep", "exec /bin/sleep 0.05");
@@ -82,6 +89,7 @@ echo '{"version":"0.0.0-test","package":"Langflow"}'`,
         PATH: `${dir}:${process.env.PATH}`,
         FAKE_PORT_HELD: portHeld ? "1" : "0",
         FAKE_DIES: dies ? "1" : "0",
+        FAKE_INSPECT: inspect,
         LANGFLOW_EE_REPO: dir,
       },
     });
@@ -167,4 +175,24 @@ test("the container scripts print the dead container's own logs", () => {
     const r = run(path, { dies: true });
     assert.ok(r.calls.includes(`docker logs --tail 40 ${name}`), `${name}:\n${r.calls.join("\n")}`);
   }
+});
+
+test("the container scripts name a liveness check docker cannot answer, and start through stderr noise", () => {
+  for (const path of [SERVING, ENTERPRISE]) {
+    const failed = run(path, { inspect: "error" });
+    assert.equal(failed.status, 1, failed.out);
+    assert.match(failed.out, /could not ask docker whether .* is running: Cannot connect to the Docker daemon/);
+    assert.doesNotMatch(failed.out, /exited during startup/);
+    const noisy = run(path, { inspect: "noisy" });
+    assert.equal(noisy.status, 0, noisy.out);
+  }
+});
+
+test("start-langflow-serving-identity.sh compares the version field, so a release does not pass for its pre-release", () => {
+  const body = '{"version":"1.14.0.dev31","main_version":"1.14.0","package":"Langflow Nightly"}';
+  const shadowed = run(SERVING, { env: { FAKE_CONTAINER_VERSION: "1.14.0", FAKE_HTTP_BODY: body } });
+  assert.equal(shadowed.status, 1, shadowed.out);
+  assert.match(shadowed.out, /SHADOWED/);
+  const same = run(SERVING, { env: { FAKE_CONTAINER_VERSION: "1.14.0.dev31", FAKE_HTTP_BODY: body } });
+  assert.equal(same.status, 0, same.out);
 });

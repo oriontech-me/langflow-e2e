@@ -128,7 +128,9 @@ echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do
   # The container must still be running on every poll (#2087): one that died on
   # startup is not slow, and waiting out the deadline mis-reports it as a timeout.
-  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 || true)"
+  # stdout only: a docker wrapper or CLI may warn on stderr beside a healthy `true`
+  # (podman-docker does on every call). stderr is read again only to name a failure.
+  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
   case "${RUNNING}" in
     true) ;;
     false)
@@ -136,7 +138,8 @@ for i in $(seq 1 24); do
       docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
       exit 1 ;;
     *)
-      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${RUNNING}" >&2
+      INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${INSPECT_ERROR:-${RUNNING:-no answer}}" >&2
       exit 1 ;;
   esac
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
@@ -151,11 +154,17 @@ for i in $(seq 1 24); do
     # every request goes to somebody else's Langflow. The tell is that the two
     # readings disagree: what answers over HTTP versus what the container itself
     # reports. Compare them, because each alone looks healthy.
+    # The `version` field, compared for equality (#2087): searching the whole body also
+    # matched `main_version`, so a 1.14.0 container accepted a 1.14.0.dev31 answer, and
+    # the unescaped dots matched any character. `|| true`: under pipefail a failed exec
+    # would otherwise abort the script with no message.
+    HTTP_VERSION="$(printf '%s' "${VERSION}" \
+      | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
     CONTAINER_VERSION="$(docker exec "${CONTAINER_NAME}" \
       python -c "import json,importlib.metadata as m; print(m.version('langflow'))" 2>/dev/null \
-      | tr -d '[:space:]')"
-    if [ -n "${CONTAINER_VERSION}" ] && [ -n "${VERSION}" ] \
-       && ! printf '%s' "${VERSION}" | grep -q "${CONTAINER_VERSION}"; then
+      | tr -d '[:space:]' || true)"
+    if [ -n "${CONTAINER_VERSION}" ] && [ -n "${HTTP_VERSION}" ] \
+       && [ "${HTTP_VERSION}" != "${CONTAINER_VERSION}" ]; then
       echo
       echo "ERROR: port ${PORT} is SHADOWED — localhost:${PORT} is not this container."
       echo "  the container runs langflow ${CONTAINER_VERSION}"

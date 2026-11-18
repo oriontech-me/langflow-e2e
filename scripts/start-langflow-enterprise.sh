@@ -317,7 +317,9 @@ echo "Waiting for Langflow Enterprise to become healthy..."
 for _ in $(seq 1 60); do
   # The container must still be running on every poll (#2087): one that died on
   # startup is not slow, and waiting out the deadline mis-reports it as a timeout.
-  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 || true)"
+  # stdout only: a docker wrapper or CLI may warn on stderr beside a healthy `true`
+  # (podman-docker does on every call). stderr is read again only to name a failure.
+  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
   case "${RUNNING}" in
     true) ;;
     false)
@@ -325,7 +327,8 @@ for _ in $(seq 1 60); do
       docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
       exit 1 ;;
     *)
-      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${RUNNING}" >&2
+      INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${INSPECT_ERROR:-${RUNNING:-no answer}}" >&2
       exit 1 ;;
   esac
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then

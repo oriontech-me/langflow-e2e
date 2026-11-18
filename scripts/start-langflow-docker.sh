@@ -233,7 +233,9 @@ for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
   # The container must still be running on every poll (#2087). One that died on
   # startup is not slow: waiting out the deadline mis-reports it as a timeout, and
   # anything that took the port meanwhile would be reported as this container.
-  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 || true)"
+  # stdout only: a docker wrapper or CLI may warn on stderr beside a healthy `true`
+  # (podman-docker does on every call). stderr is read again only to name a failure.
+  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
   case "${RUNNING}" in
     true) ;;
     false)
@@ -241,7 +243,8 @@ for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
       docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
       exit 1 ;;
     *)
-      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${RUNNING}" >&2
+      INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${INSPECT_ERROR:-${RUNNING:-no answer}}" >&2
       exit 1 ;;
   esac
   if curl -sf "http://${PROBE_HOST}:${PORT}/health_check" > /dev/null 2>&1; then
@@ -256,8 +259,9 @@ for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
     # equality. The field is extracted, never searched for in the whole body: the body
     # also carries `main_version`, the base of a pre-release (1.14.0 for 1.14.0.dev31),
     # so a release container would match a dev or rc build of the same base. This tells
-    # apart two instances whose versions differ; two of the SAME version are what the
-    # pre-launch guard and the liveness check rule out. An unreadable side warns rather
+    # apart two instances whose versions differ. Two of the SAME version it cannot: the
+    # pre-launch guard rules out one that was already answering, and what remains is a
+    # same-version process binding the port during the boot, which is narrow. An unreadable side warns rather
     # than refuses: nightlies up to 1.10 shipped as the `langflow-nightly` distribution,
     # so asking for `langflow` finds nothing there, and that is not a reason to refuse.
     HTTP_VERSION="$(printf '%s' "${VERSION}" \

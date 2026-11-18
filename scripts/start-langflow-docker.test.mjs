@@ -72,6 +72,7 @@ case "$1" in
     # The starter's liveness check (#2087): "container inspect -f {{.State.Running}} <name>".
     if [ "$2" = "inspect" ] && [ "$3" = "-f" ]; then
       [ "\${FAKE_RUNNING}" = "error" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
+      [ "\${FAKE_RUNNING}" = "noisy" ] && { echo "Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg." >&2; echo true; exit 0; }
       echo "\${FAKE_RUNNING}"; exit 0
     fi
     if [ "$2" = "inspect" ]; then
@@ -549,4 +550,11 @@ test("a liveness check docker cannot answer is named as such, not as a container
   assert.equal(r.status, 1);
   assert.match(r.stdout, /could not ask docker whether langflow-e2e-runner is running: Cannot connect to the Docker daemon/);
   assert.doesNotMatch(r.stdout, /exited during startup/);
+});
+
+test("a docker that warns on stderr beside a healthy `true` still starts", () => {
+  // podman-docker prints its emulation notice on every call.
+  const r = runScript({ running: "noisy" });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /Langflow ready/);
 });
