@@ -91,8 +91,9 @@ echo "${SERVER_PID}" > "${PID_FILE}"
 echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do
   # The process must still be alive on every poll (#2087). One that died on startup
-  # (a bind failure, a broken install) is not slow, and waiting out the deadline would
-  # mis-report it as a timeout.
+  # (a broken install, a bad flag) is not slow, and waiting out the deadline would
+  # mis-report it as a timeout. A busy port does not kill it — `langflow run` moves to
+  # the next free port instead — which is why the guard above refuses an occupied one.
   if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
     wait "${SERVER_PID}" 2>/dev/null && CODE=0 || CODE=$?
     echo "ERROR: langflow run (PID ${SERVER_PID}) exited during startup with status ${CODE}." >&2

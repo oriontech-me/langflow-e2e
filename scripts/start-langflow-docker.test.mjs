@@ -51,6 +51,8 @@ function runScript({
   running = "true",
   containerVersion = "0.0.0-test",
   httpVersion = "0.0.0-test",
+  httpBody = "",
+  execFails = false,
 } = {}) {
   const dir = makeTempDir("start-langflow-test-");
   const log = join(dir, "docker.log");
@@ -67,6 +69,11 @@ case "$1" in
   pull) [ "\${FAKE_PULL_FAILS}" = "1" ] && exit 1 ;;
   image) [ "$2" = "inspect" ] && [ "\${FAKE_LOCAL_COPY}" = "0" ] && exit 1 ;;
   container)
+    # The starter's liveness check (#2087): "container inspect -f {{.State.Running}} <name>".
+    if [ "$2" = "inspect" ] && [ "$3" = "-f" ]; then
+      [ "\${FAKE_RUNNING}" = "error" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
+      echo "\${FAKE_RUNNING}"; exit 0
+    fi
     if [ "$2" = "inspect" ]; then
       case "\${FAKE_CONTAINER}" in
         absent) echo "Error response from daemon: No such container: $3" >&2; exit 1 ;;
@@ -78,8 +85,7 @@ case "$1" in
     fi ;;
   rm) echo "$3" ;;
   run) : > "${started}" ;;
-  inspect) echo "\${FAKE_RUNNING}" ;;
-  exec) echo "\${FAKE_CONTAINER_VERSION}" ;;
+  exec) [ "\${FAKE_EXEC_FAILS}" = "1" ] && exit 126; echo "\${FAKE_CONTAINER_VERSION}" ;;
 esac
 exit 0
 `,
@@ -90,7 +96,7 @@ exit 0
       ? `#!/usr/bin/env bash
 echo "$*" >> "${curlLog}"
 [ -e "${started}" ] || [ "\${FAKE_PORT_HELD}" = "1" ] || exit 7
-echo "{\\"version\\":\\"\${FAKE_HTTP_VERSION}\\",\\"package\\":\\"Langflow\\"}"
+if [ -n "\${FAKE_HTTP_BODY}" ]; then echo "\${FAKE_HTTP_BODY}"; else echo "{\\"version\\":\\"\${FAKE_HTTP_VERSION}\\",\\"main_version\\":\\"\${FAKE_HTTP_VERSION%%[a-z]*}\\",\\"package\\":\\"Langflow\\"}"; fi
 exit 0
 `
       : `#!/usr/bin/env bash
@@ -120,6 +126,8 @@ exit 7
         FAKE_RUNNING: running,
         FAKE_CONTAINER_VERSION: containerVersion,
         FAKE_HTTP_VERSION: httpVersion,
+        FAKE_HTTP_BODY: httpBody,
+        FAKE_EXEC_FAILS: execFails ? "1" : "0",
       },
     });
   } catch (err) {
@@ -504,4 +512,41 @@ test("a container version that cannot be read warns and does not refuse", () => 
   const r = runScript({ containerVersion: "" });
   assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /WARNING: could not compare the container's langflow version/);
+});
+
+test("the version compared is the `version` field, never `main_version`: a release is not its own pre-release", () => {
+  // The real body carries main_version, the base of a pre-release, so a whole-body
+  // search let a 1.14.0 container accept a 1.14.0.dev31 instance on its port.
+  for (const [container, body] of [
+    ["1.14.0", '{"version":"1.14.0.dev31","main_version":"1.14.0","package":"Langflow Nightly"}'],
+    ["1.12.3", '{"version":"1.12.3rc1","main_version":"1.12.3","package":"Langflow"}'],
+  ]) {
+    const r = runScript({ containerVersion: container, httpBody: body });
+    assert.equal(r.status, 1, `${container} vs ${body}: ${r.stdout}`);
+    assert.match(r.stdout, /is not this container/);
+  }
+  const same = runScript({
+    containerVersion: "1.14.0.dev31",
+    httpBody: '{"version":"1.14.0.dev31","main_version":"1.14.0","package":"Langflow Nightly"}',
+  });
+  assert.equal(same.status, 0, same.stdout);
+});
+
+test("a container that cannot be asked its version (exec refused) warns and does not abort", () => {
+  const r = runScript({ execFails: true });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /WARNING: could not compare/);
+});
+
+test("a version answer with no version field warns and does not refuse", () => {
+  const r = runScript({ httpBody: '{"detail":"Not Found"}' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /WARNING: could not compare .*\(''\)/s);
+});
+
+test("a liveness check docker cannot answer is named as such, not as a container that exited", () => {
+  const r = runScript({ running: "error" });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /could not ask docker whether langflow-e2e-runner is running: Cannot connect to the Docker daemon/);
+  assert.doesNotMatch(r.stdout, /exited during startup/);
 });

@@ -128,11 +128,17 @@ echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do
   # The container must still be running on every poll (#2087): one that died on
   # startup is not slow, and waiting out the deadline mis-reports it as a timeout.
-  if [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)" != "true" ]; then
-    echo "ERROR: the container ${CONTAINER_NAME} is not running — it exited during startup." >&2
-    docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
-    exit 1
-  fi
+  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 || true)"
+  case "${RUNNING}" in
+    true) ;;
+    false)
+      echo "ERROR: the container ${CONTAINER_NAME} is not running — it exited during startup." >&2
+      docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
+      exit 1 ;;
+    *)
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${RUNNING}" >&2
+      exit 1 ;;
+  esac
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s"
     VERSION="$(curl -sf "http://localhost:${PORT}/api/v1/version" 2>/dev/null || true)"

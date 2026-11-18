@@ -47,7 +47,7 @@ function run(path, { portHeld = false, dies = false, env = {} } = {}) {
     "docker",
     `case "$1" in
   run) [ "$FAKE_DIES" = "1" ] || : > "${started}" ;;
-  inspect) [ "$FAKE_DIES" = "1" ] && echo false || echo true ;;
+  container) [ "$2" = "inspect" ] && { [ "$FAKE_DIES" = "1" ] && echo false || echo true; } ;;
   image) [ "$2" = "inspect" ] && echo abc123 ;;
   exec) echo 0.0.0-test ;;
 esac
