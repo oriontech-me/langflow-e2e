@@ -6,8 +6,9 @@
 
 Owning issue: #2448 (the 1.14 triggers and connectors batch). The page that renders this API is
 `docs/core-functionality/integrations/triggers-settings-page.md`, from the same issue. The trigger
-lifecycle (CRUD, the state machine, flow-save reconciliation) is #2303's, the failing-run state is #2328's,
-and the audit rows these actions write are #2451's. This file asserts what TRG-7 (upstream LE-2485,
+lifecycle (CRUD, the state machine, flow-save reconciliation) is #2303's, a trigger whose runs fail
+still reading `active` is recorded and not pinned (#2328, `api-triggers-webhook-ingress.md` → *Not
+pinned*), and the audit rows these actions write are #2451's. This file asserts what TRG-7 (upstream LE-2485,
 API #15786) added on top of them. #2464 added the declared-failing pin for LE-3454 (test 3, step 6).
 #2476 set the Schedule node's `schedule_type` after upstream #16322 made it decide whether the cron is read.
 

@@ -1668,7 +1668,7 @@
 - [x] `POST …/test` appends a `test:` row with `payload.test = true` that runs through the real dispatcher to the flow, and answers `409` on a dead trigger → api/triggers/api-triggers-webhook-ingress.spec.ts
 - [x] `POST …/replay` appends a new row linked by `replay_of_event_id` that runs the original payload and leaves the original unchanged; an unknown event, or another trigger's, answers `404` → api/triggers/api-triggers-webhook-ingress.spec.ts
 - [x] A flow that fails on every delivery records each event `failed` / `job_failed` with `attempt: 0`, and nothing is retried → api/triggers/api-triggers-webhook-ingress.spec.ts
-- [ ] A trigger whose every run fails still reads `active` with `last_error: null` — known defect, upstream ticket and `test.fail()` owned by #2328
+- [ ] A trigger whose every run fails still reads `active` with `last_error: null` — recorded, not pinned: a product decision (#2328, `api-triggers-webhook-ingress.md` → *Not pinned*)
 - [ ] `/replay` answers `409` outside the 7-day window — not reachable on any lane (the window is at least one day and a delivery cannot be back-dated)
 
 #### 24.10 Health after creation and connector run errors (#2355)
