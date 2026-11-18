@@ -885,9 +885,23 @@ jobs:
           path: tokens/
           if-no-files-found: ignore
 
+      # #2486: Playwright redacts nothing. The report and the traces carry every
+      # provider key a retried spec sent or typed (request headers, variable-write
+      # bodies, fill() text), and this repository is PUBLIC, so its artifacts are
+      # downloadable by any GitHub account. Every value in `secrets` is removed before
+      # anything is uploaded; an upload runs only when the scrub verified the files.
+      # toJSON(secrets) rather than a list, so a credential added later is covered
+      # with no edit here (the script keeps only the names that read as credentials).
+      - name: Scrub secrets from the blob report (shard ${{ matrix.shard }})
+        id: scrub_blob
+        if: always()
+        env:
+          SCRUB_SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON blob-report
+
       - name: Upload blob report (shard ${{ matrix.shard }})
         uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && steps.scrub_blob.outcome == 'success'
         with:
           name: blob-${{ matrix.shard }}
           path: blob-report/
@@ -1201,6 +1215,26 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
           PLAYWRIGHT_HTML_REPORT: playwright-report
 
+      # #2486: Playwright redacts nothing. The report and the traces carry every
+      # provider key a retried spec sent or typed (request headers, variable-write
+      # bodies, fill() text), and this repository is PUBLIC, so its artifacts are
+      # downloadable by any GitHub account. The blobs were scrubbed per shard; this
+      # pass covers what the merge wrote, right after it, so the guards, the payload,
+      # the umbrella and the history row committed to main all read scrubbed files,
+      # and the uploads below run only when it verified. results.json goes first and
+      # on its own: its consumers run whatever this step's outcome, so a crash while
+      # handling the much larger report must not leave it unscrubbed.
+      # toJSON(secrets) rather than a list, so a credential added later is covered
+      # with no edit here (the script keeps only the names that read as credentials).
+      - name: Scrub secrets from the merged report
+        id: scrub_report
+        if: always()
+        env:
+          SCRUB_SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON results.json
+          node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON playwright-report
+
       # Second, independent guard (#1012). `shardguard` above answers "did every
       # shard produce a blob"; this one answers "did the run produce any TEST" —
       # a question a blob count cannot reach. On run 30351107916 (2026-07-28) all
@@ -1337,7 +1371,7 @@ jobs:
       - name: Upload Playwright report (full, heavy)
         id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
         uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && steps.scrub_report.outcome == 'success'
         with:
           name: playwright-report-daily-${{ github.run_id }}
           path: playwright-report/
@@ -1351,7 +1385,7 @@ jobs:
       - name: Upload report index (lightweight, long-lived)
         id: upload_index                      # ← artifact-url fed to the QA Platform payload below
         uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && steps.scrub_report.outcome == 'success'
         with:
           name: playwright-report-index-daily-${{ github.run_id }}
           path: playwright-report/index.html
@@ -1367,7 +1401,7 @@ jobs:
       # small, so the long window costs ~nothing.
       - name: Upload Playwright JSON report
         uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && steps.scrub_report.outcome == 'success'
         with:
           name: playwright-json-daily-${{ github.run_id }}
           path: results.json

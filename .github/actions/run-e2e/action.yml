@@ -30,6 +30,12 @@ inputs:
     description: "Google key for the google-parameterized specs. Optional."
     required: false
     default: ""
+  secrets_json:
+    description: >-
+      The caller's `toJSON(secrets)`. A composite action cannot read the `secrets`
+      context, and every value in it is removed from the report before upload (#2486).
+      Required: without it the scrub fails and nothing is uploaded.
+    required: true
 
 runs:
   using: "composite"
@@ -104,8 +110,22 @@ runs:
         npx playwright test --pass-with-no-tests --reporter=github \
           --output=test-results-destructive --grep "$FILTER"
 
-    - name: Upload Playwright report
+    # #2486: Playwright redacts nothing, the report and the traces carry every
+    # provider key a retried spec sent or typed, and this repository is PUBLIC. Every
+    # secret value is removed first; the uploads run only when the scrub verified.
+    - name: Scrub secrets from the report
+      id: scrub
       if: always()
+      shell: bash
+      env:
+        SCRUB_SECRETS_JSON: ${{ inputs.secrets_json }}
+      # results.json first and on its own, so a crash on the report cannot leave it dirty.
+      run: |
+        node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON results.json
+        node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON playwright-report
+
+    - name: Upload Playwright report
+      if: always() && steps.scrub.outcome == 'success'
       uses: actions/upload-artifact@v4
       with:
         name: playwright-report-manual-${{ github.run_id }}
@@ -113,7 +133,7 @@ runs:
         retention-days: 14
 
     - name: Upload Playwright JSON report
-      if: always()
+      if: always() && steps.scrub.outcome == 'success'
       uses: actions/upload-artifact@v4
       with:
         name: playwright-json-manual-${{ github.run_id }}

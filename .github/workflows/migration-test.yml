@@ -290,8 +290,20 @@ jobs:
           cat /tmp/migration-summary.md
           echo "::endgroup::"
 
-      - name: Upload test artifacts
+      # #2486: this job runs Playwright with provider keys, and Playwright redacts
+      # nothing, so test-results/ (traces, error context) can carry them. This
+      # repository is PUBLIC; the upload runs only when the scrub verified the files.
+      - name: Scrub secrets from the test artifacts
+        id: scrub
         if: always()
+        env:
+          SCRUB_SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON \
+            test-results /tmp/migration-summary.md /tmp/migration-report.md /tmp/langflow-latest.log /tmp/langflow-nightly.log
+
+      - name: Upload test artifacts
+        if: always() && steps.scrub.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: migration-test-${{ github.run_number }}
