@@ -4618,16 +4618,22 @@ test("phase_merge removes the provider keys from the report and results.json bef
     assert.ok(!html.includes(SCRUB_KEY), "the key is still in the HTML report");
     assert.ok(!results.includes(SCRUB_KEY), "the key is still in results.json");
     assert.match(results, /\[REDACTED:PROVIDER_TEST_API_KEY\]/);
+    // The order half: check-run-integrity, the first reader after the merge, prints
+    // results.json's top-level error. With the scrub after the readers, the key would
+    // reach this log; with it first, the log carries the marker.
+    assert.match(out, /\[REDACTED:PROVIDER_TEST_API_KEY\]/, "the first reader did not see a scrubbed results.json");
     assert.ok(!out.includes(SCRUB_KEY), "the log printed the value");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("phase_publish does not upload a report the scrub did not verify (#2486)", () => {
+test("phase_publish uploads a report only when the scrub verified it (#2486)", () => {
   // Fail-closed in both directions the flag can be wrong: false (the scrub failed) and
-  // unset (it never ran, as when publish is reached without merge).
-  for (const flag of ["SCRUB_REPORT_OK=false", "unset SCRUB_REPORT_OK"]) {
+  // unset (it never ran). The `true` case is here too, or a gate that never uploads at
+  // all would pass this test.
+  for (const flag of ["SCRUB_REPORT_OK=true", "SCRUB_REPORT_OK=false", "unset SCRUB_REPORT_OK"]) {
+    const verified = flag === "SCRUB_REPORT_OK=true";
     const dir = makeTempDir("scrub-publish-");
     try {
       mkdirSync(join(dir, "logs"), { recursive: true });
@@ -4651,8 +4657,13 @@ test("phase_publish does not upload a report the scrub did not verify (#2486)", 
       );
       const out = r.stdout + r.stderr;
       assert.match(out, /REACHED_AFTER_PUBLISH/, `${flag}: publish must not abort\n${out}`);
-      assert.match(out, /not verified free of secrets — it is NOT uploaded/, `${flag}\n${out}`);
-      assert.doesNotMatch(out, /Uploading the evidence/, `${flag}: the upload ran anyway`);
+      if (verified) {
+        assert.match(out, /Uploading the evidence/, `${flag}: a verified report was not uploaded\n${out}`);
+        assert.doesNotMatch(out, /not verified free of secrets/);
+      } else {
+        assert.match(out, /not verified free of secrets — it is NOT uploaded/, `${flag}\n${out}`);
+        assert.doesNotMatch(out, /Uploading the evidence/, `${flag}: the upload ran anyway`);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
