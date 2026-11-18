@@ -58,12 +58,15 @@ case "$1" in
         exit $? ;;
       *"weed shell"*)
         input="$(cat)"
+        # The commands a weed shell was given, in order with every other call.
+        printf 'WEED %s\n' "$(printf '%s' "$input" | tr '\n' ' ')" >> "$FAKE_LOG"
         case "$input" in *"s3.bucket.create -name "*)
           echo "created bucket \${input##*s3.bucket.create -name }" | head -n 1 ;;
         esac
         case "$input" in *"s3.bucket.list"*) printf '  %s\\tsize:0\\n' "\${FAKE_BUCKET:-langflow-migration}" ;; esac
         case "$input" in *"fs.ls"*) [ -n "\${FAKE_OBJECTS:-}" ] && echo "\${FAKE_OBJECTS}" ;; esac
         exit 0 ;;
+      *"python - http://"*) cat > /dev/null; echo "\${FAKE_SIGNED:-ACCEPTED}"; exit 0 ;;
       *"python - "*) cat > /dev/null; echo "SEEDED \${FAKE_SEEDED:-3}"; exit 0 ;;
       *"importlib.metadata"*) echo "\${FAKE_CONTAINER_VERSION:-1.14.0.dev99}"; exit 0 ;;
       *"information_schema.tables"*) echo "\${FAKE_TABLES:-0}"; exit 0 ;;
@@ -286,28 +289,44 @@ test("the probe accepts only a stored write, and fails when its own object canno
 test("a start gives the gateway one identity, the lane's keys, and proves an unsigned request is refused before probing (#2397)", () => {
   const r = run(START);
   assert.equal(r.status, 0, r.out);
-  const configure = r.calls.findIndex((c) => c.startsWith("exec -i langflow-instance-migration-s3 weed shell"));
-  const unsigned = r.curls.findIndex((c) => c.includes("http://127.0.0.1:58895/langflow-migration?list-type=2"));
-  assert.ok(unsigned >= 0, "never asked the gateway an unsigned question");
-  // The configure line itself goes through stdin, so read it from the script: the keys
-  // are the lane's, and nothing else.
-  const script = readFileSync(START, "utf8");
-  assert.match(script, /s3\.configure -user=e2e-im-lane -access_key=%s -secret_key=%s -actions=Read,Write,List,Tagging,Admin -apply/);
-  assert.match(script, /"\$\{IM_S3_ACCESS_KEY_ID\}" "\$\{IM_S3_SECRET_ACCESS_KEY\}"/);
-  assert.ok(configure >= 0);
-  // Identity first, then the write probe (which goes through the filer and needs none).
+  const create = r.calls.findIndex((c) => c === "WEED s3.bucket.create -name langflow-migration");
+  const configure = r.calls.findIndex((c) => c.startsWith("WEED s3.configure "));
+  assert.equal(
+    r.calls[configure],
+    "WEED s3.configure -user=e2e-im-lane -access_key=e2e-im-sentinel-s3-access-key -secret_key=e2e-im-sentinel-s3-secret-key -actions=Read,Write,List,Tagging,Admin -apply",
+  );
   const probe = r.calls.findIndex((c) => c.includes("e2e-write-probe"));
-  assert.ok(r.calls.filter((c) => c.startsWith("exec -i langflow-instance-migration-s3 weed shell")).length >= 2, "bucket create and configure");
-  assert.ok(probe > configure, "probed before the identity was set");
+  assert.ok(create >= 0 && create < configure && configure < probe, `order: create ${create}, configure ${configure}, probe ${probe}`);
+  assert.ok(r.curls.some((c) => c.includes("-m 5") && c.includes("http://127.0.0.1:58895/langflow-migration?list-type=2")));
 });
 
-test("a gateway that still answers an unsigned request fails the start: it would accept any key", () => {
-  const r = run(START, { env: { FAKE_S3_UNSIGNED: "200" } });
-  assert.notEqual(r.status, 0);
-  assert.match(r.out, /still answers an unsigned request to langflow-migration, so it would accept any key/);
-  assert.equal(r.curls.filter((c) => c.includes(":58895/langflow-migration?list-type=2")).length, 30, "30 attempts");
-  assert.ok(!r.calls.some((c) => c.includes("e2e-write-probe")), "probed an open gateway");
-  assert.ok(!r.curls.some((c) => c.includes("/api/v1/flows/")), "seeded after the check failed");
+test("a gateway that still answers an unsigned request, or does not answer at all, fails the start naming which", () => {
+  for (const [code, said] of [
+    ["200", /an unsigned request was answered 200, so the gateway would accept any key/],
+    ["000", /the gateway did not answer on 127\.0\.0\.1:58895/],
+  ]) {
+    const r = run(START, { env: { FAKE_S3_UNSIGNED: code } });
+    assert.notEqual(r.status, 0, code);
+    assert.match(r.out, said, code);
+    assert.equal(r.curls.filter((c) => c.includes(":58895/langflow-migration?list-type=2")).length, 30, `${code}: 30 attempts`);
+    assert.ok(!r.calls.some((c) => c.includes("e2e-write-probe")), `${code}: probed a gateway that is not closed`);
+    assert.ok(!r.curls.some((c) => c.includes("/api/v1/flows/")), `${code}: seeded after the check failed`);
+  }
+});
+
+test("a start proves the lane's OWN keys are accepted, from the source container, before seeding (#2397)", () => {
+  const r = run(START);
+  assert.equal(r.status, 0, r.out);
+  const signed = r.calls.find((c) => c.includes("python - http://langflow-instance-migration-s3:8333 langflow-migration"));
+  assert.ok(signed, "never asked the bucket with the lane's keys");
+  assert.match(signed, /^exec -i -e IM_S3_ACCESS_KEY_ID=e2e-im-sentinel-s3-access-key -e IM_S3_SECRET_ACCESS_KEY=e2e-im-sentinel-s3-secret-key langflow-instance-migration python/);
+  const refused = run(START, { env: { FAKE_SIGNED: "REFUSED 403" } });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.out, /refuses the lane's own keys \(403\): the identity was not applied as configured/);
+  assert.ok(!refused.curls.some((c) => c.includes("/api/v1/flows/")), "seeded with keys the bucket refuses");
+  const broken = run(START, { env: { FAKE_SIGNED: "Traceback: ModuleNotFoundError botocore" } });
+  assert.notEqual(broken.status, 0);
+  assert.match(broken.out, /could not ask the bucket langflow-migration with the lane's keys: Traceback/);
 });
 
 test("LANGFLOW_BIND_HOST opts the source out of loopback, and the probe follows", () => {
@@ -392,10 +411,13 @@ test("a reset stops a live run before it removes the record and empties the targ
 });
 
 test("a reset whose gateway answers an unsigned request fails, naming it (#2397)", () => {
-  for (const code of ["200", "000"]) {
+  for (const [code, said] of [
+    ["200", /answered 200 to an unsigned request, not 403: the gateway accepts any key/],
+    ["000", /the bucket's gateway did not answer on 127\.0\.0\.1:58895/],
+  ]) {
     const r = run(RESET, { env: { FAKE_S3_UNSIGNED: code } });
     assert.notEqual(r.status, 0, code);
-    assert.match(r.out, new RegExp(`answered ${code} to an unsigned request, not 403: the gateway accepts any key`), code);
+    assert.match(r.out, said, code);
   }
   const ok = run(RESET);
   assert.equal(ok.status, 0, ok.out);

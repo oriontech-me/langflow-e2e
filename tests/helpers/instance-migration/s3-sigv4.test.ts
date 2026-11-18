@@ -43,7 +43,7 @@ test("the host is signed with its port, as the lane's gateway is reached", () =>
   assert.equal(headers.host, "127.0.0.1:58895");
 });
 
-test("a different key, secret, path or query changes the signature", () => {
+test("a different secret, path or query changes the signature", () => {
   const base = "http://127.0.0.1:58895/langflow-migration?list-type=2";
   const sig = (url: string, keys = AWS_EXAMPLE_KEYS) =>
     /Signature=([0-9a-f]{64})$/.exec(signS3Get(url, keys, { now: AWS_EXAMPLE_NOW }).authorization)?.[1];
@@ -58,6 +58,14 @@ test("refuses what it would sign wrongly rather than signing it", () => {
   assert.throws(() => signS3Get("ftp://host/bucket", AWS_EXAMPLE_KEYS), /not an http\(s\) URL/);
   assert.throws(() => signS3Get("http://u:p@host/bucket", AWS_EXAMPLE_KEYS), /carrying credentials/);
   assert.throws(() => signS3Get("http://host/bucket", { accessKeyId: "", secretAccessKey: "x" }), /both S3 keys/);
+  // The URL parser leaves these unencoded in a path, where SigV4 wants them encoded.
+  for (const path of ["/b/a=b", "/b/a+b", "/b/a(b)", "/b/a,b", "/b/a@b"]) {
+    assert.throws(() => signS3Get(`http://host${path}`, AWS_EXAMPLE_KEYS), /encode wrongly/, path);
+  }
+  // And decodes a literal "+" in the query to a space.
+  assert.throws(() => signS3Get("http://host/b?prefix=a+b", AWS_EXAMPLE_KEYS), /literal "\+"/);
+  // A percent-escaped path and an escaped "+" in the query are fine.
+  assert.doesNotThrow(() => signS3Get("http://host/b/a%3Db?prefix=a%2Bb", AWS_EXAMPLE_KEYS));
 });
 
 test("amzDate is the compact ISO-8601 form, to the second", () => {

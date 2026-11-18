@@ -215,18 +215,24 @@ done
 # mount. Then read back from outside: an UNSIGNED listing from this host must be refused,
 # or the gateway is still open and a wrong-key spec would pass a key it should refuse.
 S3_CONFIG_OK=false
+S3_LAST=""
 for _ in $(seq 1 30); do
-  if printf 's3.configure -user=e2e-im-lane -access_key=%s -secret_key=%s -actions=Read,Write,List,Tagging,Admin -apply\n' \
+  if ! printf 's3.configure -user=e2e-im-lane -access_key=%s -secret_key=%s -actions=Read,Write,List,Tagging,Admin -apply\n' \
       "${IM_S3_ACCESS_KEY_ID}" "${IM_S3_SECRET_ACCESS_KEY}" \
-      | docker exec -i "${IM_S3_CONTAINER}" weed shell > /dev/null 2>&1 \
-     && [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${IM_S3_HOST_PORT}/${IM_S3_BUCKET}?list-type=2")" = "403" ]; then
-    S3_CONFIG_OK=true
-    break
+      | docker exec -i "${IM_S3_CONTAINER}" weed shell > /dev/null 2>&1; then
+    S3_LAST="weed shell could not apply the identity"
+  else
+    CODE="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${IM_S3_HOST_PORT}/${IM_S3_BUCKET}?list-type=2" || true)"
+    case "${CODE}" in
+      403) S3_CONFIG_OK=true; break ;;
+      000 | '') S3_LAST="the gateway did not answer on 127.0.0.1:${IM_S3_HOST_PORT}" ;;
+      *) S3_LAST="an unsigned request was answered ${CODE}, so the gateway would accept any key" ;;
+    esac
   fi
   sleep 1
 done
 [ "${S3_CONFIG_OK}" = "true" ] \
-  || fail "SeaweedFS still answers an unsigned request to ${IM_S3_BUCKET}, so it would accept any key — see: docker logs ${IM_S3_CONTAINER}"
+  || fail "SeaweedFS did not end up refusing unsigned requests to ${IM_S3_BUCKET}: ${S3_LAST} — see: docker logs ${IM_S3_CONTAINER}"
 # A bucket that exists is not a bucket that stores files (#2396): the destination test
 # writes an EMPTY object, which needs no volume, so a bucket with no writable volume
 # passes it and first fails at "Copy files" as "Can't write to the bucket", which reads
@@ -266,6 +272,42 @@ if [ -z "${CONTAINER_VERSION}" ] || ! printf '%s' "${VERSION}" | grep -q "${CONT
   exit 1
 fi
 echo "Reachable at ${BASE_URL}: ${VERSION}"
+
+# The other half of the identity (#2397): refusing unsigned requests proves the gateway
+# is closed, not that the lane's OWN keys are accepted. An identity applied wrong (a key
+# `weed shell` tokenizes, an action a later image renames) would leave a lane that
+# refuses everything, and every copy would fail as `bucket_denied`, reading like a
+# product error. So the lane's keys are tried the way Langflow will use them: botocore,
+# from the source container, by the bucket's container name. The keys travel as
+# environment variables, never on a command line.
+SIGNED="$(docker exec -i -e IM_S3_ACCESS_KEY_ID="${IM_S3_ACCESS_KEY_ID}" -e IM_S3_SECRET_ACCESS_KEY="${IM_S3_SECRET_ACCESS_KEY}" \
+  "${IM_SOURCE_CONTAINER}" python - "http://${IM_S3_CONTAINER}:8333" "${IM_S3_BUCKET}" 2>&1 <<'PY' || true
+import os
+import sys
+
+import botocore.session
+from botocore.exceptions import ClientError
+
+client = botocore.session.Session().create_client(
+    "s3",
+    endpoint_url=sys.argv[1],
+    region_name="us-east-1",
+    aws_access_key_id=os.environ["IM_S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["IM_S3_SECRET_ACCESS_KEY"],
+)
+try:
+    client.head_bucket(Bucket=sys.argv[2])
+except ClientError as exc:
+    print(f"REFUSED {exc.response.get('ResponseMetadata', {}).get('HTTPStatusCode')}")
+    sys.exit(0)
+print("ACCEPTED")
+PY
+)"
+case "${SIGNED}" in
+  *ACCEPTED*) ;;
+  *REFUSED*) fail "the bucket ${IM_S3_BUCKET} refuses the lane's own keys (${SIGNED##*REFUSED }): the identity was not applied as configured." ;;
+  *) fail "could not ask the bucket ${IM_S3_BUCKET} with the lane's keys: ${SIGNED:-no output}" ;;
+esac
 
 TOKEN="$(curl -sf "${BASE_URL}/api/v1/auto_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')" \
   || fail "auto_login did not answer with a token."

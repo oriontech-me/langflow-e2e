@@ -7,9 +7,11 @@
  * the suite for a single GET.
  *
  * Scope is deliberately narrow: GET, an empty payload, path-style URLs, and the three
- * headers S3 needs (`host`, `x-amz-content-sha256`, `x-amz-date`). Anything else is
- * refused rather than signed wrongly, because a wrong signature reads as a refused key —
- * the very answer a wrong-key spec asserts.
+ * headers S3 needs (`host`, `x-amz-content-sha256`, `x-amz-date`). A path holding
+ * anything but unreserved characters, `/` and percent-escapes is refused, and so is a
+ * query with a literal `+`: the URL parser leaves the first unencoded where SigV4 wants
+ * it encoded, and decodes the second to a space, so both would be signed wrongly — and
+ * a wrong signature reads as a refused key, the very answer a wrong-key spec asserts.
  *
  * Pinned by s3-sigv4.test.ts against AWS's own worked example (GET Bucket, List Objects).
  */
@@ -41,14 +43,17 @@ export function amzDate(now: Date): string {
 }
 
 /**
- * The headers that sign a bodyless GET of `url` for S3. Pass them with the request as
- * they are; `host` is included because it is signed, and must match the URL's host.
+ * The headers that sign a bodyless GET of `url` for S3. `host` is returned because it is
+ * signed; a client that derives Host from the URL (Playwright, fetch) sends the same
+ * value, so it may drop it, and must not send a different one.
  */
 export function signS3Get(url: string, keys: S3Keys, options: { region?: string; now?: Date } = {}): Record<string, string> {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`not an http(s) URL: ${url}`);
   if (parsed.username || parsed.password) throw new Error("a URL carrying credentials is not signed");
   if (!keys.accessKeyId || !keys.secretAccessKey) throw new Error("both S3 keys are required to sign");
+  if (!/^[A-Za-z0-9\-._~/%]*$/.test(parsed.pathname)) throw new Error(`a path this signer would encode wrongly: ${parsed.pathname}`);
+  if (parsed.search.includes("+")) throw new Error(`a query with a literal "+", which would be signed as a space: ${parsed.search}`);
   const region = options.region ?? "us-east-1";
   const date = amzDate(options.now ?? new Date());
   const day = date.slice(0, 8);
@@ -58,8 +63,9 @@ export function signS3Get(url: string, keys: S3Keys, options: { region?: string;
     .sort(([a, av], [b, bv]) => (a === b ? (av < bv ? -1 : av > bv ? 1 : 0) : a < b ? -1 : 1))
     .map(([k, v]) => `${k}=${v}`)
     .join("&");
-  // The path is already percent-encoded by URL; S3 signs it as sent, without re-encoding.
-  const path = parsed.pathname || "/";
+  // Only unreserved characters, "/" and percent-escapes reach here (checked above), which
+  // is exactly the form SigV4 signs for S3, so the path is signed as sent.
+  const path = parsed.pathname;
 
   const headers: Record<string, string> = {
     host: parsed.host,
