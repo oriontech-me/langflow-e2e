@@ -120,19 +120,21 @@ born from:
 
 What upstream says (`release-1.14.0`, the line the nightly is cut from) points both ways:
 
-- **The trigger's own fields describe its machinery.**
+- **What the trigger's fields are defined and implemented to carry.**
   `design/dedicated-integrations-triggers/trigger-contract.md` defines `last_error` as the *"typed
   error code and sanitized message behind the trigger's state"*.
   `design/dedicated-integrations-triggers/frontend-surfaces.md` defines `reason: null` as *"a trigger
   running cleanly"* and `degraded` as *"`active`, but `last_error` reports a problem (for example a
   listener that cannot connect)"*. In the code, `trigger_reason` answers `degraded` on an `active`
   row only when `last_error` is set, and a failed flow run never writes it: `reconcile_dispatched`
-  marks the event `failed` and leaves the trigger row alone.
+  marks the event `failed` and leaves the trigger row alone. `last_error` is not limited to the
+  listener either: it is written on some event failures before a run, such as a policy block or a
+  source reconciliation failure. Only a failed flow run never writes it.
 - **The design also intends repeated failure to show on the trigger.**
   `design/dedicated-integrations-triggers/decisions/delivery-semantics.md`: *"A trigger whose events
   die repeatedly moves to `error` so the failure is visible on the trigger rather than only in the
   ledger."* Read literally, that covers events that reach `dead`, after exhausting `max_attempts` on a
-  failed submit or an expired lease. A failed flow run is `failed` after one attempt and never
+  retryable dispatch failure (for example a failed submit or an expired lease). A failed flow run is `failed` after one attempt and never
   reaches `dead`. So the rule's letter does not cover this case, while its intent does. The rule is
   not implemented either: `TriggerService.record_error` has no caller, and nothing moves a trigger
   to `error` when its events die. A black-box test cannot provoke `dead`, so that half cannot be
@@ -141,7 +143,9 @@ What upstream says (`release-1.14.0`, the line the nightly is cut from) points b
 What the owner sees (*Settings › Triggers*, same instance): the row reads a green **Active**, and the
 list's *Needs attention* toggle does not appear. `needsAttention`
 (`src/frontend/src/components/core/triggers/helpers/trigger-presentation.ts`) flags `pending` with the
-reason `config_invalid` and the states `needs_reconnect`, `error`, `dead` and `expired`. The failures
+reason `config_invalid` and the states `needs_reconnect`, `error`, `dead` and `expired`. It does not
+flag `active` with the reason `degraded` either, so writing `last_error` alone would not raise the
+toggle. The failures
 are in the row's *View events* drawer, which marks each event *Flow: Failed* / *"The run didn't
 complete. job_failed"*.
 
