@@ -38,7 +38,9 @@
 //
 //   - `process.env`, for names that end like a secret (`_KEY`, `_TOKEN`, `_SECRET`,
 //     `PASSWORD`, …);
-//   - each `--env-file`, with the same name rule (the VM lane reads the clone's `.env`);
+//   - each `--dotenv FILE`, with the same name rule (the VM lane reads the clone's
+//     `.env`). Not `--env-file`: Node 20 takes that flag for itself even when it comes
+//     after the script name, and exits 9 when the file is absent (measured, v20.20.2);
 //   - `--secrets-json-env NAME`: an environment variable holding a JSON object of
 //     name -> value, every entry taken whatever its name. On Actions this is
 //     `${{ toJSON(secrets) }}`, so a secret added later is covered with no edit here.
@@ -272,10 +274,10 @@ function parseArgs(argv) {
   const opts = { envFiles: [], jsonEnv: null, paths: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--env-file" || a === "--secrets-json-env") {
+    if (a === "--dotenv" || a === "--secrets-json-env") {
       const v = argv[++i];
       if (v === undefined) throw new Error(`${a} needs a value`);
-      if (a === "--env-file") opts.envFiles.push(v);
+      if (a === "--dotenv") opts.envFiles.push(v);
       else opts.jsonEnv = v;
     } else if (a.startsWith("--")) {
       throw new Error(`unknown option ${a}`);
@@ -293,7 +295,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     opts = parseArgs(argv);
   } catch (e) {
     log(`scrub-secrets: ${e.message}`);
-    log("usage: scrub-secrets.mjs [--env-file F]... [--secrets-json-env NAME] <path>...");
+    log("usage: scrub-secrets.mjs [--dotenv F]... [--secrets-json-env NAME] <path>...");
     return 2;
   }
   const envFiles = [];

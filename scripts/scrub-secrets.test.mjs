@@ -249,3 +249,23 @@ test("main: usage errors exit 2", async () => {
   assert.equal(await main(["--env-file"], {}, () => {}), 2);
   assert.equal(await main(["--nope", "x"], {}, () => {}), 2);
 });
+
+test("the CLI's dotenv flag reaches the script: Node 20 swallows --env-file", () => {
+  // Spawned for real, because the defect is in Node's own argument parsing and an
+  // in-process main() call cannot see it.
+  const { spawnSync } = require("node:child_process");
+  const dir = tmp();
+  try {
+    writeFileSync(join(dir, ".env"), `FOO_API_KEY=${KEY}\n`);
+    writeFileSync(join(dir, "r.json"), `x ${KEY} y`);
+    const script = new URL("./scrub-secrets.mjs", import.meta.url).pathname;
+    const r = spawnSync(process.execPath, [script, "--dotenv", join(dir, ".env"), "--dotenv", join(dir, "absent.env"), join(dir, "r.json")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(readFileSync(join(dir, "r.json"), "utf8"), `x ${redactionMarker("FOO_API_KEY")} y`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
