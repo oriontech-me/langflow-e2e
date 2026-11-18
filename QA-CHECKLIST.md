@@ -1870,7 +1870,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 855 `test()` calls carrying the `@stable` tag, distributed across 311 spec
+> 856 `test()` calls carrying the `@stable` tag, distributed across 311 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2088,6 +2088,7 @@
 - [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
+- [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
 - [x] the signing secret is answered once, never read back, and a rotation retires the old one at once while the address stays → `api-triggers-webhook-ingress.spec.ts`
 - [x] a signed delivery is accepted once, runs, and reaches the flow through event_payload → `api-triggers-webhook-ingress.spec.ts`
 - [x] every refusal answers the same 404, byte for byte, and writes no ledger row → `api-triggers-webhook-ingress.spec.ts`
