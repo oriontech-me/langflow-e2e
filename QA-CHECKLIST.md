@@ -1870,7 +1870,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 856 `test()` calls carrying the `@stable` tag, distributed across 311 spec
+> 857 `test()` calls carrying the `@stable` tag, distributed across 311 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2256,6 +2256,7 @@
 - [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
 - [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
 - [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
 - [x] a task id is invisible to another flow → `a2a-server-tasks-lifecycle.spec.ts`
