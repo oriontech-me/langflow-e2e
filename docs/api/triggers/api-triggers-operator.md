@@ -76,9 +76,10 @@ and a lookup that labels the Playground sessions a trigger started. The contract
   expression is required."* and `last_error_code: "invalid_cron"`. `paused_by_admin`: below.
   **The schedule type is load-bearing** (#2476): since upstream #16322 (`1.14.0.dev30`) the node's
   `schedule_type` defaults to `Weekly`, and the reconciler (`_apply_schedule_pick`) compiles the picker
-  fields for any of the five picker types and never reads `cron_expression` — measured on `1.14.0.dev31`,
+  fields for any of the five picker types and discards `cron_expression` — measured on `1.14.0.dev31`,
   the same node left on the default `Weekly` reconciles as a plain `pending` with `last_error: null`. The
-  stored cron is the schedule only when the type is `Custom (cron)`, empty, or absent. Builds before
+  stored cron is the schedule only when the type is `Custom (cron)`, empty, absent, or a value outside the
+  five picker types. Builds before
   `dev30` have no `schedule_type` field at all, so the spec sets it only when the catalog template carries
   it, and the floor stays `1.14.0.dev16`.
 - **Ordering.** Rows created in the same second share `created_at` (second precision), and the tie is
