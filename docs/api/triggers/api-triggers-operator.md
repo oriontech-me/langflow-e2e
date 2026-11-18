@@ -75,9 +75,12 @@ and a lookup that labels the Playground sessions a trigger started. The contract
   and whose `cron_expression` is `not a cron` reconciles into a `pending` row with `last_error` *"Invalid cron expression: a valid five-field cron
   expression is required."* and `last_error_code: "invalid_cron"`. `paused_by_admin`: below.
   **The schedule type is load-bearing** (#2476): since upstream #16322 (`1.14.0.dev30`) the node's
-  `schedule_type` defaults to `Weekly`, and the reconciler then compiles the picker fields and never reads
-  `cron_expression` — measured on `1.14.0.dev31`, the same node with no schedule type reconciles as a plain
-  `pending` with `last_error: null`. Only `Custom (cron)` makes the cron the schedule.
+  `schedule_type` defaults to `Weekly`, and the reconciler (`_apply_schedule_pick`) compiles the picker
+  fields for any of the five picker types and never reads `cron_expression` — measured on `1.14.0.dev31`,
+  the same node left on the default `Weekly` reconciles as a plain `pending` with `last_error: null`. The
+  stored cron is the schedule only when the type is `Custom (cron)`, empty, or absent. Builds before
+  `dev30` have no `schedule_type` field at all, so the spec sets it only when the catalog template carries
+  it, and the floor stays `1.14.0.dev16`.
 - **Ordering.** Rows created in the same second share `created_at` (second precision), and the tie is
   broken by `id desc`. The spec asserts the order the rule produces, never a creation order.
 - **Paging.** `limit=0` and `limit=201` → `422` (`greater_than_equal` / `less_than_equal` on
@@ -288,6 +291,8 @@ this file.
   `src/lfx/src/lfx/base/triggers/schedule.py` — the Schedule node's `schedule_type`, which decides whether
   `cron_expression` is read at all (`schedule_timing`, upstream #16322); the second file is on the
   `release-1.14.0` line only.
+- `src/backend/base/langflow/services/triggers/reconciliation.py` — `_apply_schedule_pick`, where the
+  reconciler reads the node's template values and calls `schedule_timing` on flow save.
 - `src/backend/base/langflow/services/database/models/trigger/schemas.py` — `TriggerRead`,
   `TriggerBulkRequest`, `TriggerBulkResult`, `TriggerSessionRead`.
 - `tests/helpers/triggers/trigger-api.ts`, `tests/helpers/integrations/connections-owner.ts`,
