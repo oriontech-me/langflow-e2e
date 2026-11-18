@@ -45,7 +45,7 @@ IM_DERIVED_IMAGE="${IM_DERIVED_IMAGE:-langflow-instance-migration:local}"
 
 # Pinned companion images. SeaweedFS rather than MinIO: MinIO stopped publishing
 # pullable images (minio/minio and quay.io/minio/minio both answer "not found"), and
-# upstream Langflow's own CI moved to this exact image and command for its S3 tests
+# upstream Langflow's own CI moved to this exact image for its S3 tests
 # (.github/workflows/ci.yml, "Start S3 server"). With no S3 config it accepts any
 # credentials.
 IM_PG_IMAGE="${IM_PG_IMAGE:-pgvector/pgvector:0.8.6-pg16}"
@@ -86,36 +86,42 @@ IM_SEED_KB_CHUNKS="${IM_SEED_KB_CHUNKS:-3}"
 # an EMPTY object, still answered `files: ok`. A small volume size and an explicit limit
 # make the capacity a property of this lane, not of the host's disk. Volumes are
 # append-only and not preallocated, so the limit costs no disk until data is written.
-# Not IM_ knobs on purpose: nothing a spec reads depends on them.
-IM_S3_SERVER_ARGS=(server -s3 -s3.port=8333 -master.volumeSizeLimitMB=64 -volume.max=50)
+# Deliberately not an IM_ default: nothing a spec reads depends on it, and the IM_
+# prefix promises an overridable NAME="${NAME:-value}" line the pin test parses.
+LANE_S3_SERVER_ARGS=(server -s3 -s3.port=8333 -master.volumeSizeLimitMB=64 -volume.max=50)
 
-# Writes a NON-empty object into the bucket and deletes it again, retrying up to $1
-# times one second apart. Prints nothing on success; on failure prints the last status
-# and the volume topology and returns 1. Through the filer (8888, inside the container),
-# not the S3 gateway: a filer write under /buckets/<bucket> lands in the bucket's own
-# collection, so it fails exactly as a PutObject does when that collection has no
-# volume (measured: 500 on both), and it needs no S3 credentials, so it keeps working
-# when the gateway refuses unsigned requests.
+# Writes a NON-empty object into the bucket and deletes it again, up to $1 attempts one
+# second apart, each bounded by curl/wget timeouts. Prints nothing on success; on
+# failure prints the last attempt's reason (with the volume topology) and returns 1.
+# Through the filer (8888, inside the container), not the S3 gateway: a filer write
+# under /buckets/<bucket> lands in the bucket's own collection, so it fails exactly as a
+# PutObject does when that collection has no volume (measured: 500 on both), and it
+# needs no S3 credentials, so it keeps working when the gateway refuses unsigned
+# requests.
 im_bucket_write_probe() {
-  local attempts="$1" out i
+  local attempts="$1" out="" i
   for i in $(seq 1 "${attempts}"); do
     if out="$(docker exec "${IM_S3_CONTAINER}" sh -c '
 url="http://127.0.0.1:8888/buckets/$1/.e2e-write-probe"
-put="$(printf "e2e write probe" | curl -s -o /dev/null -w "%{http_code}" -X PUT --data-binary @- "$url")"
+put="$(printf "e2e write probe" | curl -s -m 10 -o /dev/null -w "%{http_code}" -X PUT --data-binary @- "$url")"
 case "$put" in
   200 | 201) ;;
   *)
-    status="$(wget -qO- http://127.0.0.1:9333/dir/status 2>/dev/null | head -c 160)"
+    [ "$put" = "000" ] && put=""
+    status="$(wget -q -T 5 -O- http://127.0.0.1:9333/dir/status 2>/dev/null | head -c 160)"
     echo "a non-empty write answered ${put:-no response}; volume topology: ${status:-unreadable}"
     exit 1 ;;
 esac
-del="$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$url")"
-case "$del" in 200 | 202 | 204) ;; *) echo "the probe object could not be deleted (${del:-no response})"; exit 1 ;; esac
+del="$(curl -s -m 10 -o /dev/null -w "%{http_code}" -X DELETE "$url")"
+case "$del" in
+  200 | 202 | 204) ;;
+  *) [ "$del" = "000" ] && del=""; echo "the probe object could not be deleted (${del:-no response})"; exit 1 ;;
+esac
 ' sh "${IM_S3_BUCKET}" 2>&1)"; then
       return 0
     fi
     [ "${i}" -lt "${attempts}" ] && sleep 1
   done
-  printf '%s\n' "${out}"
+  printf '%s\n' "${out:-the probe printed nothing}"
   return 1
 }

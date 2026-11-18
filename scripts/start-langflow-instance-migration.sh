@@ -139,7 +139,7 @@ docker run -d \
   --name "${IM_S3_CONTAINER}" \
   --network "${IM_NETWORK}" \
   -p "127.0.0.1:${IM_S3_HOST_PORT}:8333" \
-  "${IM_S3_IMAGE}" "${IM_S3_SERVER_ARGS[@]}" > /dev/null
+  "${IM_S3_IMAGE}" "${LANE_S3_SERVER_ARGS[@]}" > /dev/null
 
 # Fake OAuth registrations, one per provider and Slack profile, as every lane
 # configures them (#2301). Canonical copy: scripts/lib/fake-oauth-registrations.json,
@@ -210,8 +210,9 @@ done
 # A bucket that exists is not a bucket that stores files (#2396): the destination test
 # writes an EMPTY object, which needs no volume, so a bucket with no writable volume
 # passes it and first fails at "Copy files" as "Can't write to the bucket", which reads
-# like a product error. Write a real object before calling the lane up. Retried for a
-# while because the volume server registers with the master a few seconds after start.
+# like a product error. Write a real object before calling the lane up. Up to 30
+# attempts a second apart, because the volume server registers with the master a few
+# seconds after it starts.
 PROBE_ERROR="$(im_bucket_write_probe 30)" \
   || fail "the bucket ${IM_S3_BUCKET} exists but cannot store a file: ${PROBE_ERROR} — see: docker logs ${IM_S3_CONTAINER}"
 

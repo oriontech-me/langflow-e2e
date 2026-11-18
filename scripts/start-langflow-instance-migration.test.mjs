@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, chmodSync, rmSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -51,10 +51,11 @@ case "$1" in
   exec)
     case "$args" in
       *"e2e-write-probe"*)
-        # FAKE_PROBE_FAILS: how many probe attempts fail before one succeeds.
-        n="$(cat "$FAKE_LOG.probes" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$FAKE_LOG.probes"
-        if [ "$n" -le "\${FAKE_PROBE_FAILS:-0}" ]; then echo "a non-empty write answered 500; volume topology: Max 5 Free 0"; exit 1; fi
-        exit 0 ;;
+        # Run the probe script itself — \$5 after "exec <container> sh -c" — with the
+        # container's curl and wget replaced by INNER_CURL/INNER_WGET below, so what the
+        # probe decides is under test, not only that it was called.
+        PATH="$FAKE_INNER_BIN:$PATH" sh -c "$5" sh "$7"
+        exit $? ;;
       *"weed shell"*)
         input="$(cat)"
         case "$input" in *"s3.bucket.create -name "*)
@@ -72,6 +73,31 @@ case "$1" in
     exit 0 ;;
 esac
 exit 0
+`;
+
+// The curl inside the SeaweedFS container, as the probe calls it. Logs the method and
+// the body it was given; FAKE_PROBE_FAILS is how many PUTs answer 500 before one
+// answers FAKE_FILER_PUT (201), and FAKE_FILER_DEL is the DELETE's answer (204).
+const INNER_CURL = `#!/usr/bin/env bash
+method=GET; body=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method="$2"; shift ;;
+    --data-binary) [ "$2" = "@-" ] && body="$(cat)"; shift ;;
+  esac
+  shift
+done
+printf '%s body=[%s]\\n' "$method" "$body" >> "$FAKE_INNER_LOG"
+case "$method" in
+  PUT)
+    n="$(cat "$FAKE_INNER_LOG.puts" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$FAKE_INNER_LOG.puts"
+    if [ "$n" -le "\${FAKE_PROBE_FAILS:-0}" ]; then printf 500; else printf '%s' "\${FAKE_FILER_PUT:-201}"; fi ;;
+  DELETE) printf '%s' "\${FAKE_FILER_DEL:-204}" ;;
+esac
+`;
+
+const INNER_WGET = `#!/usr/bin/env bash
+echo '{"Topology":{"Max":5,"Free":0}}'
 `;
 
 const CURL_STUB = `#!/usr/bin/env bash
@@ -101,6 +127,12 @@ function run(script, { env = {} } = {}) {
   writeFileSync(join(dir, "curl"), CURL_STUB);
   writeFileSync(join(dir, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   for (const f of ["docker", "curl", "sleep"]) chmodSync(join(dir, f), 0o755);
+  const inner = join(dir, "inner");
+  const innerLog = join(dir, "inner.log");
+  mkdirSync(inner);
+  writeFileSync(join(inner, "curl"), INNER_CURL);
+  writeFileSync(join(inner, "wget"), INNER_WGET);
+  for (const f of ["curl", "wget"]) chmodSync(join(inner, f), 0o755);
 
   let out = "";
   let status = 0;
@@ -116,6 +148,8 @@ function run(script, { env = {} } = {}) {
         PATH: `${dir}:${process.env.PATH}`,
         FAKE_LOG: log,
         FAKE_CURL_LOG: curlLog,
+        FAKE_INNER_BIN: inner,
+        FAKE_INNER_LOG: innerLog,
       },
     });
   } catch (err) {
@@ -131,8 +165,9 @@ function run(script, { env = {} } = {}) {
   };
   const calls = read(log);
   const curls = read(curlLog);
+  const filer = read(innerLog);
   rmSync(dir, { recursive: true, force: true });
-  return { out, status, calls, curls };
+  return { out, status, calls, curls, filer };
 }
 
 const runOf = (calls, name) => calls.find((c) => c.startsWith("run ") && c.includes(`--name ${name} `));
@@ -211,12 +246,14 @@ test("the bucket's capacity is fixed, not derived from the host's free disk (#23
 test("a start writes a real object into the bucket before it calls the lane up, and retries while the volume server registers", () => {
   const r = run(START, { env: { FAKE_PROBE_FAILS: "2" } });
   assert.equal(r.status, 0, r.out);
+  // Two refused writes, then one stored and deleted. The body is never empty: an empty
+  // object needs no volume, which is how the destination test reported ok over a bucket
+  // that could not store a file.
+  assert.deepEqual(r.filer, ["PUT body=[e2e write probe]", "PUT body=[e2e write probe]", "PUT body=[e2e write probe]", "DELETE body=[]"]);
   const probes = r.calls.filter((c) => c.includes("e2e-write-probe"));
-  assert.equal(probes.length, 3, "two failed attempts, then one that succeeded");
-  // Through the filer, under the bucket's path, with a non-empty body: an empty object
-  // needs no volume, which is how the destination test reported ok over a full bucket.
-  assert.match(probes[0], /exec langflow-instance-migration-s3 sh -c .*8888\/buckets\/\$1\/\.e2e-write-probe.*--data-binary .* sh langflow-migration$/);
-  assert.doesNotMatch(probes[0], /printf "" \|/);
+  assert.equal(probes.length, 3);
+  // Through the filer, under the bucket's own path, in the S3 container.
+  assert.match(probes[0], /^exec langflow-instance-migration-s3 sh -c .*http:\/\/127\.0\.0\.1:8888\/buckets\/\$1\/\.e2e-write-probe.* sh langflow-migration$/);
   const bucket = r.calls.findIndex((c) => c.startsWith("exec -i langflow-instance-migration-s3 weed shell"));
   assert.ok(bucket >= 0 && bucket < r.calls.indexOf(probes[0]), "probed before the bucket existed");
 });
@@ -224,9 +261,25 @@ test("a start writes a real object into the bucket before it calls the lane up, 
 test("a bucket that cannot store a file fails the start, naming the topology, before anything is seeded", () => {
   const r = run(START, { env: { FAKE_PROBE_FAILS: "999" } });
   assert.notEqual(r.status, 0);
-  assert.match(r.out, /bucket langflow-migration exists but cannot store a file: a non-empty write answered 500; volume topology: Max 5 Free 0/);
-  assert.equal(r.calls.filter((c) => c.includes("e2e-write-probe")).length, 30);
+  assert.match(r.out, /bucket langflow-migration exists but cannot store a file: a non-empty write answered 500; volume topology: \{"Topology":\{"Max":5,"Free":0\}\}/);
+  assert.equal(r.filer.filter((l) => l.startsWith("PUT ")).length, 30, "30 attempts on start");
   assert.ok(!r.curls.some((c) => c.includes("/api/v1/flows/")), "seeded after the probe failed");
+});
+
+test("the probe accepts only a stored write, and fails when its own object cannot be removed", () => {
+  for (const [env, said] of [
+    [{ FAKE_FILER_PUT: "000" }, /a non-empty write answered no response/],
+    [{ FAKE_FILER_PUT: "403" }, /a non-empty write answered 403/],
+    [{ FAKE_FILER_DEL: "404" }, /the probe object could not be deleted \(404\)/],
+  ]) {
+    const r = run(START, { env });
+    assert.notEqual(r.status, 0, JSON.stringify(env));
+    assert.match(r.out, said, JSON.stringify(env));
+  }
+  for (const code of ["200", "201"]) {
+    const r = run(START, { env: { FAKE_FILER_PUT: code } });
+    assert.equal(r.status, 0, `${code}: ${r.out}`);
+  }
 });
 
 test("LANGFLOW_BIND_HOST opts the source out of loopback, and the probe follows", () => {
@@ -310,6 +363,13 @@ test("a reset stops a live run before it removes the record and empties the targ
   assert.match(r.out, /Reset the instance migration lane/);
 });
 
+test("a reset whose bucket cannot store a file fails after three attempts, naming why", () => {
+  const r = run(RESET, { env: { FAKE_PROBE_FAILS: "999" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /bucket langflow-migration cannot store a file: a non-empty write answered 500/);
+  assert.equal(r.filer.filter((l) => l.startsWith("PUT ")).length, 3);
+});
+
 test("a reset with no new instance left running removes nothing but the migration's own state", () => {
   const r = run(RESET, { env: { FAKE_ABSENT: "langflow-instance-migration-target" } });
   assert.equal(r.status, 0, r.out);
@@ -326,7 +386,7 @@ test("a reset refuses a lane that is not running, and touches nothing", () => {
 
 test("a reset that left anything behind fails, naming what", () => {
   for (const [env, said] of [
-    [{ FAKE_PROBE_FAILS: "999" }, /cannot store a file: a non-empty write answered 500/],
+
     [{ FAKE_TABLES: "64" }, /still holds 64 table/],
     [{ FAKE_EXTENSION: "0" }, /vector extension is missing/],
     [{ FAKE_RECORD_LEFT: "1" }, /migration record is still there/],
