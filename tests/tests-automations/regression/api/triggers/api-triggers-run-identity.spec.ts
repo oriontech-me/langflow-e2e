@@ -277,7 +277,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
 
   test(
     "a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ playwright, request, apiCoverage }, testInfo) => {
       apiCoverage.declare([
         "POST /api/v1/connections",
@@ -374,7 +374,7 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
 
   test(
     "a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ playwright, request, apiCoverage }, testInfo) => {
       apiCoverage.declare([
         "POST /api/v1/connections",
