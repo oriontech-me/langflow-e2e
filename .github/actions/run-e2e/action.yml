@@ -119,7 +119,10 @@ runs:
       shell: bash
       env:
         SCRUB_SECRETS_JSON: ${{ inputs.secrets_json }}
-      run: node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON playwright-report results.json
+      # results.json first and on its own, so a crash on the report cannot leave it dirty.
+      run: |
+        node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON results.json
+        node scripts/scrub-secrets.mjs --require-secrets --secrets-json-env SCRUB_SECRETS_JSON playwright-report
 
     - name: Upload Playwright report
       if: always() && steps.scrub.outcome == 'success'

@@ -2579,10 +2579,20 @@ phase_merge() {
   #
   # The values come from the same place the shards got them: this clone's .env plus the
   # exported environment (see REQUIRE_PROVIDER_KEYS above for why there is no secrets
-  # store). The two paths are scrubbed separately because they fail differently:
-  # results.json is plain text and the evidence is zips, and only the evidence is
-  # withheld on a failure (phase_publish reads SCRUB_REPORT_OK), since a run without its
-  # results.json has no verdict at all.
+  # store). The two paths are scrubbed in separate runs, results.json FIRST: its
+  # consumers run whatever happens here (a run without its results.json has no verdict
+  # at all), so a crash while handling the much larger report must not leave it
+  # unscrubbed. Only the evidence is withheld on a failure (phase_publish reads
+  # SCRUB_REPORT_OK).
+  #
+  # No --require-secrets here, deliberately, unlike the Actions lanes: there the secrets
+  # JSON always carries the run's token, so an empty set is a wiring fault; here the
+  # scrubber reads the very sources the shards read their keys from, so "no secret
+  # known" means the shards had none to leak.
+  if [ -f "$RUN_DIR/results.json" ]; then
+    node scripts/scrub-secrets.mjs --dotenv "$REPO_DIR/.env" "$RUN_DIR/results.json" \
+      || err "secrets could not be removed from results.json — the history row, the payload and the umbrella are built from it. The scrubber's report is above this line."
+  fi
   SCRUB_REPORT_OK=false
   if [ -d "$RUN_DIR/playwright-report" ]; then
     if node scripts/scrub-secrets.mjs --dotenv "$REPO_DIR/.env" "$RUN_DIR/playwright-report"; then
@@ -2590,10 +2600,6 @@ phase_merge() {
     else
       err "secrets could not be removed from the HTML report — it will NOT be uploaded. The scrubber's report is above this line."
     fi
-  fi
-  if [ -f "$RUN_DIR/results.json" ]; then
-    node scripts/scrub-secrets.mjs --dotenv "$REPO_DIR/.env" "$RUN_DIR/results.json" \
-      || err "secrets could not be removed from results.json — the history row, the payload and the umbrella are built from it. The scrubber's report is above this line."
   fi
 
   # Guard 2 — does the report contain RESULTS? A valid, empty blob passes guard 1 and

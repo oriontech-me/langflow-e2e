@@ -1373,8 +1373,8 @@ jobs:
       # bodies, fill() text), and this repository is PUBLIC, so its artifacts are
       # downloadable by any GitHub account. Every value in `secrets` is removed before
       # anything is uploaded; an upload runs only when the scrub verified the files.
-      # toJSON(secrets) rather than a list of names, so a secret added later is
-      # covered with no edit here.
+      # toJSON(secrets) rather than a list, so a credential added later is covered
+      # with no edit here (the script keeps only the names that read as credentials).
       - name: Scrub secrets from the report and the test results
         id: scrub
         if: always()
