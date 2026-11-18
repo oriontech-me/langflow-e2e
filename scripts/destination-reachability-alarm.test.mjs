@@ -38,7 +38,7 @@ function look(
     reason ??
     {
       [UP]: "ports open",
-      [DOWN]: "no connection on port(s) 22 443",
+      [DOWN]: "no connection on port(s) 443",
       [UNKNOWN]: "could not tell",
     }[exitCode];
   writeFileSync(probe, `#!/bin/sh\necho '${text}'\nexit ${exitCode}\n`, {
@@ -87,7 +87,7 @@ test("the third consecutive down look posts once, and the fourth does not post a
   assert.match(third.posted, /cannot reach ghe\.example\.invalid/);
   assert.match(third.posted, /3 checks in a row/);
   assert.match(third.posted, /will not pull the suite or open its umbrella/);
-  assert.match(third.posted, /no connection on port\(s\) 22 443/);
+  assert.match(third.posted, /no connection on port\(s\) 443/);
   assert.equal(alerted(dir), true);
   const fourth = look(dir, DOWN);
   assert.equal(fourth.posted, "");
@@ -102,6 +102,71 @@ test("recovery after an announced outage posts once, and only then", () => {
   assert.match(back.posted, /reaches ghe\.example\.invalid again/);
   assert.equal(alerted(dir), false);
   assert.equal(look(dir, UP).posted, "");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const REFUSED = "ports open, but the credential was refused — [credential] HTTP 401";
+const markFile = (dir) => join(dir, "state", "destination-reachability.alerted");
+
+test("a change of cause during an announced outage posts once, each way (#2490)", () => {
+  const dir = makeTempDir("reach-cause");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "network");
+
+  const toCredential = look(dir, DOWN, { reason: REFUSED });
+  assert.match(toCredential.posted, /on the network again, but the credential was refused/);
+  assert.match(toCredential.posted, /HTTP 401/);
+  assert.match(toCredential.posted, /outage stays open/);
+  assert.equal(alerted(dir), true, "the outage must stay open");
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "credential");
+  assert.equal(look(dir, DOWN, { reason: REFUSED }).posted, "", "same cause, no second post");
+
+  const toNetwork = look(dir, DOWN);
+  assert.match(toNetwork.posted, /no longer reaches ghe\.example\.invalid on the network/);
+  assert.equal(look(dir, DOWN).posted, "");
+
+  const back = look(dir, UP);
+  assert.match(back.posted, /reaches ghe\.example\.invalid again/);
+  assert.equal(alerted(dir), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a Workflow Builder post names the credential case in its headline", () => {
+  const dir = makeTempDir("reach-cause-headline");
+  const hook = "https://hooks.slack.invalid/triggers/T/1/abc";
+  for (let i = 0; i < 3; i++) look(dir, DOWN, { webhook: hook });
+  const r = look(dir, DOWN, { webhook: hook, reason: REFUSED });
+  assert.equal(JSON.parse(r.posted).headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an undelivered change of cause is retried, and the mark keeps the old cause", () => {
+  const dir = makeTempDir("reach-cause-retry");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  const failed = look(dir, DOWN, { reason: REFUSED, httpStatus: "500" });
+  assert.match(failed.stdout, /not accepted/);
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "network");
+  assert.match(look(dir, DOWN, { reason: REFUSED }).posted, /credential was refused/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a mark written before #2490 has no cause: the next down look adopts it silently", () => {
+  const dir = makeTempDir("reach-cause-legacy");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  writeFileSync(markFile(dir), "1794447600\n");
+  const adopt = look(dir, DOWN);
+  assert.equal(adopt.posted, "");
+  assert.match(adopt.stdout, /recorded its cause \(network\)/);
+  assert.deepEqual(readFileSync(markFile(dir), "utf8").split("\n").slice(0, 2), ["1794447600", "network"]);
+  assert.match(look(dir, DOWN, { reason: REFUSED }).posted, /since 2026-11-12/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an announce look that opens an outage records its cause", () => {
+  const dir = makeTempDir("reach-cause-announce");
+  look(dir, DOWN, { announce: true, reason: REFUSED });
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "credential");
+  assert.equal(look(dir, DOWN, { reason: REFUSED }).posted, "");
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -350,6 +415,19 @@ test("real probe: open ports map the credential's answer — 0 up, 2 up, 3 down"
   } finally {
     listening.close();
   }
+});
+
+test("real probe: by default only 443 is probed, never 22 (#2490)", () => {
+  // 127.0.0.1 listens on neither port on a test machine, so the reason names every
+  // port that was probed. Before #2490 it read "22 443".
+  const dir = makeTempDir("reach-probe-default");
+  const r = look(dir, null, {
+    threshold: 1,
+    lane: LOCAL,
+    extraEnv: { PROBE_PORTS: "", PROBE_TIMEOUT: "3", CREDENTIAL_BIN: credStub(dir, 0) },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  assert.match(r.stdout, /\[reach\] down: no connection on port\(s\) 443$/m);
 });
 
 test("real probe: no ISSUE_HOST is unknown, not down", () => {

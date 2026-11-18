@@ -12,7 +12,10 @@ with a refused credential instead of a closed port.
 
 - **The hourly alarm** (`e2e-destination-reachability.timer`) posts
   *"QA VM cannot reach the destination"* after 3 failed checks in a row, about 3
-  hours into an outage. It posts once per outage and once on recovery.
+  hours into an outage. It posts once per outage and once on recovery. In between, it
+  posts once more if the cause changes: *"QA VM reaches the destination, but its
+  credential is refused"* means the network is back and only the VM's credential is
+  missing (see *Leaving temporary mode*).
 - **The pre-daily check** (`e2e-destination-reachability-announce.timer`, 07:30 UTC
   on weekdays) posts if the destination is down at that moment. While an outage
   lasts, this is its daily reminder.
@@ -45,10 +48,7 @@ by itself, which would happen with no umbrella to tell anyone. On the VM, as roo
 
 ```bash
 cd /root/e2e-qa
-# Saved once, to restore it later. Safe to paste again: a second run, or a second
-# outage, never overwrites the saved destination with the public URL.
-[ -s /root/e2e-qa.origin.before ] || git remote get-url origin > /root/e2e-qa.origin.before
-cat /root/e2e-qa.origin.before   # must be the destination, not github.com
+# Nothing to save: leaving rebuilds the destination's URL from /root/.e2e-lane.
 # Anonymous HTTPS: the VM's SSH key is not authorized here. No `.git` suffix (#2332).
 git remote set-url origin https://github.com/oriontech-me/langflow-e2e
 GIT_TERMINAL_PROMPT=0 git pull --ff-only
@@ -104,7 +104,7 @@ open a ticket with whoever administers the VM's network. Say:
 - **Since when:** the time of the first failed check, from the alarm's message or
   `~/.local/state/langflow-e2e/destination-reachability.history` on the VM.
 - **What fails:** the alarm's reason line (for example *"no connection on port(s)
-  22 443"*), and that it fails from the VM only. Check from your own machine before
+  443"*), and that it fails from the VM only. Check from your own machine before
   you say so.
 - **What still works:** other outbound hosts from the VM, such as `github.com`.
 - **What it costs:** the daily regression runs without its suite update and without
@@ -114,25 +114,41 @@ Link the ticket in the triage issue.
 
 ## Leaving temporary mode
 
-When the alarm posts *"QA VM reaches the destination again"*, undo step 2 before the
-next daily. On the VM, as root:
+Two things must be true, and the alarm tells them apart:
+
+- **The network is back.** The alarm posts either *"QA VM reaches the destination
+  again"* or *"QA VM reaches the destination, but its credential is refused"*.
+- **The VM has a credential that git over HTTPS and the API accept.** The destination
+  no longer takes SSH, and since 2026-11-17 a personal token lasts at most 7 days, so a
+  token on the VM is not a fix (#2490). The credential is a GitHub App's. The second
+  message above means this part is missing: stay in temporary mode until it is
+  installed.
+
+Then undo step 2 before the next daily. On the VM, as root:
 
 ```bash
 cd /root/e2e-qa
-before="$(cat /root/e2e-qa.origin.before)"
-case "$before" in
-  ''|*github.com/oriontech-me/*) echo "saved origin is '$before': not the destination, stop" ;;
-  *) git remote set-url origin "$before" \
-       && git pull --ff-only \
-       && systemctl try-restart e2e-on-demand-worker.service \
-       && rm /etc/systemd/system/e2e-daily.service.d/90-destination-unreachable.conf \
-       && systemctl daemon-reload \
-       && rm /root/e2e-qa.origin.before ;;
-esac
+. /root/.e2e-lane
+# HTTPS, built from the lane file. No `.git` suffix (#2332).
+dest="https://${ISSUE_HOST:-}/${ISSUE_REPO:-}"
+# Checked before origin moves: a failed check leaves the clone on this repository,
+# and the next daily still runs the current suite.
+if [ -z "${ISSUE_HOST:-}" ] || [ -z "${ISSUE_REPO:-}" ]; then
+  echo "ISSUE_HOST or ISSUE_REPO missing from /root/.e2e-lane: stop"
+elif ! GIT_TERMINAL_PROMPT=0 git ls-remote "$dest" HEAD >/dev/null; then
+  echo "git over HTTPS is refused: the credential is not in place, stay in temporary mode"
+else
+  git remote set-url origin "$dest" \
+    && GIT_TERMINAL_PROMPT=0 git pull --ff-only \
+    && systemctl try-restart e2e-on-demand-worker.service \
+    && rm /etc/systemd/system/e2e-daily.service.d/90-destination-unreachable.conf \
+    && systemctl daemon-reload \
+    && rm -f /root/e2e-qa.origin.before   # left by outages before #2490; holds an SSH URL
+fi
 ```
 
-If it stops, set origin by hand to the destination's SSH URL (the host is
-`ISSUE_HOST` and the repository is `ISSUE_REPO` in `/root/.e2e-lane`).
+Do not restore `/root/e2e-qa.origin.before` if it is there: it holds the SSH URL the
+destination no longer accepts.
 
 Then confirm that the next red day opens its umbrella by itself, and close the triage
 issue. Leave the alarm installed.

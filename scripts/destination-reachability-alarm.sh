@@ -24,6 +24,19 @@
 #                     an outage that began after 05:00 UTC would not reach THRESHOLD in
 #                     time. While an outage lasts this is also its daily reminder.
 #
+# ## When the cause changes (#2490)
+#
+# A down look has one of two causes: the NETWORK (no connection) or the CREDENTIAL
+# (ports open, credential refused). Both cost the daily the same, so both keep an
+# outage open, but they ask different people for different things. During an announced
+# outage, a change of cause posts once, with the new reason. The case that motivated it:
+# when the destination stopped accepting SSH and long-lived tokens (2026-11-17), the
+# VM's token died with the network still closed. Had the network come back first, the
+# alarm would have gone from "no connection" to "credential refused" in silence, and
+# nobody would have learned that the network was back and only the credential was
+# missing. The cause is the second line of the mark; a mark written before #2490 has
+# none, and the next down look adopts its cause without posting.
+#
 # THRESHOLD defaults to 3, measured rather than guessed: in 52 days of hourly mirror
 # looks (2026-09-21 → 2026-11-12, 1115 looks) the destination went unanswered three
 # times. Two lasted two looks and cleared by themselves (2026-10-10, 2026-11-06); the
@@ -33,7 +46,7 @@
 #
 # ## The three answers
 #
-#   up       both ports accept a connection and the credential is not refused.
+#   up       every probed port accepts a connection and the credential is not refused.
 #   down     a port refuses or times out, or the credential is refused (#2330's outage
 #            was a refused credential, not the network, and it cost the same umbrella).
 #   unknown  there was nothing to probe (no ISSUE_HOST). It neither extends nor
@@ -79,7 +92,10 @@ PROBE_BIN="${PROBE_BIN:-}"
 RUNBOOK_URL="${RUNBOOK_URL-https://github.com/oriontech-me/langflow-e2e/blob/main/ops/runbooks/destination-unreachable.md}"
 # The same, for the credential check inside the real probe (tests stub it).
 CREDENTIAL_BIN="${CREDENTIAL_BIN:-}"
-PROBE_PORTS="${PROBE_PORTS:-22 443}"
+# 443 only: since 2026-11-17 the destination accepts git over HTTPS only (#2490), so
+# HTTPS is both the pull and the API that opens the umbrella. Port 22 will not open
+# again, and requiring it would keep the alarm down forever.
+PROBE_PORTS="${PROBE_PORTS:-443}"
 
 for f in "$SECRETS_FILE" "$LANE_FILE"; do
   if [ -r "$f" ]; then
@@ -99,8 +115,6 @@ probe() {
     echo "no ISSUE_HOST in $LANE_FILE — nothing to probe"
     return 2
   fi
-  # Both ports by default, because they fail the daily in different places: 22 is the
-  # git pull (the clone's remote is ssh), 443 is the API that opens the umbrella.
   # A refusal, a timeout and a name that does not resolve all land here as "no
   # connection" — from the daily's side they cost the same.
   for port in $PROBE_PORTS; do
@@ -145,6 +159,16 @@ case "$rc" in
   *) state="unknown" ;;
 esac
 echo "[reach] $state: $reason"
+# Which of the two causes a down look has (see "When the cause changes"). The reason
+# text is the probe's own, so this keys on the one phrase only a credential refusal
+# writes.
+cause=""
+if [ "$state" = "down" ]; then
+  case "$reason" in
+    *"credential was refused"*) cause="credential" ;;
+    *)                          cause="network" ;;
+  esac
+fi
 
 mkdir -p "$STATE_DIR" "$(dirname "$HISTORY_FILE")" "$(dirname "$ALERT_FILE")" 2>/dev/null || true
 now="$(date +%s)"
@@ -199,9 +223,12 @@ host_name="${ISSUE_HOST:-the destination host}"
 # The start of an announced outage, from the mark: the history is trimmed to
 # HISTORY_DAYS, so for a long outage only the mark still knows when it began.
 announced_since=""
+announced_cause=""
 if [ -e "$ALERT_FILE" ]; then
   announced_since="$(head -1 "$ALERT_FILE" 2>/dev/null)"
   case "$announced_since" in ''|*[!0-9]*) announced_since="$now" ;; esac
+  announced_cause="$(sed -n 2p "$ALERT_FILE" 2>/dev/null)"
+  case "$announced_cause" in network|credential) ;; *) announced_cause="" ;; esac
 fi
 
 # One outage is one message down and one message back. A recovery that could not be
@@ -209,6 +236,7 @@ fi
 # delivered recovery is read as the same one: the channel never heard it end.
 message=""
 mark=""
+headline=""
 case "$ANNOUNCE:$state" in
   1:down)
     if [ -n "$announced_since" ]; then
@@ -225,16 +253,37 @@ case "$ANNOUNCE:$state" in
     exit 0
     ;;
   0:down)
-    if [ -n "$announced_since" ]; then
+    if [ -n "$announced_since" ] && [ -z "$announced_cause" ]; then
+      # A mark from before #2490 has no cause: adopt this look's, silently. The channel
+      # heard the outage under whatever reason it had; only a later change is news.
+      printf '%s\n%s\n' "$announced_since" "$cause" > "$ALERT_FILE" 2>/dev/null \
+        || echo "[reach] could not write $ALERT_FILE — the cause will be adopted at the next look."
+      echo "[reach] down for ${streak} look(s), already announced — recorded its cause (${cause}), not posting."
+      exit 0
+    fi
+    if [ -n "$announced_since" ] && [ "$cause" = "$announced_cause" ]; then
       echo "[reach] down for ${streak} look(s), already announced — not posting again."
       exit 0
     fi
+    if [ -n "$announced_since" ]; then
+      case "$cause" in
+        credential)
+          headline="QA VM reaches the destination, but its credential is refused"
+          message="The QA VM reaches ${host_name} on the network again, but the credential was refused: ${reason}. The outage stays open (since $(utc "$announced_since")): until the VM has a credential the destination accepts, the daily cannot pull or open its umbrella."
+          ;;
+        *)
+          message="The QA VM no longer reaches ${host_name} on the network: ${reason}. Until now the network answered and only the credential was refused. The outage stays open (since $(utc "$announced_since"))."
+          ;;
+      esac
+      mark="$announced_since"
+    else
     if [ "$streak" -lt "$THRESHOLD" ]; then
       echo "[reach] down for ${streak} of ${THRESHOLD} look(s) — not posting yet; a short blip clears by itself."
       exit 0
     fi
     message="The QA VM cannot reach ${host_name} since $(utc "$since") (${streak} checks in a row): ${reason}. If this lasts until the daily (08:00 UTC on weekdays), the daily will not pull the suite or open its umbrella. Seen from the VM only."
     mark="$since"
+    fi
     ;;
   0:up)
     if [ -z "$announced_since" ]; then
@@ -264,7 +313,7 @@ case "$SLACK_WEBHOOK_URL" in
 esac
 case "$state" in
   up) glyph="✅"; emoji=":white_check_mark:"; headline="QA VM reaches the destination again" ;;
-  *)  glyph="🚨"; emoji=":rotating_light:"; headline="QA VM cannot reach the destination" ;;
+  *)  glyph="🚨"; emoji=":rotating_light:"; headline="${headline:-QA VM cannot reach the destination}" ;;
 esac
 
 status="$(TRANSPORT="$transport" HEADLINE="$glyph $headline" BODY="$message" \
@@ -289,7 +338,9 @@ case "$status" in
     case "$mark" in
       clear) rm -f "$ALERT_FILE" 2>/dev/null ;;
       '')    : ;;
-      *)     printf '%s\n' "$mark" > "$ALERT_FILE" 2>/dev/null \
+      # The cause rides as the second line. An announce look on a fresh outage marks it
+      # too, with the cause it saw.
+      *)     printf '%s\n%s\n' "$mark" "$cause" > "$ALERT_FILE" 2>/dev/null \
                || echo "[reach] could not write $ALERT_FILE — the next look may post again." ;;
     esac
     ;;
