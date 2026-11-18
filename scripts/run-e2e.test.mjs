@@ -4570,3 +4570,91 @@ test("the platform record and the history row name the suite through one express
     assert.doesNotMatch(call, /SUITE_SHA="\$\(git /, `the ${name} call must not derive the commit itself`);
   }
 });
+
+// ---- #2486: secrets out of the merged report before anything reads it -------------
+
+const SCRUB_KEY = "SECRET-SCRUB-2486-provider-key-value";
+
+function mergeWithFakeReport(dir) {
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  writeFileSync(join(dir, "all-blobs", "shard-1.zip"), "");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  // merge-reports, faked: the report and results.json carry the key the way Playwright
+  // writes it (an error's call log printing the request header).
+  writeFileSync(
+    join(bin, "npx"),
+    [
+      "#!/usr/bin/env bash",
+      'mkdir -p "$PLAYWRIGHT_HTML_REPORT/data"',
+      `echo '<html>api-key: ${SCRUB_KEY}</html>' > "$PLAYWRIGHT_HTML_REPORT/index.html"`,
+      `echo '{"suites":[],"errors":[{"message":"api-key: ${SCRUB_KEY}"}],"stats":{"expected":1}}' > "$PLAYWRIGHT_JSON_OUTPUT_NAME"`,
+      "exit 0",
+    ].join("\n") + "\n",
+    { mode: 0o755 },
+  );
+  return sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0`,
+      "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
+      "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      "TARGET_VERSION_MATCH=yes",
+      "phase_merge",
+      'echo "SCRUB_REPORT_OK=$SCRUB_REPORT_OK"',
+    ].join("\n"),
+    { PATH: `${bin}:${process.env.PATH}`, PROVIDER_TEST_API_KEY: SCRUB_KEY },
+  );
+}
+
+test("phase_merge removes the provider keys from the report and results.json before anything reads them (#2486)", () => {
+  const dir = makeTempDir("scrub-merge-");
+  try {
+    const r = mergeWithFakeReport(dir);
+    const out = r.stdout + r.stderr;
+    assert.match(out, /SCRUB_REPORT_OK=true/, out);
+    const html = readFileSync(join(dir, "playwright-report", "index.html"), "utf8");
+    const results = readFileSync(join(dir, "results.json"), "utf8");
+    assert.ok(!html.includes(SCRUB_KEY), "the key is still in the HTML report");
+    assert.ok(!results.includes(SCRUB_KEY), "the key is still in results.json");
+    assert.match(results, /\[REDACTED:PROVIDER_TEST_API_KEY\]/);
+    assert.ok(!out.includes(SCRUB_KEY), "the log printed the value");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("phase_publish does not upload a report the scrub did not verify (#2486)", () => {
+  // Fail-closed in both directions the flag can be wrong: false (the scrub failed) and
+  // unset (it never ran, as when publish is reached without merge).
+  for (const flag of ["SCRUB_REPORT_OK=false", "unset SCRUB_REPORT_OK"]) {
+    const dir = makeTempDir("scrub-publish-");
+    try {
+      mkdirSync(join(dir, "logs"), { recursive: true });
+      mkdirSync(join(dir, "playwright-report"), { recursive: true });
+      writeFileSync(join(dir, "playwright-report", "index.html"), "<html></html>");
+      const r = sourced(
+        [
+          `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0`,
+          "RUN_EMPTY=true RUN_UNREADABLE=true",
+          flag,
+          "phase_publish",
+          'echo "REACHED_AFTER_PUBLISH"',
+        ].join("\n"),
+        {
+          POST_QA_PLATFORM: "1",
+          EVIDENCE_UPLOAD_BASE: "http://127.0.0.1:9/never",
+          KEEP_LEDGER: "0",
+          CREATE_ISSUE: "0",
+          NOTIFY_SLACK: "0",
+        },
+      );
+      const out = r.stdout + r.stderr;
+      assert.match(out, /REACHED_AFTER_PUBLISH/, `${flag}: publish must not abort\n${out}`);
+      assert.match(out, /not verified free of secrets — it is NOT uploaded/, `${flag}\n${out}`);
+      assert.doesNotMatch(out, /Uploading the evidence/, `${flag}: the upload ran anyway`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});

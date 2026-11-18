@@ -2569,6 +2569,33 @@ phase_merge() {
     tail -n 15 "$merge_log" >&2 || true
   fi
 
+  # Secrets out of the merged report, BEFORE anything reads it (#2486). Playwright
+  # redacts nothing: the report's traces carry every provider key a retried spec sent
+  # or typed, and results.json carries error messages that can print request headers
+  # (#2485). Everything downstream copies from these two: the evidence upload, the QA
+  # Platform payload, the umbrella body on the destination, and the history row this
+  # lane commits to the PUBLIC source repository. Scrubbing here covers all of them at
+  # once; scrubbing at each consumer would leave the next one uncovered.
+  #
+  # The values come from the same place the shards got them: this clone's .env plus the
+  # exported environment (see REQUIRE_PROVIDER_KEYS above for why there is no secrets
+  # store). The two paths are scrubbed separately because they fail differently:
+  # results.json is plain text and the evidence is zips, and only the evidence is
+  # withheld on a failure (phase_publish reads SCRUB_REPORT_OK), since a run without its
+  # results.json has no verdict at all.
+  SCRUB_REPORT_OK=false
+  if [ -d "$RUN_DIR/playwright-report" ]; then
+    if node scripts/scrub-secrets.mjs --dotenv "$REPO_DIR/.env" "$RUN_DIR/playwright-report"; then
+      SCRUB_REPORT_OK=true
+    else
+      err "secrets could not be removed from the HTML report — it will NOT be uploaded. The scrubber's report is above this line."
+    fi
+  fi
+  if [ -f "$RUN_DIR/results.json" ]; then
+    node scripts/scrub-secrets.mjs --dotenv "$REPO_DIR/.env" "$RUN_DIR/results.json" \
+      || err "secrets could not be removed from results.json — the history row, the payload and the umbrella are built from it. The scrubber's report is above this line."
+  fi
+
   # Guard 2 — does the report contain RESULTS? A valid, empty blob passes guard 1 and
   # reaches triage looking benign (#1012). It also answers for a merge that failed
   # outright: no results.json is "unreadable", never green.
@@ -3345,7 +3372,10 @@ phase_publish() {
   # Gated on the same switch as the POST: with no record to attach it to, a report in
   # the bucket is 31 MB nothing references.
   if [ "$POST_QA_PLATFORM" = "1" ] && [ -n "${EVIDENCE_UPLOAD_BASE:-}" ]; then
-    if [ -d "$RUN_DIR/playwright-report" ]; then
+    if [ "${SCRUB_REPORT_OK:-false}" != "true" ] && [ -d "$RUN_DIR/playwright-report" ]; then
+      # Fail-closed: an unset flag means the scrub never ran, which is not "clean" (#2486).
+      warn "the HTML report was not verified free of secrets — it is NOT uploaded, so the run record's report link will not resolve. See the scrub lines in phase_merge."
+    elif [ -d "$RUN_DIR/playwright-report" ]; then
       log "Uploading the evidence"
       node scripts/upload-evidence.mjs \
         --dir "$RUN_DIR/playwright-report" \
