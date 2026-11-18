@@ -139,7 +139,7 @@ for i in $(seq 1 24); do
       exit 1 ;;
     *)
       INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
-      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${INSPECT_ERROR:-${RUNNING:-no answer}}" >&2
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running (answer: '${RUNNING}'): ${INSPECT_ERROR:-no error output}" >&2
       exit 1 ;;
   esac
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
@@ -176,6 +176,10 @@ for i in $(seq 1 24); do
       echo "  then pick a free port (this does not touch the other process):"
       echo "    LANGFLOW_SERVING_PORT=<free> ./scripts/start-langflow-serving-identity.sh"
       exit 1
+    fi
+    if [ -z "${CONTAINER_VERSION}" ] || [ -z "${HTTP_VERSION}" ]; then
+      echo "WARNING: could not compare the container's langflow version ('${CONTAINER_VERSION}') with the"
+      echo "         version localhost:${PORT} answers ('${HTTP_VERSION}'), so a shadowed port is not ruled out."
     fi
 
     # Read the settings back OUT of the process, never trust the -e flags: an

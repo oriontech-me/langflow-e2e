@@ -548,7 +548,7 @@ test("a version answer with no version field warns and does not refuse", () => {
 test("a liveness check docker cannot answer is named as such, not as a container that exited", () => {
   const r = runScript({ running: "error" });
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /could not ask docker whether langflow-e2e-runner is running: Cannot connect to the Docker daemon/);
+  assert.match(r.stdout, /could not ask docker whether langflow-e2e-runner is running \(answer: ''\): Cannot connect to the Docker daemon/);
   assert.doesNotMatch(r.stdout, /exited during startup/);
 });
 

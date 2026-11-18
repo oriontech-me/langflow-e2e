@@ -56,7 +56,7 @@ function run(path, { portHeld = false, dies = false, inspect = "", env = {} } = 
       [ "$FAKE_DIES" = "1" ] && echo false || echo true
     fi ;;
   image) [ "$2" = "inspect" ] && echo abc123 ;;
-  exec) echo "\${FAKE_CONTAINER_VERSION:-0.0.0-test}" ;;
+  exec) [ "$FAKE_EXEC_FAILS" = "1" ] && exit 126; echo "\${FAKE_CONTAINER_VERSION:-0.0.0-test}" ;;
 esac
 exit 0`,
   );
@@ -181,7 +181,7 @@ test("the container scripts name a liveness check docker cannot answer, and star
   for (const path of [SERVING, ENTERPRISE]) {
     const failed = run(path, { inspect: "error" });
     assert.equal(failed.status, 1, failed.out);
-    assert.match(failed.out, /could not ask docker whether .* is running: Cannot connect to the Docker daemon/);
+    assert.match(failed.out, /could not ask docker whether .* is running \(answer: ''\): Cannot connect to the Docker daemon/);
     assert.doesNotMatch(failed.out, /exited during startup/);
     const noisy = run(path, { inspect: "noisy" });
     assert.equal(noisy.status, 0, noisy.out);
@@ -195,4 +195,12 @@ test("start-langflow-serving-identity.sh compares the version field, so a releas
   assert.match(shadowed.out, /SHADOWED/);
   const same = run(SERVING, { env: { FAKE_CONTAINER_VERSION: "1.14.0.dev31", FAKE_HTTP_BODY: body } });
   assert.equal(same.status, 0, same.out);
+});
+
+test("start-langflow-serving-identity.sh survives a container it cannot ask its version, and says so", () => {
+  // Under pipefail a failed `docker exec | tr` with no `|| true` aborted the script
+  // right after "Langflow ready", with no message.
+  const r = run(SERVING, { env: { FAKE_EXEC_FAILS: "1" } });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /WARNING: could not compare the container's langflow version/);
 });

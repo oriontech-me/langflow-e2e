@@ -244,7 +244,7 @@ for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
       exit 1 ;;
     *)
       INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
-      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${INSPECT_ERROR:-${RUNNING:-no answer}}" >&2
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running (answer: '${RUNNING}'): ${INSPECT_ERROR:-no error output}" >&2
       exit 1 ;;
   esac
   if curl -sf "http://${PROBE_HOST}:${PORT}/health_check" > /dev/null 2>&1; then
@@ -261,9 +261,10 @@ for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
     # so a release container would match a dev or rc build of the same base. This tells
     # apart two instances whose versions differ. Two of the SAME version it cannot: the
     # pre-launch guard rules out one that was already answering, and what remains is a
-    # same-version process binding the port during the boot, which is narrow. An unreadable side warns rather
-    # than refuses: nightlies up to 1.10 shipped as the `langflow-nightly` distribution,
-    # so asking for `langflow` finds nothing there, and that is not a reason to refuse.
+    # same-version process binding the port during the boot, which is narrow. An
+    # unreadable side warns rather than refuses: nightlies up to 1.10 shipped as the
+    # `langflow-nightly` distribution, so asking for `langflow` finds nothing there, and
+    # that is not a reason to refuse.
     HTTP_VERSION="$(printf '%s' "${VERSION}" \
       | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
     CONTAINER_VERSION="$(docker exec "${CONTAINER_NAME}" \

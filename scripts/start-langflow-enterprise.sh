@@ -328,7 +328,7 @@ for _ in $(seq 1 60); do
       exit 1 ;;
     *)
       INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
-      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running: ${INSPECT_ERROR:-${RUNNING:-no answer}}" >&2
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running (answer: '${RUNNING}'): ${INSPECT_ERROR:-no error output}" >&2
       exit 1 ;;
   esac
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
