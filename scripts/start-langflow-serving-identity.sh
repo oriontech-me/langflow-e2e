@@ -76,6 +76,20 @@ DEFAULT_OAUTH_REGISTRATIONS='{"e2e-google":{"provider":"google","client_id":"e2e
 # instance and its database get destroyed. This script cannot do that.
 docker rm -f "${CONTAINER_NAME}" > /dev/null 2>&1 || true
 
+# --- Refuse to start on top of something already answering (#2087) ----------------
+# The readiness loop below asks the PORT, and whatever holds it answers /health_check,
+# so a failed start would be reported as a healthy one of somebody else's instance.
+# Our own container is already gone (removed just above), so anything that answers
+# now is not ours. Same guard, same wording, as start-langflow-source.sh.
+if curl -sf -m 5 "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
+  echo "ERROR: something already answers /health_check on localhost:${PORT}." >&2
+  echo "Refusing to start: this script cannot tell that instance from the one it would" >&2
+  echo "launch, so a failed bind would be reported as a healthy start and the run would" >&2
+  echo "silently exercise the wrong build. Free the port, or pick another with LANGFLOW_SERVING_PORT." >&2
+  echo "Find it with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN   (or: docker ps)" >&2
+  exit 2
+fi
+
 # Warn, don't refuse — the ceiling is the VM's, not this script's, and a bigger
 # host runs several fine. Same trade as start-langflow-enterprise.sh.
 SIBLINGS="$(docker ps --filter 'name=langflow-' --format '{{.Names}}' \
@@ -112,6 +126,13 @@ docker run -d \
 
 echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do
+  # The container must still be running on every poll (#2087): one that died on
+  # startup is not slow, and waiting out the deadline mis-reports it as a timeout.
+  if [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)" != "true" ]; then
+    echo "ERROR: the container ${CONTAINER_NAME} is not running — it exited during startup." >&2
+    docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
+    exit 1
+  fi
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s"
     VERSION="$(curl -sf "http://localhost:${PORT}/api/v1/version" 2>/dev/null || true)"

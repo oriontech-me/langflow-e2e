@@ -134,6 +134,22 @@ DEFAULT_OAUTH_REGISTRATIONS='{"e2e-google":{"provider":"google","client_id":"e2e
 # Remove any previous container
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
+# --- Refuse to start on top of something already answering (#2087) ----------------
+# The readiness loop below asks the PORT, and a port carries no identity: whatever
+# holds it answers /health_check. Measured 2026-09-28: the nightly asked for here
+# died on startup (ENOSPC), an unrelated local Langflow held the port, and this script
+# printed "Langflow ready after 5s / Running: …1.12.3" — a release build it never
+# launched. Our own container is already gone (removed just above), so anything that
+# answers now is somebody else's. Same guard, same wording, as start-langflow-source.sh.
+if curl -sf -m 5 "http://${PROBE_HOST}:${PORT}/health_check" > /dev/null 2>&1; then
+  echo "ERROR: something already answers /health_check on ${PROBE_HOST}:${PORT}." >&2
+  echo "Refusing to start: this script cannot tell that instance from the one it would" >&2
+  echo "launch, so a failed bind would be reported as a healthy start and the run would" >&2
+  echo "silently exercise the wrong build. Free the port, or pick another with LANGFLOW_PORT." >&2
+  echo "Find it with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN   (or: docker ps)" >&2
+  exit 2
+fi
+
 # LANGFLOW_DEACTIVATE_TRACING=true below is a DECISION, not an oversight: a local
 # instance writes no traces, so the token recorder (scripts/watch-tokens.mjs) cannot
 # see developer spend at all. Local spend is out of scope for
@@ -214,6 +230,14 @@ docker run -d \
 
 echo "Waiting for Langflow to be ready (up to ${READY_TIMEOUT_S}s)..."
 for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
+  # The container must still be running on every poll (#2087). One that died on
+  # startup is not slow: waiting out the deadline mis-reports it as a timeout, and
+  # anything that took the port meanwhile would be reported as this container.
+  if [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)" != "true" ]; then
+    echo "ERROR: the container ${CONTAINER_NAME} is not running — it exited during startup." >&2
+    docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
+    exit 1
+  fi
   if curl -sf "http://${PROBE_HOST}:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s"
     # Report the build that actually came up. The image tag alone does not say
@@ -221,6 +245,24 @@ for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
     # version, not the tag.
     VERSION="$(curl -sf "http://${PROBE_HOST}:${PORT}/api/v1/version" 2>/dev/null || true)"
     [ -n "${VERSION}" ] && echo "Running: ${VERSION}"
+    # And that it is THIS container's build (#2087): what answers over HTTP against
+    # what the container itself has installed. The only reading that tells apart two
+    # instances of the same channel, where the "package" string does not differ. An
+    # unreadable side is a warning, not a verdict: an image that ships the package
+    # under another name must not be refused for it.
+    CONTAINER_VERSION="$(docker exec "${CONTAINER_NAME}" \
+      python -c "import importlib.metadata as m; print(m.version('langflow'))" 2>/dev/null \
+      | tr -d '[:space:]' || true)"
+    if [ -z "${CONTAINER_VERSION}" ] || [ -z "${VERSION}" ]; then
+      echo "WARNING: could not compare the container's langflow version ('${CONTAINER_VERSION}') with what"
+      echo "         ${PROBE_HOST}:${PORT} answers ('${VERSION}'). Confirm the version above before trusting a run."
+    elif ! printf '%s' "${VERSION}" | grep -qF "\"${CONTAINER_VERSION}\""; then
+      echo "ERROR: ${PROBE_HOST}:${PORT} is not this container." >&2
+      echo "  the container ${CONTAINER_NAME} runs langflow ${CONTAINER_VERSION}" >&2
+      echo "  ${PROBE_HOST}:${PORT} answers ${VERSION}" >&2
+      echo "  Another process is answering on this port. Find it with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN" >&2
+      exit 1
+    fi
     exit 0
   fi
   echo "  Waiting... ($((i * 5))s)"

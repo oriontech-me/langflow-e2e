@@ -10,6 +10,20 @@ TARGET="${1:-${LANGFLOW_VERSION:-langflow}}"
 PORT="${LANGFLOW_PORT:-7860}"
 PID_FILE="/tmp/langflow-e2e.pid"
 
+# --- Refuse to start on top of something already answering (#2087) ----------------
+# The readiness loop below asks the PORT, and whatever holds it answers /health_check,
+# so a failed bind against another instance would be reported as a healthy start of
+# the build this script installed. Checked before the install, so a refusal costs
+# nothing. Same guard, same wording, as start-langflow-source.sh.
+if curl -sf -m 5 "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
+  echo "ERROR: something already answers /health_check on localhost:${PORT}." >&2
+  echo "Refusing to start: this script cannot tell that instance from the one it would" >&2
+  echo "launch, so a failed bind would be reported as a healthy start and the run would" >&2
+  echo "silently exercise the wrong build. Free the port, or pick another with LANGFLOW_PORT." >&2
+  echo "Find it with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN" >&2
+  exit 2
+fi
+
 echo "Installing Langflow: ${TARGET}..."
 if [[ "${TARGET}" == git+* ]] || [[ "${TARGET}" == *"github.com"* ]]; then
   pip install "${TARGET}" --quiet
@@ -71,10 +85,20 @@ LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-~/.cache/l
 # holding the full in-memory state, which exhausts memory on a constrained dev
 # box and gets a worker SIGKILLed mid-build (ERR_EMPTY_RESPONSE / node run never
 # completes — see #773). Override with LANGFLOW_WORKERS on a beefier machine.
-echo $! > "${PID_FILE}"
+SERVER_PID=$!
+echo "${SERVER_PID}" > "${PID_FILE}"
 
 echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do
+  # The process must still be alive on every poll (#2087). One that died on startup
+  # (a bind failure, a broken install) is not slow, and waiting out the deadline would
+  # mis-report it as a timeout.
+  if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+    wait "${SERVER_PID}" 2>/dev/null && CODE=0 || CODE=$?
+    echo "ERROR: langflow run (PID ${SERVER_PID}) exited during startup with status ${CODE}." >&2
+    rm -f "${PID_FILE}"
+    exit 1
+  fi
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s (PID: $(cat ${PID_FILE}))"
     exit 0

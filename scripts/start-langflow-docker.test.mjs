@@ -39,10 +39,25 @@ const STOP_SCRIPT = fileURLToPath(new URL("./stop-langflow-docker.sh", import.me
  * `rm -f` exits 0 in every state, as docker 29 does for a missing container
  * (#2090) — so only the inspect can tell the stopper what happened.
  */
-function runScript({ args = [], env = {}, pullFails = false, localCopy = true, healthy = true, container = "present", script = SCRIPT } = {}) {
+function runScript({
+  args = [],
+  env = {},
+  pullFails = false,
+  localCopy = true,
+  healthy = true,
+  container = "present",
+  script = SCRIPT,
+  portHeld = false,
+  running = "true",
+  containerVersion = "0.0.0-test",
+  httpVersion = "0.0.0-test",
+} = {}) {
   const dir = makeTempDir("start-langflow-test-");
   const log = join(dir, "docker.log");
   const curlLog = join(dir, "curl.log");
+  // Written by the docker stub's `run`: the health probe answers only after it, unless
+  // something else already holds the port (`portHeld`), which is what #2087 is about.
+  const started = join(dir, "started");
 
   writeFileSync(
     join(dir, "docker"),
@@ -62,6 +77,9 @@ case "$1" in
       esac
     fi ;;
   rm) echo "$3" ;;
+  run) : > "${started}" ;;
+  inspect) echo "\${FAKE_RUNNING}" ;;
+  exec) echo "\${FAKE_CONTAINER_VERSION}" ;;
 esac
 exit 0
 `,
@@ -71,7 +89,8 @@ exit 0
     healthy
       ? `#!/usr/bin/env bash
 echo "$*" >> "${curlLog}"
-echo '{"version":"0.0.0-test"}'
+[ -e "${started}" ] || [ "\${FAKE_PORT_HELD}" = "1" ] || exit 7
+echo "{\\"version\\":\\"\${FAKE_HTTP_VERSION}\\",\\"package\\":\\"Langflow\\"}"
 exit 0
 `
       : `#!/usr/bin/env bash
@@ -97,6 +116,10 @@ exit 7
         FAKE_PULL_FAILS: pullFails ? "1" : "0",
         FAKE_LOCAL_COPY: localCopy ? "1" : "0",
         FAKE_CONTAINER: container,
+        FAKE_PORT_HELD: portHeld ? "1" : "0",
+        FAKE_RUNNING: running,
+        FAKE_CONTAINER_VERSION: containerVersion,
+        FAKE_HTTP_VERSION: httpVersion,
       },
     });
   } catch (err) {
@@ -270,7 +293,12 @@ test("LANGFLOW_CONTAINER_NAME names the container, so shards do not remove each 
 test("the port is published as before unless a bind host is given", () => {
   const r0 = runScript();
   assert.match(runCallOf(r0), / -p 7860:7860 /);
-  assert.deepEqual(r0.urls, ["http://localhost:7860/health_check", "http://localhost:7860/api/v1/version"]);
+  // The pre-launch guard asks first (#2087), then the readiness loop.
+  assert.deepEqual(r0.urls, [
+    "http://localhost:7860/health_check",
+    "http://localhost:7860/health_check",
+    "http://localhost:7860/api/v1/version",
+  ]);
   const r = runScript({ env: { LANGFLOW_BIND_HOST: "127.0.0.1", LANGFLOW_PORT: "7870" } });
   assert.match(runCallOf(r), / -p 127\.0\.0\.1:7870:7870 /);
 });
@@ -313,7 +341,11 @@ test("readiness asks the address the port is published on", () => {
   // would wait out the whole budget and the start would fail (#2086 review).
   const r = runScript({ env: { LANGFLOW_BIND_HOST: "10.23.12.107", LANGFLOW_PORT: "7870" } });
   assert.match(runCallOf(r), / -p 10\.23\.12\.107:7870:7870 /);
-  assert.deepEqual(r.urls, ["http://10.23.12.107:7870/health_check", "http://10.23.12.107:7870/api/v1/version"]);
+  assert.deepEqual(r.urls, [
+    "http://10.23.12.107:7870/health_check",
+    "http://10.23.12.107:7870/health_check",
+    "http://10.23.12.107:7870/api/v1/version",
+  ]);
 });
 
 test("a wildcard bind is published as given and still probed on localhost", () => {
@@ -417,4 +449,59 @@ test("stop that cannot ask docker fails naming why, never as 'no container'", ()
     assert.doesNotMatch(r.stdout, /No container to stop|Container stopped/, container);
     assert.ok(!r.calls.some((c) => c.startsWith("rm ")), `${container}: nothing may be removed blind`);
   }
+});
+
+// --- #2087: a healthy start is THIS container's, never whatever holds the port ------
+
+test("something already answering on the port refuses the start before any container is run (#2087)", () => {
+  // The measured case: an unrelated local Langflow held the port, and the script
+  // reported a healthy start of a release build it never launched.
+  const r = runScript({ portHeld: true, env: { LANGFLOW_PORT: "7870" } });
+  assert.equal(r.status, 2);
+  assert.match(r.stdout, /something already answers \/health_check on localhost:7870/);
+  assert.match(r.stdout, /Free the port, or pick another with LANGFLOW_PORT/);
+  assert.equal(runCallOf(r), undefined, "no container may start on an occupied port");
+  assert.doesNotMatch(r.stdout, /Langflow ready/);
+  // Only after its own container is gone: that one is replaced, not refused.
+  assert.ok(r.calls.includes("rm -f langflow-e2e-runner"));
+});
+
+test("the pre-launch probe asks the published address, as the readiness loop does", () => {
+  const r = runScript({ portHeld: true, env: { LANGFLOW_BIND_HOST: "10.23.12.107", LANGFLOW_PORT: "7870" } });
+  assert.equal(r.status, 2);
+  assert.deepEqual(r.urls, ["http://10.23.12.107:7870/health_check"]);
+});
+
+test("a container that exits during startup fails fast, naming it, instead of waiting out the budget (#2087)", () => {
+  const r = runScript({ running: "false", env: { LANGFLOW_CONTAINER_NAME: "lf-7872" } });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /the container lf-7872 is not running — it exited during startup/);
+  assert.ok(r.calls.includes("logs --tail 40 lf-7872"), "its own logs are printed");
+  assert.doesNotMatch(r.stdout, /Waiting\.\.\./, "a dead container is not slow");
+  assert.doesNotMatch(r.stdout, /Langflow ready/);
+});
+
+test("a port answered by a different build than the container runs fails the start (#2087)", () => {
+  // Two instances of the same channel differ only in version; the "package" string
+  // the measured case happened to expose would not tell them apart.
+  const r = runScript({ containerVersion: "1.14.0.dev31", httpVersion: "1.14.0.dev30" });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /localhost:7860 is not this container/);
+  assert.match(r.stdout, /runs langflow 1\.14\.0\.dev31/);
+  assert.match(r.stdout, /answers .*1\.14\.0\.dev30/);
+});
+
+test("the version comparison is exact, not a prefix: dev3 is not dev31", () => {
+  const r = runScript({ containerVersion: "1.14.0.dev3", httpVersion: "1.14.0.dev31" });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /is not this container/);
+  const same = runScript({ containerVersion: "1.14.0.dev31", httpVersion: "1.14.0.dev31" });
+  assert.equal(same.status, 0, same.stdout);
+});
+
+test("a container version that cannot be read warns and does not refuse", () => {
+  // An image shipping the package under another name must not be refused for it.
+  const r = runScript({ containerVersion: "" });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /WARNING: could not compare the container's langflow version/);
 });
