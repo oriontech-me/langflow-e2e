@@ -309,7 +309,7 @@ test.describe("Triggers — the operator API", () => {
 
   test(
     "computes each trigger's actions on the server, by state and by kind",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -414,10 +414,24 @@ test.describe("Triggers — the operator API", () => {
 
       await test.step("config_invalid: a canvas Schedule with an invalid cron reconciles into a pending row that says so", async () => {
         const catalog = await fetchComponentCatalog(request, ownerHeaders());
+        // `schedule_type: "Custom (cron)"` is what makes the server read
+        // `cron_expression` at all: since upstream #16322 (1.14.0.dev30) the
+        // template defaults to "Weekly" and the reconciler compiles the picker
+        // fields instead, so an invalid cron with no schedule type is ignored and
+        // the row reconciles as a plain `pending` (#2476).
         const flowId = await createCatalogFlow(
           request,
           catalog,
-          { nodes: [{ id: "ScheduleTrigger-bad01", type: "ScheduleTrigger", values: { cron_expression: "not a cron" } }], edges: [] },
+          {
+            nodes: [
+              {
+                id: "ScheduleTrigger-bad01",
+                type: "ScheduleTrigger",
+                values: { schedule_type: "Custom (cron)", cron_expression: "not a cron" },
+              },
+            ],
+            edges: [],
+          },
           { name: `E2E operator invalid cron ${run}`, headers: ownerHeaders() },
         );
         let rows: TriggerRead[] = [];

@@ -2,13 +2,14 @@
 
 **File:** `tests/tests-automations/regression/api/triggers/api-triggers-operator.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev29`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev31`)
 
 Owning issue: #2448 (the 1.14 triggers and connectors batch). The page that renders this API is
 `docs/core-functionality/integrations/triggers-settings-page.md`, from the same issue. The trigger
 lifecycle (CRUD, the state machine, flow-save reconciliation) is #2303's, the failing-run state is #2328's,
 and the audit rows these actions write are #2451's. This file asserts what TRG-7 (upstream LE-2485,
 API #15786) added on top of them. #2464 added the declared-failing pin for LE-3454 (test 3, step 6).
+#2476 set the Schedule node's `schedule_type` after upstream #16322 made it decide whether the cron is read.
 
 ---
 
@@ -70,9 +71,13 @@ and a lookup that labels the Playground sessions a trigger started. The contract
 - **The three reasons a state alone does not give.** `degraded`: an active `e2e.event` trigger sent a
   `POST …/test` is deferred by the dispatcher as `provider-unavailable` (no bundle serves that kind), which
   writes `last_error: "provider-unavailable"` and leaves the state `active` — measured within 5 s.
-  `config_invalid`: a flow saved with a `ScheduleTrigger` node whose `cron_expression` is `not a cron`
-  reconciles into a `pending` row with `last_error` *"Invalid cron expression: a valid five-field cron
+  `config_invalid`: a flow saved with a `ScheduleTrigger` node whose `schedule_type` is `Custom (cron)`
+  and whose `cron_expression` is `not a cron` reconciles into a `pending` row with `last_error` *"Invalid cron expression: a valid five-field cron
   expression is required."* and `last_error_code: "invalid_cron"`. `paused_by_admin`: below.
+  **The schedule type is load-bearing** (#2476): since upstream #16322 (`1.14.0.dev30`) the node's
+  `schedule_type` defaults to `Weekly`, and the reconciler then compiles the picker fields and never reads
+  `cron_expression` — measured on `1.14.0.dev31`, the same node with no schedule type reconciles as a plain
+  `pending` with `last_error: null`. Only `Custom (cron)` makes the cron the schedule.
 - **Ordering.** Rows created in the same second share `created_at` (second precision), and the tie is
   broken by `id desc`. The spec asserts the order the rule produces, never a creation order.
 - **Paging.** `limit=0` and `limit=201` → `422` (`greater_than_equal` / `less_than_equal` on
@@ -196,7 +201,7 @@ triggers with it.
 3. `degraded`: `POST …/test` on the active `e2e.event`, then poll its `GET` until `last_error` is set →
    `state: "active"`, `reason: "degraded"`, `last_error: "provider-unavailable"`.
 4. `config_invalid`: create a flow (`buildCatalogFlow`) holding a `ScheduleTrigger` whose
-   `cron_expression` is `not a cron`; its reconciled row reads `pending`, `config_invalid`,
+   `schedule_type` is `Custom (cron)` and whose `cron_expression` is `not a cron`; its reconciled row reads `pending`, `config_invalid`,
    `last_error_code: "invalid_cron"`.
 5. `POST …/enable` on that row answers `409`
    `{"detail": {"code": "invalid_cron", "message": "Invalid cron expression: a valid five-field cron expression is required."}}`,
@@ -279,6 +284,10 @@ this file.
 - `src/backend/base/langflow/services/triggers/service.py` — `enable`, `disable` and `admin_pause`.
 - `src/backend/base/langflow/services/triggers/dispatcher.py` — the `provider-unavailable` deferral
   behind `degraded`.
+- `src/lfx/src/lfx/components/triggers/schedule_trigger.py` and
+  `src/lfx/src/lfx/base/triggers/schedule.py` — the Schedule node's `schedule_type`, which decides whether
+  `cron_expression` is read at all (`schedule_timing`, upstream #16322); the second file is on the
+  `release-1.14.0` line only.
 - `src/backend/base/langflow/services/database/models/trigger/schemas.py` — `TriggerRead`,
   `TriggerBulkRequest`, `TriggerBulkResult`, `TriggerSessionRead`.
 - `tests/helpers/triggers/trigger-api.ts`, `tests/helpers/integrations/connections-owner.ts`,
