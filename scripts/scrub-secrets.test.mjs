@@ -76,16 +76,18 @@ async function deepText(buf) {
   return seen.join("\n");
 }
 
-test("collectSecrets: takes secret-named env vars, every JSON entry, and skips short values", () => {
+test("collectSecrets: takes secret-named values from every source, and skips configuration and short values", () => {
   const { secrets, tooShort } = collectSecrets({
     env: { OPENAI_API_KEY: KEY, PLAYWRIGHT_BASE_URL: "http://localhost:7860/", SHORT_TOKEN: "abc" },
     envFiles: [{ ANTHROPIC_API_KEY: TOKEN }],
-    json: { ODD_NAME: "a-secret-with-no-secret-name" },
+    json: { github_token: "ghs_0123456789abcdef", AZURE_AI_FOUNDRY_TEST_DEPLOYMENT: "gpt-4.1-mini" },
   });
   const names = secrets.map((s) => s.name);
   assert.ok(names.includes("OPENAI_API_KEY"));
   assert.ok(names.includes("ANTHROPIC_API_KEY"));
-  assert.ok(names.includes("ODD_NAME"), "a JSON entry is taken whatever its name");
+  assert.ok(names.includes("github_token"), "a JSON entry named like a credential is taken");
+  // A deployment name that is also a model id would be replaced inside test titles.
+  assert.ok(!names.includes("AZURE_AI_FOUNDRY_TEST_DEPLOYMENT"), "configuration kept as a secret is not scrubbed");
   assert.ok(!names.includes("PLAYWRIGHT_BASE_URL"), "a URL is not a secret by name");
   assert.deepEqual(tooShort, ["SHORT_TOKEN"]);
   assert.ok("abc".length < MIN_SECRET_LENGTH);
@@ -93,7 +95,45 @@ test("collectSecrets: takes secret-named env vars, every JSON entry, and skips s
 
 test("collectSecrets: adds the percent-encoded form and sorts longest first", () => {
   const { secrets } = collectSecrets({ env: { X_KEY: "abc/def+ghi=jkl" } });
-  assert.deepEqual(secrets.map((s) => s.value), ["abc%2Fdef%2Bghi%3Djkl", "abc/def+ghi=jkl"]);
+  const values = secrets.map((s) => s.value);
+  assert.ok(values.includes("abc%2Fdef%2Bghi%3Djkl") && values.includes("abc/def+ghi=jkl"));
+  for (let i = 1; i < values.length; i++) assert.ok(values[i - 1].length >= values[i].length, "longest first");
+});
+
+test("a value stored as base64, at any byte alignment, is overwritten and the base64 still decodes", async () => {
+  // `?` and `>` encode to `/` and `+`, so the URL-safe alphabet differs from the standard
+  // one here; with a plain alphanumeric key the two are identical and one goes untested.
+  const B64KEY = "SECRET-b64-???>>>~~~-2486";
+  const SECRETS = collectSecrets({ env: { FOO_API_KEY: B64KEY } }).secrets;
+  for (const prefix of ["", "x", "xy", "xyz"]) {
+    for (const urlSafe of [false, true]) {
+      let b64 = Buffer.from(`${prefix}api-key: ${B64KEY}\n`).toString("base64");
+      assert.match(b64, urlSafe ? /[+/]/ : /./, "the fixture must exercise the alphabet difference");
+      if (urlSafe) b64 = b64.replace(/\+/g, "-").replace(/\//g, "_");
+      // The shape Playwright writes for an inline attachment body in results.json.
+      const json = JSON.stringify({ attachments: [{ name: "log", contentType: "text/plain", body: b64 }] });
+      const stats = newStats();
+      const r = await scrubBuffer(Buffer.from(json), SECRETS, stats);
+      assert.equal(r.changed, true, `prefix=${JSON.stringify(prefix)} urlSafe=${urlSafe}`);
+      const body = JSON.parse(r.data.toString()).attachments[0].body;
+      const decoded = Buffer.from(urlSafe ? body.replace(/-/g, "+").replace(/_/g, "/") : body, "base64").toString("latin1");
+      assert.ok(!decoded.includes(B64KEY), `prefix=${JSON.stringify(prefix)} urlSafe=${urlSafe}: the key survives decoding`);
+      assert.ok(decoded.startsWith(prefix), "the bytes before the value are intact");
+      assert.ok(stats.counts.FOO_API_KEY >= 1);
+    }
+  }
+});
+
+test("a secret saved with surrounding whitespace is matched without it", async () => {
+  const { secrets } = collectSecrets({ json: { PADDED_API_KEY: `${KEY}\n` } });
+  const r = await scrubBuffer(Buffer.from(`Bearer ${KEY}"`), secrets, newStats());
+  assert.equal(r.data.toString(), `Bearer ${redactionMarker("PADDED_API_KEY")}"`);
+});
+
+test("parseEnvFile reads a value the way dotenv does", () => {
+  // dotenv ends an unquoted value at `#`; a parser that kept `abc#def` would search for a
+  // value the shards never sent.
+  assert.equal(parseEnvFile("A_KEY=abcdefghijklmn#def\n").A_KEY, "abcdefghijklmn");
 });
 
 test("parseEnvFile: quotes, export, comments", () => {
@@ -195,13 +235,13 @@ test("main: scrubs a directory in place and exits 0", async () => {
   }
 });
 
-test("main: reads every value from the JSON variable whatever its name", async () => {
+test("main: reads the credentials from the JSON variable", async () => {
   const dir = tmp();
   try {
     writeFileSync(join(dir, "r.json"), `x ${KEY} y`);
-    const code = await main(["--secrets-json-env", "ALL", dir], { ALL: JSON.stringify({ WHATEVER: KEY }) }, () => {});
+    const code = await main(["--secrets-json-env", "ALL", dir], { ALL: JSON.stringify({ SOME_NEW_API_KEY: KEY }) }, () => {});
     assert.equal(code, 0);
-    assert.equal(readFileSync(join(dir, "r.json"), "utf8"), `x ${redactionMarker("WHATEVER")} y`);
+    assert.equal(readFileSync(join(dir, "r.json"), "utf8"), `x ${redactionMarker("SOME_NEW_API_KEY")} y`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -278,6 +318,28 @@ test("main: --require-secrets fails when no secret value reached the step", asyn
     assert.equal(await main(["--require-secrets", "--secrets-json-env", "ALL", dir], { ALL: "{}" }, () => {}), 1);
     assert.equal(await main(["--secrets-json-env", "ALL", dir], { ALL: "{}" }, () => {}), 0, "without the flag, nothing known is not a failure");
     assert.equal(await main(["--require-secrets", "--secrets-json-env", "ALL", dir], { ALL: JSON.stringify({ github_token: KEY }) }, () => {}), 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the CLI runs when its path has a space or is a symlink, instead of exiting 0 having done nothing", () => {
+  const { spawnSync } = require("node:child_process");
+  const { symlinkSync } = require("node:fs");
+  const dir = tmp();
+  try {
+    const spaced = join(dir, "sp ace");
+    mkdirSync(spaced);
+    const link = join(spaced, "scrub-secrets.mjs");
+    symlinkSync(new URL("./scrub-secrets.mjs", import.meta.url).pathname, link);
+    writeFileSync(join(dir, "r.json"), `x ${KEY} y`);
+    const r = spawnSync(process.execPath, [link, "--require-secrets", join(dir, "r.json")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, FOO_API_KEY: KEY },
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /scrub-secrets: 1 file\(s\) read/, "main() did not run");
+    assert.equal(readFileSync(join(dir, "r.json"), "utf8"), `x ${redactionMarker("FOO_API_KEY")} y`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

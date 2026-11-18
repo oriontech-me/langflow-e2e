@@ -27,8 +27,9 @@
 //
 // ## What it reads
 //
-// Every file under the paths given, recursively. A zip (a trace, a blob report, the
-// report's attachments) is opened and its entries scrubbed, nested zips included, then
+// Every file under the paths given, recursively, in the order given: a caller that
+// passes results.json first gets it rewritten even if a later file crashes the run. A
+// zip (a trace, a blob report, the report's attachments) is opened and its entries scrubbed, nested zips included, then
 // written back. The HTML report's `index.html` embeds its data as a base64 zip, which is
 // decoded, scrubbed and re-encoded. Any other file without a NUL byte is treated as text.
 // A binary file (a screenshot, a video) is left alone and counted: a key typed into a
@@ -42,8 +43,20 @@
 //     `.env`). Not `--env-file`: Node 20 takes that flag for itself even when it comes
 //     after the script name, and exits 9 when the file is absent (measured, v20.20.2);
 //   - `--secrets-json-env NAME`: an environment variable holding a JSON object of
-//     name -> value, every entry taken whatever its name. On Actions this is
-//     `${{ toJSON(secrets) }}`, so a secret added later is covered with no edit here.
+//     name -> value. On Actions this is `${{ toJSON(secrets) }}`, so a credential added
+//     later is covered with no edit here. The same name rule applies: the repository
+//     also keeps configuration as secrets (an Azure deployment name, an endpoint, a
+//     project id), and a deployment name that is also a model id would otherwise be
+//     replaced inside test titles and parameters, which the history and the @stable
+//     auto-removal match on.
+//
+// Each value is searched in four forms: as given, trimmed (a secret saved with a
+// trailing newline reaches the report without it, because the helpers trim), percent-
+// encoded (a query string, a form body), and base64 at each of the three byte
+// alignments, standard and URL-safe. Playwright stores an inline attachment body and a
+// Buffer written to stdout as base64 in results.json and in the blob's report.jsonl.
+// A base64 hit is overwritten with a run of `A` of the same length, so the surrounding
+// base64 still decodes, to zero bytes where the value was.
 //
 // A value shorter than MIN_SECRET_LENGTH is not scrubbed and is named in the report:
 // replacing a short common string would corrupt the artifact, and a credential that
@@ -59,8 +72,9 @@
 // any value is still present, or when a zip could not be read (its content could not be
 // checked, so it cannot be called clean). The caller must not publish on exit 1. Exit 2
 // is a usage error. The report names secrets by their variable NAME, never by value.
-import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -75,19 +89,25 @@ export function redactionMarker(name) {
   return `[REDACTED:${name}]`;
 }
 
-/** Parse a dotenv file: KEY=VALUE lines, optional `export`, optional quotes, `#` comments. */
+/**
+ * Parse a dotenv file with `dotenv` itself: the shards get their keys from
+ * `playwright.config.ts`'s `dotenv.config()`, and a parser that disagreed with it about
+ * a value (an unquoted `#`, say) would search for a value the shards never sent.
+ */
 export function parseEnvFile(text) {
-  const out = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!m) continue;
-    let value = m[2];
-    const quoted = /^(['"])(.*)\1$/.exec(value);
-    if (quoted) value = quoted[2];
-    else value = value.replace(/\s+#.*$/, "").trim();
-    out[m[1]] = value;
+  return require("dotenv").parse(text);
+}
+
+/** The base64 text that encodes `value` at byte offset k (0..2), with only the
+ * characters that depend on `value` alone, so it matches wherever the value sits. */
+function base64Cores(value) {
+  const bytes = Buffer.from(value, "utf8");
+  const out = [];
+  for (let k = 0; k < 3; k++) {
+    const b64 = Buffer.concat([Buffer.alloc(k), bytes]).toString("base64");
+    const start = [0, 2, 3][k];
+    const end = Math.floor(((k + bytes.length) * 8) / 6);
+    out.push(b64.slice(start, end));
   }
   return out;
 }
@@ -107,18 +127,29 @@ export function collectSecrets({ env = {}, envFiles = [], json = {} } = {}) {
     }
     if (!byValue.has(value)) byValue.set(value, name);
   };
-  for (const [name, value] of Object.entries(json)) add(name, value);
-  for (const vars of [env, ...envFiles]) {
+  for (const vars of [json, env, ...envFiles]) {
     for (const [name, value] of Object.entries(vars)) {
       if (SECRET_NAME.test(name)) add(name, value);
     }
   }
   const secrets = [];
+  const seen = new Set();
+  const push = (name, value, replacement) => {
+    if (value.length === 0 || seen.has(value)) return;
+    seen.add(value);
+    secrets.push({ name, value, replacement });
+  };
   for (const [value, name] of byValue) {
-    secrets.push({ name, value });
-    // A value in a URL query string or a form body is written percent-encoded.
-    const encoded = encodeURIComponent(value);
-    if (encoded !== value && !byValue.has(encoded)) secrets.push({ name, value: encoded });
+    const marker = redactionMarker(name);
+    for (const form of new Set([value, value.trim()])) {
+      push(name, form, marker);
+      // A value in a URL query string or a form body is written percent-encoded.
+      push(name, encodeURIComponent(form), marker);
+      for (const core of base64Cores(form)) {
+        push(name, core, "A".repeat(core.length));
+        push(name, core.replace(/\+/g, "-").replace(/\//g, "_"), "A".repeat(core.length));
+      }
+    }
   }
   secrets.sort((a, b) => b.value.length - a.value.length);
   return { secrets, tooShort: [...tooShort].sort() };
@@ -134,11 +165,11 @@ function isBinary(buf) {
 
 function replaceText(text, secrets, counts) {
   let out = text;
-  for (const { name, value } of secrets) {
+  for (const { name, value, replacement } of secrets) {
     if (!out.includes(value)) continue;
     const parts = out.split(value);
     counts[name] = (counts[name] ?? 0) + parts.length - 1;
-    out = parts.join(redactionMarker(name));
+    out = parts.join(replacement ?? redactionMarker(name));
   }
   return out;
 }
@@ -359,7 +390,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
   return failed ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not a template: import.meta.url is percent-encoded, so a path with a
+// space made the two differ, main() never ran, and the caller read exit 0 as verified.
+// realpath too, since Node resolves a symlinked entry point to its target.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().then((code) => {
     process.exitCode = code;
   });
