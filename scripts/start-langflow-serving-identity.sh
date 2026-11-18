@@ -76,6 +76,20 @@ DEFAULT_OAUTH_REGISTRATIONS='{"e2e-google":{"provider":"google","client_id":"e2e
 # instance and its database get destroyed. This script cannot do that.
 docker rm -f "${CONTAINER_NAME}" > /dev/null 2>&1 || true
 
+# --- Refuse to start on top of something already answering (#2087) ----------------
+# The readiness loop below asks the PORT, and whatever holds it answers /health_check,
+# so a failed start would be reported as a healthy one of somebody else's instance.
+# Our own container is already gone (removed just above), so anything that answers
+# now is not ours. Same guard, same wording, as start-langflow-source.sh.
+if curl -sf -m 5 "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
+  echo "ERROR: something already answers /health_check on localhost:${PORT}." >&2
+  echo "Refusing to start: this script cannot tell that instance from the one it would" >&2
+  echo "launch, so a failed bind would be reported as a healthy start and the run would" >&2
+  echo "silently exercise the wrong build. Free the port, or pick another with LANGFLOW_SERVING_PORT." >&2
+  echo "Find it with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN   (or: docker ps)" >&2
+  exit 2
+fi
+
 # Warn, don't refuse — the ceiling is the VM's, not this script's, and a bigger
 # host runs several fine. Same trade as start-langflow-enterprise.sh.
 SIBLINGS="$(docker ps --filter 'name=langflow-' --format '{{.Names}}' \
@@ -112,6 +126,22 @@ docker run -d \
 
 echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do
+  # The container must still be running on every poll (#2087): one that died on
+  # startup is not slow, and waiting out the deadline mis-reports it as a timeout.
+  # stdout only: a docker wrapper or CLI may warn on stderr beside a healthy `true`
+  # (podman-docker does on every call). stderr is read again only to name a failure.
+  RUNNING="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+  case "${RUNNING}" in
+    true) ;;
+    false)
+      echo "ERROR: the container ${CONTAINER_NAME} is not running — it exited during startup." >&2
+      docker logs --tail 40 "${CONTAINER_NAME}" >&2 2>&1 || true
+      exit 1 ;;
+    *)
+      INSPECT_ERROR="$(docker container inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>&1 > /dev/null || true)"
+      echo "ERROR: could not ask docker whether ${CONTAINER_NAME} is running (answer: '${RUNNING}'): ${INSPECT_ERROR:-no error output}" >&2
+      exit 1 ;;
+  esac
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s"
     VERSION="$(curl -sf "http://localhost:${PORT}/api/v1/version" 2>/dev/null || true)"
@@ -124,11 +154,17 @@ for i in $(seq 1 24); do
     # every request goes to somebody else's Langflow. The tell is that the two
     # readings disagree: what answers over HTTP versus what the container itself
     # reports. Compare them, because each alone looks healthy.
+    # The `version` field, compared for equality (#2087): searching the whole body also
+    # matched `main_version`, so a 1.14.0 container accepted a 1.14.0.dev31 answer, and
+    # the unescaped dots matched any character. `|| true`: under pipefail a failed exec
+    # would otherwise abort the script with no message.
+    HTTP_VERSION="$(printf '%s' "${VERSION}" \
+      | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
     CONTAINER_VERSION="$(docker exec "${CONTAINER_NAME}" \
       python -c "import json,importlib.metadata as m; print(m.version('langflow'))" 2>/dev/null \
-      | tr -d '[:space:]')"
-    if [ -n "${CONTAINER_VERSION}" ] && [ -n "${VERSION}" ] \
-       && ! printf '%s' "${VERSION}" | grep -q "${CONTAINER_VERSION}"; then
+      | tr -d '[:space:]' || true)"
+    if [ -n "${CONTAINER_VERSION}" ] && [ -n "${HTTP_VERSION}" ] \
+       && [ "${HTTP_VERSION}" != "${CONTAINER_VERSION}" ]; then
       echo
       echo "ERROR: port ${PORT} is SHADOWED — localhost:${PORT} is not this container."
       echo "  the container runs langflow ${CONTAINER_VERSION}"
@@ -140,6 +176,10 @@ for i in $(seq 1 24); do
       echo "  then pick a free port (this does not touch the other process):"
       echo "    LANGFLOW_SERVING_PORT=<free> ./scripts/start-langflow-serving-identity.sh"
       exit 1
+    fi
+    if [ -z "${CONTAINER_VERSION}" ] || [ -z "${HTTP_VERSION}" ]; then
+      echo "WARNING: could not compare the container's langflow version ('${CONTAINER_VERSION}') with the"
+      echo "         version localhost:${PORT} answers ('${HTTP_VERSION}'), so a shadowed port is not ruled out."
     fi
 
     # Read the settings back OUT of the process, never trust the -e flags: an
