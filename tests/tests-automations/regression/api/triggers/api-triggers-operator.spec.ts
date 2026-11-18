@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { createCatalogFlow, fetchComponentCatalog } from "../../../../helpers/flows/build-catalog-flow";
+import { createCatalogFlow, fetchComponentCatalog, findCatalogComponent } from "../../../../helpers/flows/build-catalog-flow";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
@@ -309,7 +309,7 @@ test.describe("Triggers — the operator API", () => {
 
   test(
     "computes each trigger's actions on the server, by state and by kind",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -414,10 +414,30 @@ test.describe("Triggers — the operator API", () => {
 
       await test.step("config_invalid: a canvas Schedule with an invalid cron reconciles into a pending row that says so", async () => {
         const catalog = await fetchComponentCatalog(request, ownerHeaders());
+        // `schedule_type: "Custom (cron)"` is what makes the server read
+        // `cron_expression`: since upstream #16322 (1.14.0.dev30) the template
+        // defaults to "Weekly", and the reconciler compiles the picker fields
+        // instead, so with the default type the invalid cron is never read and the
+        // row reconciles as a plain `pending` (#2476). Before dev30 the template has
+        // no `schedule_type` and the cron is the schedule, so the field is set only
+        // where it exists — this file's floor is OPERATOR_SINCE, not dev30.
+        const picker =
+          "schedule_type" in findCatalogComponent(catalog, "ScheduleTrigger").template
+            ? { schedule_type: "Custom (cron)" }
+            : {};
         const flowId = await createCatalogFlow(
           request,
           catalog,
-          { nodes: [{ id: "ScheduleTrigger-bad01", type: "ScheduleTrigger", values: { cron_expression: "not a cron" } }], edges: [] },
+          {
+            nodes: [
+              {
+                id: "ScheduleTrigger-bad01",
+                type: "ScheduleTrigger",
+                values: { ...picker, cron_expression: "not a cron" },
+              },
+            ],
+            edges: [],
+          },
           { name: `E2E operator invalid cron ${run}`, headers: ownerHeaders() },
         );
         let rows: TriggerRead[] = [];
