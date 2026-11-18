@@ -51,6 +51,10 @@
 //
 // ## Failure
 //
+// `--require-secrets` turns "no secret is known" into exit 1. The Actions lanes pass it:
+// there `toJSON(secrets)` always carries the run's token, so an empty set is a wiring
+// fault, and a clean exit over it would certify artifacts nobody checked.
+//
 // After writing, every file is read again and searched for every value. Exit 1 when
 // any value is still present, or when a zip could not be read (its content could not be
 // checked, so it cannot be called clean). The caller must not publish on exit 1. Exit 2
@@ -271,7 +275,7 @@ export async function scrubPaths(paths, secrets) {
 }
 
 function parseArgs(argv) {
-  const opts = { envFiles: [], jsonEnv: null, paths: [] };
+  const opts = { envFiles: [], jsonEnv: null, requireSecrets: false, paths: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dotenv" || a === "--secrets-json-env") {
@@ -279,6 +283,8 @@ function parseArgs(argv) {
       if (v === undefined) throw new Error(`${a} needs a value`);
       if (a === "--dotenv") opts.envFiles.push(v);
       else opts.jsonEnv = v;
+    } else if (a === "--require-secrets") {
+      opts.requireSecrets = true;
     } else if (a.startsWith("--")) {
       throw new Error(`unknown option ${a}`);
     } else {
@@ -295,7 +301,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     opts = parseArgs(argv);
   } catch (e) {
     log(`scrub-secrets: ${e.message}`);
-    log("usage: scrub-secrets.mjs [--dotenv F]... [--secrets-json-env NAME] <path>...");
+    log("usage: scrub-secrets.mjs [--dotenv F]... [--secrets-json-env NAME] [--require-secrets] <path>...");
     return 2;
   }
   const envFiles = [];
@@ -324,6 +330,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
   if (tooShort.length) log(`scrub-secrets: not scrubbed, shorter than ${MIN_SECRET_LENGTH} characters: ${tooShort.join(", ")}`);
   if (secrets.length === 0) {
     log("scrub-secrets: nothing to remove — no secret is known to this step, so nothing was checked");
+    // On Actions the JSON always carries at least the run's own token, so an empty set
+    // there means the wiring dropped it, not that there is nothing to hide.
+    if (opts.requireSecrets) {
+      log("scrub-secrets: FAILED — --require-secrets was given and no secret value reached this step");
+      return 1;
+    }
     return 0;
   }
   const stats = await scrubPaths(opts.paths, secrets);

@@ -1,9 +1,9 @@
 // Unit tests for scrub-secrets.mjs (#2486). Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 import { createRequire } from "node:module";
 import {
   collectSecrets,
@@ -36,7 +36,7 @@ function zipOf(entries) {
 }
 
 function tmp() {
-  return mkdtempSync(join(tmpdir(), "scrub-secrets-"));
+  return makeTempDir("scrub-secrets-");
 }
 
 /** Every byte of `buf`, nested zips and embedded base64 included, as one string. */
@@ -265,6 +265,19 @@ test("the CLI's dotenv flag reaches the script: Node 20 swallows --env-file", ()
     });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(readFileSync(join(dir, "r.json"), "utf8"), `x ${redactionMarker("FOO_API_KEY")} y`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("main: --require-secrets fails when no secret value reached the step", async () => {
+  const dir = tmp();
+  try {
+    writeFileSync(join(dir, "r.json"), "x");
+    assert.equal(await main(["--require-secrets", "--secrets-json-env", "ALL", dir], { ALL: "" }, () => {}), 1);
+    assert.equal(await main(["--require-secrets", "--secrets-json-env", "ALL", dir], { ALL: "{}" }, () => {}), 1);
+    assert.equal(await main(["--secrets-json-env", "ALL", dir], { ALL: "{}" }, () => {}), 0, "without the flag, nothing known is not a failure");
+    assert.equal(await main(["--require-secrets", "--secrets-json-env", "ALL", dir], { ALL: JSON.stringify({ github_token: KEY }) }, () => {}), 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
