@@ -344,3 +344,50 @@ test("the CLI runs when its path has a space or is a symlink, instead of exiting
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A real assertion diff, from Playwright's own expect: the differing characters are
+// wrapped in colour codes, so the key is not contiguous in results.json, while the
+// report renders it whole and build-run-payload.mjs strips the codes and rejoins it.
+test("a key split by colour codes in a real assertion diff is removed, raw and JSON-escaped", async () => {
+  // In a child with FORCE_COLOR, as in a real run: under node:test Playwright decides
+  // there is no colour and writes the diff plain. Same length as the key, so the diff
+  // marks only the middle and splits the key.
+  const { spawnSync } = require("node:child_process");
+  const child = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const { expect } = require("@playwright/test");
+       const k = process.env.K;
+       try { expect(k.slice(0, 12) + "*".repeat(k.length - 18) + k.slice(-6)).toBe(k); }
+       catch (e) { process.stdout.write(JSON.stringify(e.message)); }`,
+    ],
+    { encoding: "utf8", cwd: new URL("..", import.meta.url).pathname, env: { PATH: process.env.PATH, FORCE_COLOR: "1", K: KEY } },
+  );
+  const message = JSON.parse(child.stdout || '""');
+  const plain = message.replace(/\u001b\[[0-9;]*m/g, "");
+  assert.ok(plain.includes(KEY), "the diff shows the key once its colour codes are stripped");
+  assert.ok(!message.includes(KEY), "the premise: the key is not contiguous in the raw message");
+  for (const text of [message, JSON.stringify({ message })]) {
+    const r = await scrubBuffer(Buffer.from(text), SECRETS, newStats());
+    const out = r.data.toString();
+    const rendered = (text === message ? out : JSON.parse(out).message).replace(/\u001b\[[0-9;]*m/g, "");
+    assert.ok(!rendered.includes(KEY), "the key survives once the codes are stripped");
+    assert.ok(rendered.includes(redactionMarker("FOO_API_KEY")));
+  }
+});
+
+test("a value with quotes, a backslash, a newline or non-ASCII is found as JSON and UTF-8 write it", async () => {
+  const odd = 'pa"ss\\wörd-ç\nsecond-line';
+  const { secrets } = collectSecrets({ env: { ODD_PASSWORD: odd } });
+  const json = Buffer.from(JSON.stringify({ value: odd }), "utf8");
+  const r = await scrubBuffer(json, secrets, newStats());
+  assert.deepEqual(JSON.parse(r.data.toString("utf8")), { value: redactionMarker("ODD_PASSWORD") });
+  const raw = await scrubBuffer(Buffer.from(`x ${odd} y`, "utf8"), secrets, newStats());
+  assert.equal(raw.data.toString("utf8"), `x ${redactionMarker("ODD_PASSWORD")} y`);
+});
+
+test("a credential name with a numeric suffix is a credential", () => {
+  const { secrets } = collectSecrets({ json: { ANTHROPIC_API_KEY_2: KEY } });
+  assert.ok(secrets.some((s) => s.name === "ANTHROPIC_API_KEY_2"));
+});

@@ -80,7 +80,13 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 export const MIN_SECRET_LENGTH = 12;
-export const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/i;
+// An optional `_N` suffix: the repository keeps `ANTHROPIC_API_KEY_2`.
+export const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_\d+)?$/i;
+// An SGR colour code, raw or as JSON writes it. Playwright's assertion diff puts these
+// INSIDE a value (inverse video on the differing characters), so a key in an
+// `expect(…).toBe(key)` failure is not contiguous in results.json or the report, while
+// the report renders it whole and build-run-payload.mjs strips the codes and rejoins it.
+const ANSI_GAP = String.raw`(?:(?:\x1b|\\u001b)\[[0-9;]*m)*`;
 const EMBEDDED_ZIP = /(data:application\/zip;base64,)([A-Za-z0-9+/=]+)/g;
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const EMPTY_ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
@@ -134,15 +140,21 @@ export function collectSecrets({ env = {}, envFiles = [], json = {} } = {}) {
   }
   const secrets = [];
   const seen = new Set();
-  const push = (name, value, replacement) => {
-    if (value.length === 0 || seen.has(value)) return;
-    seen.add(value);
-    secrets.push({ name, value, replacement });
+  // Every form is matched as its UTF-8 bytes read under latin1, which is how the files
+  // are read: a value with `ç` is two bytes on disk, never the one JS character.
+  const push = (name, value, replacement, ansi = false) => {
+    const read = asRead(value);
+    if (read.length === 0 || seen.has(read)) return;
+    seen.add(read);
+    secrets.push({ name, value: read, replacement, ansi });
   };
   for (const [value, name] of byValue) {
     const marker = redactionMarker(name);
     for (const form of new Set([value, value.trim()])) {
-      push(name, form, marker);
+      push(name, form, marker, true);
+      // As JSON writes it: a `"`, a `\` or a newline in the value is escaped in
+      // results.json, in a trace and in the report's data.
+      push(name, JSON.stringify(form).slice(1, -1), marker, true);
       // A value in a URL query string or a form body is written percent-encoded.
       push(name, encodeURIComponent(form), marker);
       for (const core of base64Cores(form)) {
@@ -153,6 +165,15 @@ export function collectSecrets({ env = {}, envFiles = [], json = {} } = {}) {
   }
   secrets.sort((a, b) => b.value.length - a.value.length);
   return { secrets, tooShort: [...tooShort].sort() };
+}
+
+/** The text a value's UTF-8 bytes read as under latin1, which is how files are read. */
+function asRead(value) {
+  return Buffer.from(value, "utf8").toString("latin1");
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isZip(buf) {
@@ -170,6 +191,18 @@ function replaceText(text, secrets, counts) {
     const parts = out.split(value);
     counts[name] = (counts[name] ?? 0) + parts.length - 1;
     out = parts.join(replacement ?? redactionMarker(name));
+  }
+  // A value with colour codes between its characters (an assertion diff). Only searched
+  // when the text has a code at all, so a report without one pays nothing.
+  if (out.includes("\u001b[") || out.includes("\\u001b[")) {
+    for (const { name, value, replacement, ansi } of secrets) {
+      if (!ansi) continue;
+      const pattern = new RegExp([...value].map(escapeRegExp).join(ANSI_GAP), "g");
+      out = out.replace(pattern, () => {
+        counts[name] = (counts[name] ?? 0) + 1;
+        return replacement ?? redactionMarker(name);
+      });
+    }
   }
   return out;
 }
