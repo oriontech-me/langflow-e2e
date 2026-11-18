@@ -116,7 +116,7 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
     }
   });
 
-  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@api", "@a2a"] }, async ({
+  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@stable", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
@@ -130,42 +130,48 @@ test.describe("A2A Server — JSON-RPC message/send", () => {
       // implementation text: -32700 returns the raw Python parser message and -32600
       // sometimes embeds a full Pydantic validation dump, so matching them would
       // break on any upstream dependency bump while the contract held.
-      const cases: Array<{ label: string; body: Record<string, unknown> | string; code: number }> = [
+      const cases: Array<{ label: string; body: Record<string, unknown> | string; codes: number[] }> = [
         {
           label: "unknown method",
           body: { jsonrpc: "2.0", id: randomUUID(), method: "does/notExist", params: {} },
-          code: -32601,
+          codes: [-32601],
         },
         {
           label: "envelope missing method",
           body: { jsonrpc: "2.0", id: randomUUID(), params: {} },
-          code: -32600,
+          codes: [-32600],
         },
         {
           label: "envelope missing jsonrpc",
           body: { id: randomUUID(), method: "message/send", params: {} },
-          code: -32600,
+          codes: [-32600],
         },
         {
           label: "wrong jsonrpc version",
           body: { jsonrpc: "1.0", id: randomUUID(), method: "message/send", params: {} },
-          code: -32600,
+          codes: [-32600],
         },
+        // Two codes, and which one depends on the a2a-sdk the instance resolved,
+        // not on Langflow (#2478). JSON-RPC 2.0 lets a Request omit `params`, so
+        // the envelope is valid and the missing argument is the method's: -32602
+        // Invalid params, which a2a-sdk 1.3.1 (a2aproject/a2a-python#1419) answers.
+        // Langflow pins only `a2a-sdk>=1.2.1,<2.0.0`; the image installs the 1.2.1
+        // its uv.lock holds (-32600), a pip install takes the newest (-32602).
         {
           label: "message/send with no params",
           body: { jsonrpc: "2.0", id: randomUUID(), method: "message/send" },
-          code: -32600,
+          codes: [-32602, -32600],
         },
         // Raw string body: the serializer must not get a chance to fix it, or the
         // parse error never happens.
-        { label: "body that is not valid JSON", body: "{not json at all", code: -32700 },
+        { label: "body that is not valid JSON", body: "{not json at all", codes: [-32700] },
       ];
 
-      for (const { label, body, code } of cases) {
-        await test.step(`${label} → ${code} over HTTP 200`, async () => {
+      for (const { label, body, codes } of cases) {
+        await test.step(`${label} → ${codes.join(" or ")} over HTTP 200`, async () => {
           const res = await postA2AJsonRpc(request, flow.flowId, body, headers);
           expect(res.status, `${label}: expected HTTP 200, got ${res.status} — ${res.raw}`).toBe(200);
-          expect(res.body?.error?.code, `${label}: ${res.raw}`).toBe(code);
+          expect(codes, `${label}: ${res.raw}`).toContain(res.body?.error?.code);
         });
       }
 
