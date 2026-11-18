@@ -2,6 +2,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { requestErrorHead } from "../../../../helpers/other/request-error-head";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { createFlowFromStarter } from "../../../../helpers/flows/create-flow-from-starter";
@@ -122,7 +123,8 @@ async function probeFoundry(request: APIRequestContext): Promise<FoundryProbe> {
     }
     return { usable: true, reason: "" };
   } catch (e) {
-    return { usable: false, reason: `Foundry endpoint unreachable: ${(e as Error).message}` };
+    // The head only: the error's call log prints the api-key header in full (#2485).
+    return { usable: false, reason: `Foundry endpoint unreachable: ${requestErrorHead(e)}` };
   }
 }
 
