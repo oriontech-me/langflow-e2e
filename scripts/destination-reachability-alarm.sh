@@ -34,8 +34,10 @@
 # VM's token died with the network still closed. Had the network come back first, the
 # alarm would have gone from "no connection" to "credential refused" in silence, and
 # nobody would have learned that the network was back and only the credential was
-# missing. The cause is the second line of the mark; a mark written before #2490 has
-# none, and the next down look adopts its cause without posting.
+# missing. The cause is the second line of the mark. A mark written before #2490 has
+# none and reads as `network`: every such mark on the VM was written by a network
+# outage, and adopting whatever the next look saw would swallow exactly the change this
+# exists to announce if the network came back before that look.
 #
 # THRESHOLD defaults to 3, measured rather than guessed: in 52 days of hourly mirror
 # looks (2026-09-21 → 2026-11-12, 1115 looks) the destination went unanswered three
@@ -228,7 +230,7 @@ if [ -e "$ALERT_FILE" ]; then
   announced_since="$(head -1 "$ALERT_FILE" 2>/dev/null)"
   case "$announced_since" in ''|*[!0-9]*) announced_since="$now" ;; esac
   announced_cause="$(sed -n 2p "$ALERT_FILE" 2>/dev/null)"
-  case "$announced_cause" in network|credential) ;; *) announced_cause="" ;; esac
+  case "$announced_cause" in network|credential) ;; *) announced_cause="network" ;; esac
 fi
 
 # One outage is one message down and one message back. A recovery that could not be
@@ -239,7 +241,12 @@ mark=""
 headline=""
 case "$ANNOUNCE:$state" in
   1:down)
-    if [ -n "$announced_since" ]; then
+    if [ -n "$announced_since" ] && [ "$cause" = "credential" ]; then
+      # The reminder speaks the cause it sees now. It does not move the mark: a change
+      # of cause is the hourly look's to post, and it will.
+      headline="QA VM reaches the destination, but its credential is refused"
+      message="Reminder: the daily starts in about 30 minutes. The QA VM reaches ${host_name} on the network, but the credential was refused (outage since $(utc "$announced_since")): ${reason}. Unless the VM gets a credential the destination accepts, the daily will test the suite it already has and will not open its umbrella."
+    elif [ -n "$announced_since" ]; then
       message="Reminder: the daily starts in about 30 minutes and the QA VM still cannot reach ${host_name} (since $(utc "$announced_since")): ${reason}. Unless it comes back, the daily will test the suite it already has and will not open its umbrella."
     else
       message="The daily starts in about 30 minutes and the QA VM cannot reach ${host_name} (since $(utc "$since"), ${streak} check(s) in a row): ${reason}. Unless it comes back, the daily will test the suite it already has and will not open its umbrella."
@@ -253,14 +260,6 @@ case "$ANNOUNCE:$state" in
     exit 0
     ;;
   0:down)
-    if [ -n "$announced_since" ] && [ -z "$announced_cause" ]; then
-      # A mark from before #2490 has no cause: adopt this look's, silently. The channel
-      # heard the outage under whatever reason it had; only a later change is news.
-      printf '%s\n%s\n' "$announced_since" "$cause" > "$ALERT_FILE" 2>/dev/null \
-        || echo "[reach] could not write $ALERT_FILE — the cause will be adopted at the next look."
-      echo "[reach] down for ${streak} look(s), already announced — recorded its cause (${cause}), not posting."
-      exit 0
-    fi
     if [ -n "$announced_since" ] && [ "$cause" = "$announced_cause" ]; then
       echo "[reach] down for ${streak} look(s), already announced — not posting again."
       exit 0
@@ -290,7 +289,14 @@ case "$ANNOUNCE:$state" in
       echo "[reach] up — nothing to say."
       exit 0
     fi
-    message="The QA VM reaches ${host_name} again (unreachable from $(utc "$announced_since"), about $(hours $(( now - announced_since )))). The next daily can pull and open its umbrella."
+    case "$reason" in
+      # `up` with a credential that could not be confirmed (no token, a 5xx, a timeout)
+      # proves the network and nothing more, so the message claims nothing more (#2490).
+      *"not confirmed"*)
+        message="The QA VM reaches ${host_name} on the network again (unreachable from $(utc "$announced_since"), about $(hours $(( now - announced_since )))), but its credential could not be confirmed: ${reason}. Check it before leaving temporary mode." ;;
+      *)
+        message="The QA VM reaches ${host_name} again (unreachable from $(utc "$announced_since"), about $(hours $(( now - announced_since )))). The next daily can pull and open its umbrella." ;;
+    esac
     mark="clear"
     ;;
   *)

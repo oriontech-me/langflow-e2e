@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, connect } from "node:net";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,15 +150,38 @@ test("an undelivered change of cause is retried, and the mark keeps the old caus
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("a mark written before #2490 has no cause: the next down look adopts it silently", () => {
+test("a mark written before #2490 reads as a network outage (#2490)", () => {
   const dir = makeTempDir("reach-cause-legacy");
   for (let i = 0; i < 3; i++) look(dir, DOWN);
   writeFileSync(markFile(dir), "1794447600\n");
-  const adopt = look(dir, DOWN);
-  assert.equal(adopt.posted, "");
-  assert.match(adopt.stdout, /recorded its cause \(network\)/);
-  assert.deepEqual(readFileSync(markFile(dir), "utf8").split("\n").slice(0, 2), ["1794447600", "network"]);
-  assert.match(look(dir, DOWN, { reason: REFUSED }).posted, /since 2026-11-12/);
+  assert.equal(look(dir, DOWN).posted, "", "still the network: nothing new");
+  // The network came back before any look of the new version: the change is news.
+  const r = look(dir, DOWN, { reason: REFUSED });
+  assert.match(r.posted, /on the network again, but the credential was refused/);
+  assert.match(r.posted, /since 2026-11-12/);
+  assert.deepEqual(readFileSync(markFile(dir), "utf8").split("\n").slice(0, 2), ["1794447600", "credential"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the pre-daily reminder speaks the cause it sees, and leaves the mark to the hourly look", () => {
+  const dir = makeTempDir("reach-cause-reminder");
+  const hook = "https://hooks.slack.invalid/triggers/T/1/abc";
+  for (let i = 0; i < 3; i++) look(dir, DOWN, { webhook: hook });
+  const r = look(dir, DOWN, { webhook: hook, announce: true, reason: REFUSED });
+  const body = JSON.parse(r.posted);
+  assert.equal(body.headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  assert.match(body.body, /^Reminder: .*credential was refused/);
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "network");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a recovery with an unconfirmed credential claims the network only", () => {
+  const dir = makeTempDir("reach-cause-unconfirmed");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  const r = look(dir, UP, { reason: "ports open, credential not confirmed (exit 2)" });
+  assert.match(r.posted, /on the network again/);
+  assert.match(r.posted, /could not be confirmed/);
+  assert.doesNotMatch(r.posted, /can pull and open its umbrella/);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -417,9 +440,24 @@ test("real probe: open ports map the credential's answer — 0 up, 2 up, 3 down"
   }
 });
 
-test("real probe: by default only 443 is probed, never 22 (#2490)", () => {
-  // 127.0.0.1 listens on neither port on a test machine, so the reason names every
-  // port that was probed. Before #2490 it read "22 443".
+/** Whether something on this machine accepts a connection on `port`. */
+function listensLocally(port) {
+  return new Promise((resolve) => {
+    const s = connect({ host: "127.0.0.1", port });
+    s.setTimeout(2000);
+    s.once("connect", () => { s.destroy(); resolve(true); });
+    s.once("error", () => resolve(false));
+    s.once("timeout", () => { s.destroy(); resolve(false); });
+  });
+}
+
+test("real probe: by default only 443 is probed, never 22 (#2490)", async (t) => {
+  // The reason names every port that failed. Before #2490 it read "22 443". It needs
+  // both ports closed locally to tell the two apart, so it skips where either listens.
+  if ((await listensLocally(443)) || (await listensLocally(22))) {
+    t.skip("something listens on 127.0.0.1:443 or :22 here");
+    return;
+  }
   const dir = makeTempDir("reach-probe-default");
   const r = look(dir, null, {
     threshold: 1,
