@@ -103,7 +103,7 @@ and both a2a-sdk versions answer them identically.
 - **a2a-sdk**, the JSON-RPC layer under `src/backend/base/langflow/api/v1/a2a.py`
   (`JSONRPC03Adapter`, `JsonRpcDispatcher`). Langflow declares it as
   `a2a-sdk>=1.2.1,<2.0.0` in `src/backend/base/pyproject.toml` and locks `1.2.1`
-  in `uv.lock`; the missing-`params` code differs across that range (see above).
+  in the repository's root lockfile; the missing-`params` code differs across that range (see above).
 - **No LLM, no provider key, no external network.** The flow is
   `tests/assets/flows/chat-io-ok-trace-fixture.json` via
   `createRunnableChatFlowInPublicProject()`; Chat Output echoes Chat Input.
