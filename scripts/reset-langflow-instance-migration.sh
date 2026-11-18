@@ -118,6 +118,13 @@ EXTENSION="$(docker exec "${IM_PG_CONTAINER}" psql -At -U "${IM_PG_USER}" -d "${
 LISTING="$(printf 's3.bucket.list\n' | docker exec -i "${IM_S3_CONTAINER}" weed shell 2>/dev/null || true)"
 printf '%s\n' "${LISTING}" | grep -Eq "^[[:space:]]*${IM_S3_BUCKET}[[:space:]]" \
   || fail "the bucket ${IM_S3_BUCKET} was not recreated."
+# The bucket still stores files (#2396). Its capacity is fixed now, so this is a guard
+# rather than an expected failure: a bucket that cannot hold an object would otherwise
+# surface at "Copy files" in the next spec, reading like a product error. Placed before
+# the object listing (`fs.ls`) below, which therefore also proves the probe removed its
+# own object.
+PROBE_ERROR="$(im_bucket_write_probe 3)" \
+  || fail "the bucket ${IM_S3_BUCKET} cannot store a file: ${PROBE_ERROR}"
 OBJECTS="$(printf 'fs.ls /buckets/%s\n' "${IM_S3_BUCKET}" | docker exec -i "${IM_S3_CONTAINER}" weed shell 2>/dev/null \
   | grep -cv -e '^[[:space:]]*$' -e '^>' || true)"
 [ "${OBJECTS}" = "0" ] || fail "the bucket ${IM_S3_BUCKET} still lists ${OBJECTS} entr(ies)."

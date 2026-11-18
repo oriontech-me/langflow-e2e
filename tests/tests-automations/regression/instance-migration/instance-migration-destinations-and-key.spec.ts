@@ -363,8 +363,8 @@ test.describe("Instance migration — destinations and the secret key name every
           200,
           "the backup's confirmation",
         );
-        // Read whatever the copy's outcome: on a host short of disk the files copy fails (#2396),
-        // and its events still carry everything it was given.
+        // Read whatever the copy's outcome: a copy that fails (as the files copy did on a host
+        // short of disk before #2396) still carries everything it was given in its events.
         for (const copy of ["copy_database", "copy_knowledge_bases", "copy_files"] as const) {
           events[copy] = await runEventsText(request, copy);
         }
