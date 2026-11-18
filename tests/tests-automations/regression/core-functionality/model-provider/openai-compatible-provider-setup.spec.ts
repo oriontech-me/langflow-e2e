@@ -2,6 +2,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { requestErrorHead } from "../../../../helpers/other/request-error-head";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { createFlowFromStarter } from "../../../../helpers/flows/create-flow-from-starter";
@@ -181,7 +182,8 @@ async function probeEndpoint(request: APIRequestContext): Promise<EndpointProbe>
     return {
       usable: false,
       ids: [],
-      reason: `${TEST_BASE_URL} unreachable from the test host: ${(e as Error).message}`,
+      // The head only: the error's call log prints the Authorization header in full (#2485).
+      reason: `${TEST_BASE_URL} unreachable from the test host: ${requestErrorHead(e)}`,
     };
   }
 }
