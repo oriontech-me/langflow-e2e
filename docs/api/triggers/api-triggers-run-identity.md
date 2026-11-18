@@ -11,7 +11,8 @@ Owning issue: #2309 (Dedicated Integrations, batch 2). It reuses the probe from 
 non-interactive families: webhook, HITL resume and KB ingest. The trigger lifecycle itself (CRUD,
 the state machine, validation, flow-save reconciliation) is #2303's; this file uses only the calls
 it needs to fire a run. #2477 set the Schedule node's `schedule_type` (upstream #16322) and promoted
-the throwaway owner to superuser (upstream #16474); both are recorded, with what was measured, at the end of *Measured on `1.13.0.dev47`*.
+the throwaway owner to superuser (upstream #16383); both are recorded, with what was measured, under
+*Measured on `1.14.0.dev31`*.
 
 ---
 
@@ -86,18 +87,22 @@ after that. On the dispatcher's next pass `reconcile_dispatched` closes the even
   before a boundary can arm the boundary after it. The same write moves the row's `updated_at`. At that minute an event with `dedupe_key: "tick:<that instant>"`
   and `payload.scheduled_at` equal to it is appended, dispatched ~4 s later, and the run reports the
   same verdicts as a webhook run. `disable` answers `paused`.
-  **The schedule type is load-bearing** (#2477): since upstream #16322 (`1.14.0.dev30`) the node's
+
+### Measured on `1.14.0.dev31`
+
+- **The schedule type is load-bearing** (#2477): since upstream #16322 (`1.14.0.dev30`) the node's
   `schedule_type` defaults to `Weekly`, and the reconciler (`_apply_schedule_pick`) compiles the picker
   fields and discards `cron_expression` — measured on `1.14.0.dev30` and `dev31`, the node left on the
   default saves `config.cron: "0 8 * * 1-5"` (every weekday at 08:00) and never fires inside the test.
   Builds before `dev30` have no `schedule_type` field, so the spec sets it only when the catalog template
   carries it.
 - **The owner is promoted to superuser** (#2477). The probe is custom code, and
-  `custom_component_admin_only` (on by default since upstream #16288, `1.14.0.dev23`) refuses a regular
+  `custom_component_admin_only` (on by default since upstream #16288, `1.14.0.dev24`) refuses a regular
   user's run of it as `400 Flow build blocked: outdated components must be updated before running:
-  Probe (CustomComponent-probe)`. Trigger runs escaped that check until upstream #16474
-  (`1.14.0.dev31`) began validating the canvas the dispatcher pins (`PINNED_TRIGGER_CANVAS`) with the
-  owner's privileges — measured on `1.14.0.dev31`: every run of all three tests failed that way and the
+  Probe (CustomComponent-probe)`. Background workflow runs — trigger runs among them — escaped that check
+  until upstream #16383 (`fix: enforce custom component policy in background workflows`,
+  `1.14.0.dev31`) made `_default_frame_source_factory` reload the job's user and validate the graph
+  with that user's privileges — measured on `1.14.0.dev31`: every run of all three tests failed that way and the
   probe wrote no message (the 2026-11-18 daily failed tests 1 and 2 with *"recorded no probe message
   within 15 s"*). The promotion keeps what this file asserts, as in
   `docs/api/connections/api-connections-resolution-non-interactive.md` (#2414): neither the connection
@@ -196,8 +201,8 @@ connections with it.
 
 ## Validation criterion *(required)*
 
-All three tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`,
-and once at `--workers=2` together with `api/connections/`, with:
+All three tests pass three consecutive times at `--retries=0 --workers=1` against `1.13.0.dev47`
+and, after #2477, three consecutive times at `--retries=0` against `1.14.0.dev31`, and once at `--workers=2` together with `api/connections/`, with:
 
 - every probe verdict asserted on the **code and the typed reason** for a denial, and on the
   **exact connection id and `owner_kind`** for a resolution, read from the run whose `session_id`
@@ -248,8 +253,8 @@ After the run, the instance has no connection, flow or user left from this file.
   `src/backend/base/langflow/services/triggers/reconciliation.py` — `schedule_timing` and
   `_apply_schedule_pick`: the node's `schedule_type` decides whether `cron_expression` is read (upstream
   #16322; both on the `release-1.14.0` line).
-- `src/backend/base/langflow/api/v2/workflow.py` — `_default_frame_source_factory`, which validates the
-  pinned trigger canvas under the owner's privileges (upstream #16474).
+- `src/backend/base/langflow/api/v2/workflow.py` — `_default_frame_source_factory`, which validates a
+  background run's graph under the job owner's current privileges (upstream #16383).
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_read_flow`, owner-scoped in OSS, which is
   why scope item 3 is not reachable here.
 - `tests/helpers/integrations/connection-probe.ts`, `tests/helpers/integrations/connections-owner.ts`,

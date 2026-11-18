@@ -95,8 +95,8 @@ test.describe("Triggers — a trigger run acts as the flow owner", () => {
     // The owner's flows run the probe, which is custom code, and
     // `custom_component_admin_only` (on by default since langflow-ai/langflow#16288)
     // refuses a regular user's run of it as "outdated components must be updated".
-    // Trigger runs escaped that check until langflow-ai/langflow#16474
-    // (1.14.0.dev31) began validating the canvas the dispatcher pins, with the
+    // Trigger runs escaped that check until langflow-ai/langflow#16383
+    // (1.14.0.dev31) began validating every background run's graph with the job
     // owner's privileges (#2477). Promoting the owner keeps what this file asserts,
     // as in api-connections-resolution-non-interactive.spec.ts (#2414): the
     // connection floor and the trigger principal have no superuser branch, and the
