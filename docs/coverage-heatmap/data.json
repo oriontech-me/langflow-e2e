@@ -254,50 +254,6 @@
    }
   },
   {
-   "area": "20 Memory Base",
-   "residualRisk": 6.4,
-   "inherentRisk": 16,
-   "probability": 4,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 9.3,
-    "weightedChurn": 1.74
-   },
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 2,
-    "chronicFlaky": 0,
-    "stableSpecs": 4,
-    "penalty": 0.2
-   },
-   "mitigation": 0.6,
-   "checklistBullets": 16,
-   "bulletStates": {
-    "x": 16
-   },
-   "previous": {
-    "residualRisk": 8,
-    "inherentRisk": 8,
-    "mitigation": 0,
-    "checklistBullets": 15
-   },
-   "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12",
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 2,
-    "2026": 6
-   },
-   "upstreamBugCount": 10,
-   "specCounts": {
-    "specs": 4,
-    "stable": 4
-   }
-  },
-  {
    "area": "12.6 Build / graph engine",
    "residualRisk": 5.6,
    "inherentRisk": 20,
@@ -383,6 +339,50 @@
    "specCounts": {
     "specs": 7,
     "stable": 7
+   }
+  },
+  {
+   "area": "16 A2A",
+   "residualRisk": 5.2,
+   "inherentRisk": 12,
+   "probability": 3,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 4,
+    "weightedBugs": 5,
+    "weightedChurn": 0.29
+   },
+   "mitigationBulletDerived": 0.6,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 0,
+    "stableSpecs": 12,
+    "penalty": 0.025
+   },
+   "mitigation": 0.57,
+   "checklistBullets": 19,
+   "bulletStates": {
+    "x": 14,
+    "~": 1,
+    " ": 4
+   },
+   "previous": {
+    "residualRisk": 6.3,
+    "inherentRisk": 8,
+    "mitigation": 0.21,
+    "checklistBullets": 18
+   },
+   "judgementRationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network",
+   "upstreamBugsByYear": {
+    "2026": 4
+   },
+   "upstreamBugCount": 4,
+   "specCounts": {
+    "specs": 12,
+    "stable": 12
    }
   },
   {
@@ -477,52 +477,52 @@
    }
   },
   {
-   "area": "16 A2A",
-   "residualRisk": 4.9,
-   "inherentRisk": 12,
-   "probability": 3,
+   "area": "20 Memory Base",
+   "residualRisk": 4.8,
+   "inherentRisk": 16,
+   "probability": 4,
    "impact": 4,
    "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 2,
+    "bugQuintile": 3,
+    "churnQuintile": 4,
     "fragility": 4,
-    "weightedBugs": 5,
-    "weightedChurn": 0.29
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
    },
-   "mitigationBulletDerived": 0.59,
+   "mitigationBulletDerived": 0.8,
    "mitigationOverride": null,
    "testHealth": {
-    "chronicHardFailures": 0,
+    "chronicHardFailures": 1,
     "chronicFlaky": 0,
-    "stableSpecs": 11,
-    "penalty": 0
+    "stableSpecs": 4,
+    "penalty": 0.1
    },
-   "mitigation": 0.59,
-   "checklistBullets": 18,
+   "mitigation": 0.7,
+   "checklistBullets": 16,
    "bulletStates": {
-    "x": 13,
-    "~": 1,
-    " ": 4
+    "x": 16
    },
    "previous": {
-    "residualRisk": 6.3,
+    "residualRisk": 8,
     "inherentRisk": 8,
-    "mitigation": 0.21,
-    "checklistBullets": 18
+    "mitigation": 0,
+    "checklistBullets": 15
    },
-   "judgementRationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network",
+   "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12",
    "upstreamBugsByYear": {
-    "2026": 4
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
    },
-   "upstreamBugCount": 4,
+   "upstreamBugCount": 10,
    "specCounts": {
-    "specs": 11,
-    "stable": 11
+    "specs": 4,
+    "stable": 4
    }
   },
   {
    "area": "2 Component config",
-   "residualRisk": 4.4,
+   "residualRisk": 4.2,
    "inherentRisk": 20,
    "probability": 5,
    "impact": 4,
@@ -537,11 +537,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 38,
-    "penalty": 0.01
+    "penalty": 0
    },
-   "mitigation": 0.78,
+   "mitigation": 0.79,
    "checklistBullets": 58,
    "bulletStates": {
     "-": 1,
@@ -660,7 +660,7 @@
   },
   {
    "area": "1 REST API / endpoints",
-   "residualRisk": 3.9,
+   "residualRisk": 3.8,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
@@ -675,11 +675,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
-    "stableSpecs": 46,
-    "penalty": 0.008
+    "chronicFlaky": 0,
+    "stableSpecs": 50,
+    "penalty": 0
    },
-   "mitigation": 0.74,
+   "mitigation": 0.75,
    "checklistBullets": 106,
    "bulletStates": {
     "x": 96,
@@ -702,8 +702,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 47,
-    "stable": 46
+    "specs": 51,
+    "stable": 50
    }
   },
   {
@@ -728,17 +728,17 @@
     "penalty": 0
    },
    "mitigation": 0.37,
-   "checklistBullets": 14,
+   "checklistBullets": 24,
    "bulletStates": {
-    "-": 13,
-    " ": 1
+    "-": 22,
+    " ": 2
    },
    "previous": null,
    "judgementRationale": "OSS operator surface, instance-global: a policy that fails open makes a blocked component placeable. Not an advertised promise, so impact is blast radius only.",
    "upstreamBugsByYear": {},
    "upstreamBugCount": 0,
    "specCounts": {
-    "specs": 9,
+    "specs": 11,
     "stable": 0
    }
   },
@@ -786,50 +786,6 @@
    "specCounts": {
     "specs": 9,
     "stable": 8
-   }
-  },
-  {
-   "area": "11 Templates / starter",
-   "residualRisk": 2.9,
-   "inherentRisk": 8,
-   "probability": 2,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.9,
-    "weightedChurn": 6.91
-   },
-   "mitigationBulletDerived": 0.64,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 4,
-    "penalty": 0
-   },
-   "mitigation": 0.64,
-   "checklistBullets": 46,
-   "bulletStates": {
-    "x": 37,
-    " ": 9
-   },
-   "previous": {
-    "residualRisk": 7.4,
-    "inherentRisk": 8,
-    "mitigation": 0.08,
-    "checklistBullets": 34
-   },
-   "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path",
-   "upstreamBugsByYear": {
-    "2025": 5,
-    "2026": 1
-   },
-   "upstreamBugCount": 6,
-   "specCounts": {
-    "specs": 4,
-    "stable": 4
    }
   },
   {
@@ -964,6 +920,50 @@
    },
    "upstreamBugCount": 33,
    "specCounts": null
+  },
+  {
+   "area": "11 Templates / starter",
+   "residualRisk": 1.8,
+   "inherentRisk": 8,
+   "probability": 2,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.9,
+    "weightedChurn": 6.91
+   },
+   "mitigationBulletDerived": 0.78,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 6,
+    "penalty": 0
+   },
+   "mitigation": 0.78,
+   "checklistBullets": 46,
+   "bulletStates": {
+    "x": 45,
+    " ": 1
+   },
+   "previous": {
+    "residualRisk": 7.4,
+    "inherentRisk": 8,
+    "mitigation": 0.08,
+    "checklistBullets": 34
+   },
+   "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path",
+   "upstreamBugsByYear": {
+    "2025": 5,
+    "2026": 1
+   },
+   "upstreamBugCount": 6,
+   "specCounts": {
+    "specs": 6,
+    "stable": 6
+   }
   },
   {
    "area": "3.3 API Request / Webhook",
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-11-13",
+ "refreshed": "2026-11-18",
  "refreshWindow": {
-  "testHealthSince": "2026-09-29",
+  "testHealthSince": "2026-10-04",
   "days": 45
  }
 }
