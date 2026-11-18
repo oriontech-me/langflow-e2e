@@ -8,7 +8,7 @@
 // (#1226's rule).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
@@ -50,7 +50,8 @@ function steps(file) {
       return m ? m[1].trim() : null;
     };
     const paths = [];
-    const pm = /^\s*path:\s*(\|)?\s*(.*)$/m.exec(body);
+    // [ \t], not \s: \s crosses the newline after `path: |` and swallows the first entry.
+    const pm = /^[ \t]*path:[ \t]*(\|)?[ \t]*(.*)$/m.exec(body);
     if (pm) {
       if (pm[1]) {
         const after = body.slice(pm.index + pm[0].length).split("\n").slice(1);
@@ -64,6 +65,10 @@ function steps(file) {
     }
     return { body, name: field("name"), id: field("id"), if: field("if"), uses: field("uses"), paths };
   });
+}
+
+function isReportUpload(step) {
+  return /actions\/upload-artifact/.test(step.uses ?? "") && step.paths.some((p) => CARRIES_KEYS.test(p));
 }
 
 function isScrub(step) {
@@ -89,16 +94,33 @@ function gatingScrubs(upload, scrubs) {
   return gating;
 }
 
+// EVERY workflow and composite action, not a list: a disabled workflow is kept as "the
+// way back", and re-enabling one that uploads a report must not reopen the leak.
 const LANES = [
-  { file: ".github/workflows/pr-validation.yml", secrets: /\$\{\{\s*toJSON\(secrets\)\s*\}\}/ },
-  { file: ".github/workflows/daily-stable.yml", secrets: /\$\{\{\s*toJSON\(secrets\)\s*\}\}/ },
-  { file: ".github/actions/run-e2e/action.yml", secrets: /\$\{\{\s*inputs\.secrets_json\s*\}\}/ },
-];
+  ...readdirSync(join(REPO_ROOT, ".github/workflows"))
+    .filter((f) => /\.ya?ml$/.test(f))
+    .map((f) => ({ file: `.github/workflows/${f}`, secrets: /\$\{\{\s*toJSON\(secrets\)\s*\}\}/ })),
+  ...readdirSync(join(REPO_ROOT, ".github/actions"))
+    .filter((d) => existsSync(join(REPO_ROOT, ".github/actions", d, "action.yml")))
+    .map((d) => ({ file: `.github/actions/${d}/action.yml`, secrets: /\$\{\{\s*inputs\.secrets_json\s*\}\}/ })),
+].filter(({ file }) => steps(file).some(isReportUpload));
+
+test("the wiring check reaches the lanes that upload reports", () => {
+  const files = LANES.map((l) => l.file);
+  for (const f of [
+    ".github/workflows/pr-validation.yml",
+    ".github/workflows/daily-stable.yml",
+    ".github/workflows/migration-test.yml",
+    ".github/actions/run-e2e/action.yml",
+  ]) {
+    assert.ok(files.includes(f), `${f} uploads a report but the check did not find it`);
+  }
+});
 
 for (const { file, secrets } of LANES) {
   test(`${file}: every report-bearing upload runs only after a scrub that covered it succeeded`, () => {
     const all = steps(file);
-    const uploads = all.filter((s) => /actions\/upload-artifact/.test(s.uses ?? "") && s.paths.some((p) => CARRIES_KEYS.test(p)));
+    const uploads = all.filter(isReportUpload);
     assert.ok(uploads.length > 0, `${file}: found no report upload, so the parser is out of step with the file`);
     for (const upload of uploads) {
       const before = all.slice(0, all.indexOf(upload)).filter(isScrub);
@@ -106,9 +128,12 @@ for (const { file, secrets } of LANES) {
       for (const s of before) assert.ok(s.id, `${s.name}: a scrub step needs an id for the uploads to read`);
       const gating = gatingScrubs(upload, before);
       assert.ok(gating.length > 0, `${upload.name}: its if: does not depend on a scrub step succeeding (${upload.if})`);
-      for (const p of upload.paths) {
+      for (const p of upload.paths.filter((x) => CARRIES_KEYS.test(x))) {
         const top = p.split("/")[0];
-        const covered = gating.some((s) => new RegExp(`--secrets-json-env SCRUB_SECRETS_JSON[^\\n]*\\b${top.replace(".", "\\.")}\\b`).test(s.body));
+        // A shell line continuation joins the command back into one line.
+        const covered = gating.some((s) =>
+          new RegExp(`--secrets-json-env SCRUB_SECRETS_JSON[^\\n]*\\b${top.replace(".", "\\.")}\\b`).test(s.body.replace(/\\\n/g, " ")),
+        );
         assert.ok(covered, `${upload.name}: uploads ${p}, which the scrub it waits on does not read`);
       }
       for (const s of gating) {
