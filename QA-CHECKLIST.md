@@ -1584,6 +1584,7 @@
 - [x] `PATCH` renames and flips `allow_non_interactive`, and a field `ConnectionUpdate` does not declare (`granted_scopes`, `status`) is refused → api/connections/api-connections-lifecycle.spec.ts
 - [x] `DELETE` answers `204`; a repeat `DELETE` and an unknown UUID both answer `404`, with removal **re-read** rather than inferred from the status (#1759/#1777/#1807) → api/connections/api-connections-lifecycle.spec.ts
 - [x] `GET /api/v1/connections?provider=` keeps that provider's rows and drops every other: a Google and a Microsoft row each listed under their own provider only, and a well-formed provider id no row carries answers `200 []` (the `422` for a malformed one is in `api-validation-redaction.spec.ts`) → api/connections/api-connections-surface-details.spec.ts
+- [x] The rate limits a user meets on the connection routes, asserted rather than avoided (#2302), each counted exactly under a fresh throwaway user: **60** list reads in a minute (the 2 s consent poll's budget, so a login-sized regression is caught) in one bucket shared with `GET …/oauth/registrations` but not with the manifest; **30** writes (the 31st is refused — the issue's *30th* was refused on measurement); **5** `/test` and **5** `/health` (spending `/test` leaves `/health` whole); a spent read bucket refuses no write, a spent write bucket no read or `/test`, and spent probe buckets no write or read; every refusal is `429` JSON with `Retry-After: 60` and one exact body → api/connections/api-connections-rate-limits.spec.ts
 
 #### 24.2 Secret boundary (#1967)
 
