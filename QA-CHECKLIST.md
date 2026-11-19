@@ -1877,7 +1877,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 858 `test()` calls carrying the `@stable` tag, distributed across 312 spec
+> 859 `test()` calls carrying the `@stable` tag, distributed across 312 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2733,6 +2733,7 @@
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
 - [x] the refusal surfaces in the editor as an error, not a silent empty result → `ssrf-url-validation.spec.ts`
+- [x] mode=stream refuses a protected tweak and names the refusal → `tweaks-graph-path-floor.spec.ts`
 - [x] mode=background refuses a protected tweak and names the refusal → `tweaks-graph-path-floor.spec.ts`
 - [x] mode=sync refuses a protected tweak without ever answering 2xx → `tweaks-graph-path-floor.spec.ts`
 - [x] a code tweak is refused with a 422 naming the field, and the flow is left untouched → `tweaks-injection.spec.ts`
