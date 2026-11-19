@@ -116,11 +116,14 @@ Link the ticket in the triage issue.
 
 Two things must be true, and the alarm tells them apart:
 
-- **The network is back.** The alarm posts either *"QA VM reaches the destination
-  again"* or *"QA VM reaches the destination, but its credential is refused"*.
+- **The network is back.** The alarm posts one of three messages: *"QA VM reaches the
+  destination again"* (network and credential both confirmed), *"QA VM reaches the
+  destination on the network again"* (network back, credential not confirmed: check it
+  below before leaving), or *"QA VM reaches the destination, but its credential is
+  refused"*.
 - **The VM has a credential that git over HTTPS and the API accept.** The destination
   no longer takes SSH, and since 2026-11-17 a personal token lasts at most 7 days, so a
-  token on the VM is not a fix (#2490). The credential is a GitHub App's. The second
+  token on the VM is not a fix (#2490). The credential is a GitHub App's. The third
   message above means this part is missing: stay in temporary mode until it is
   installed.
 
@@ -131,9 +134,11 @@ cd /root/e2e-qa
 . /root/.e2e-lane
 # HTTPS, built from the lane file. No `.git` suffix (#2332).
 dest="https://${ISSUE_HOST:-}/${ISSUE_REPO:-}"
-# Both checks run before origin moves, and a failure in either leaves temporary mode
-# exactly as it was. The API check is the daily's own preflight: once the drop-in is
-# gone, a refused API credential stops the daily before it tests anything.
+# Both checks run before origin moves. A refused git, or an API credential the check
+# reports as refused (exit 3), leaves temporary mode exactly as it was; any other exit
+# of the API check proceeds, as the daily does. The API check is the daily's own
+# preflight: once the drop-in is gone, a refused API credential stops the daily before
+# it tests anything.
 if [ -z "${ISSUE_HOST:-}" ] || [ -z "${ISSUE_REPO:-}" ]; then
   echo "ISSUE_HOST or ISSUE_REPO missing from /root/.e2e-lane: stop"
 elif ! GIT_TERMINAL_PROMPT=0 git ls-remote "$dest" HEAD >/dev/null; then
