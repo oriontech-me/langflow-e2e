@@ -9,6 +9,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
 import { createProjectThroughSidebar } from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { revokeProjectMintedKeys } from "../../../../helpers/flows/revoke-project-minted-keys";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
@@ -134,6 +135,11 @@ const projectWrite = (page: Page, method: "PATCH" | "DELETE", id: string) =>
 // guards against OTHER runs' leftovers; this one stops the file from producing
 // them.
 const createdProjectIds = new Set<string>();
+// Their creation-time names, for the API key Langflow mints per project and
+// does not revoke on delete (#2512). Test 1 renames its first project, and the
+// key keeps the name the project was created with, so `deleteProject` (which
+// reads the current name) cannot find it.
+const createdProjectNames = new Set<string>();
 
 // Flows go through the SHARED tracker (#1108), not a hand-rolled listener. The
 // block that would be written here was copied into 51 spec files and drifted on
@@ -156,7 +162,9 @@ test.afterEach(async ({ page, request }) => {
   await flows.cleanup(request);
 
   const projectIds = [...createdProjectIds];
+  const projectNames = [...createdProjectNames];
   createdProjectIds.clear();
+  createdProjectNames.clear();
   if (projectIds.length === 0) return;
 
   // The tracker unmounts only when it has flows to delete, and test 1 has none
@@ -191,6 +199,7 @@ test.afterEach(async ({ page, request }) => {
       console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
     });
   }
+  await revokeProjectMintedKeys(request, options?.headers ?? {}, projectNames);
 });
 
 test(
@@ -224,6 +233,8 @@ test(
     // to leave behind on every run (#1376).
     createdProjectIds.add(firstProject.id);
     createdProjectIds.add(secondProject.id);
+    createdProjectNames.add(firstProject.name);
+    createdProjectNames.add(secondProject.name);
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
