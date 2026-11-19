@@ -1775,6 +1775,14 @@
 - [x] Continue starts consent with `e2e-<provider>` and the ticked scopes (an unticked optional scope reaches neither the start nor the provider); the authorization URL is Atlassian's (`audience`, `prompt=consent`) or the configured site's with PKCE `S256` (Salesforce `prompt=login consent`); a denied consent (Jira, Salesforce) or a cancelled wait (Confluence, ServiceNow) deletes the new row → core-functionality/integrations/connection-oauth-site-bound.spec.ts
 - [ ] A consent that completes at a real Atlassian, Salesforce or ServiceNow tenant — a callback carrying a `code` reaches the provider's real token host (measured: `oauth-failed` for a fake client), so no spec sends one
 
+#### 24.19 The nine 1.14 providers' actions at run time (#2501)
+
+- [x] One action of each of GitHub, GitLab, Jira, Salesforce, ServiceNow, Discord, Telegram and WhatsApp, run through `POST /api/v2/workflows` with a handle no row carries, and again bound to a `pending` row, fails with `connection-unresolved` naming `<provider>/<handle>`, identically for both; the row stays `pending` → api/connections/api-connections-action-runs.spec.ts
+- [x] Input validation runs before the connection is resolved: a malformed input with an unbound handle is refused with `invalid-request` and the bundle's exact copy (GitHub, GitLab, Jira, Confluence, Salesforce, Discord, Telegram); WhatsApp's malformed recipient is a plain error with no `code`; ServiceNow resolves first, so its malformed record id reads `connection-unresolved` → api/connections/api-connections-action-runs.spec.ts
+- [x] Confluence: with no `LANGFLOW_CONFLUENCE_SPACE_IDS` on the lane, every action stops at *"Configure one to 100 approved Confluence space IDs as a comma-separated server setting."* before its connection is looked up → api/connections/api-connections-action-runs.spec.ts
+- [x] On the canvas, a Jira node shows `[connection-unresolved] Connection 'jira/<handle>' …` for an unbound handle and `[invalid-request] Use a Jira issue key such as DEMO-123.` for a malformed key, each with its hint, in the notice and the node's build panel → core-functionality/integrations/connector-run-errors.spec.ts
+- [ ] A **ready** connection's action for any of the nine — a planted credential is refused for all nine (`422`), so it needs a live account; ServiceNow's own validation copy and WhatsApp's and ServiceNow's server settings are only reachable past resolution
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
