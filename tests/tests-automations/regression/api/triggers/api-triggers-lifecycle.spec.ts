@@ -90,10 +90,6 @@ test.describe("Triggers — the lifecycle", () => {
     );
   });
 
-  test.afterAll(async () => {
-    await owner?.dispose();
-  });
-
   test.beforeEach(async ({ request }) => {
     test.skip(
       !(await servedVersionAtLeast(request, LIFECYCLE_SINCE)),
@@ -109,6 +105,10 @@ test.describe("Triggers — the lifecycle", () => {
         if (!String(error).includes("404")) console.warn(`⚠️ Orphan flow left behind (${id}): ${error}`);
       });
     }
+  });
+
+  test.afterAll(async () => {
+    await owner?.dispose();
   });
 
   const sorted = (values: string[]) => [...values].sort();
@@ -290,9 +290,8 @@ test.describe("Triggers — the lifecycle", () => {
       });
 
       await test.step("DELETE answers 204; afterwards GET and a second DELETE are 404 and the list is empty", async () => {
-        const res = await request.delete(`/api/v1/triggers/${created.id}`, { headers: headers() });
-        expect(res.status()).toBe(204);
-        expect(await res.text()).toBe("");
+        // The helper throws on anything but a 204, and returns the parsed body: none.
+        expect(await deleteTrigger(request, headers(), created.id)).toBeUndefined();
         await expectDetail(await request.get(`/api/v1/triggers/${created.id}`, { headers: headers() }), 404, NOT_FOUND);
         await expectDetail(await request.delete(`/api/v1/triggers/${created.id}`, { headers: headers() }), 404, NOT_FOUND);
         expect(await listTriggers(request, headers(), { flow_id: flowId })).toEqual([]);
@@ -367,10 +366,12 @@ test.describe("Triggers — the lifecycle", () => {
       ]);
       const flowA = await emptyFlow(request, "pin A");
       const flowB = await emptyFlow(request, "pin B");
+
       const [versionA, versionB] = await test.step("Snapshot both flows", async () => [
         await snapshot(request, flowA),
         await snapshot(request, flowB),
       ]);
+
       const row = await make(request, flowA, "pinned");
       const pinOf = async () => (await getTrigger(request, headers(), row.id)).flow_version_id;
 
