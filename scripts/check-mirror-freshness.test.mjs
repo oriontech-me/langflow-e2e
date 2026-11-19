@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import {
   verdict,
   remoteTip,
+  normalizeRemoteUrl,
+  sameRepository,
   main,
   EXIT_CURRENT,
   EXIT_BEHIND,
@@ -317,6 +319,118 @@ test("both sides resolving to the same repository cannot answer 'current'", () =
     "a clone pointed at one repository twice reported the mirror as current",
   );
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("one repository spelled two ways is still one repository (#2332)", () => {
+  const source = "https://github.com/oriontech-me/langflow-e2e";
+  for (const spelling of [
+    "https://github.com/oriontech-me/langflow-e2e.git", // the field case, #2330
+    "https://github.com/oriontech-me/langflow-e2e/",
+    "https://github.com/oriontech-me/langflow-e2e.git/",
+    "https://GitHub.com/oriontech-me/langflow-e2e",
+    "https://github.com:443/oriontech-me/langflow-e2e",
+    "https://x-access-token:secret@github.com/oriontech-me/langflow-e2e.git",
+    "ssh://git@github.com/oriontech-me/langflow-e2e.git",
+    "git@github.com:oriontech-me/langflow-e2e.git",
+    "  https://github.com/oriontech-me/langflow-e2e\n",
+    // GitHub serves both cases as one repository (one sha from ls-remote), so a
+    // case-sensitive comparison was #2332 again in another spelling (review).
+    "https://github.com/Oriontech-Me/Langflow-E2E",
+    "git@github.com:Oriontech-Me/Langflow-E2E.git",
+    "https://github.com//oriontech-me/langflow-e2e",
+    "git@github.com:/oriontech-me/langflow-e2e.git",
+  ]) {
+    assert.ok(sameRepository(source, spelling), `${spelling} read as a different repository than ${source}`);
+  }
+});
+
+test("different repositories stay different, so the guard does not swallow a real mirror", () => {
+  const source = "https://github.com/oriontech-me/langflow-e2e";
+  for (const other of [
+    "https://github.ibm.com/Langflow/e2e-qa.git", // the real destination
+    "git@github.ibm.com:Langflow/e2e-qa.git",
+    "https://github.com/oriontech-me/langflow-e2e-fork",
+    "https://github.com/oriontech-me/langflow",
+    "https://gitlab.com/oriontech-me/langflow-e2e",
+  ]) {
+    assert.ok(!sameRepository(source, other), `${other} read as the same repository as ${source}`);
+  }
+  // Nothing to compare is not a match: an unresolved side must fall through to the
+  // tips, where an unreadable remote already answers UNKNOWN on its own.
+  assert.equal(sameRepository(source, null), false);
+  assert.equal(sameRepository("", ""), false);
+  assert.equal(sameRepository(undefined, undefined), false);
+});
+
+test("the normalized form drops userinfo and keeps a local path's case", () => {
+  assert.equal(
+    normalizeRemoteUrl("https://x-access-token:ghs_secret@github.com/oriontech-me/langflow-e2e.git"),
+    "github.com/oriontech-me/langflow-e2e",
+  );
+  assert.equal(normalizeRemoteUrl("git@github.com:oriontech-me/langflow-e2e.git"), "github.com/oriontech-me/langflow-e2e");
+  // A local path keeps its case: on Linux two paths differing in case are two directories.
+  assert.equal(normalizeRemoteUrl("/srv/Mirror/repo.git/"), "/srv/Mirror/repo");
+  assert.equal(normalizeRemoteUrl("file:///srv/Mirror/repo.git"), "/srv/Mirror/repo");
+});
+
+test("end to end: a clone whose origin adds .git to the source URL is UNKNOWN, not current (#2332)", () => {
+  // The field case, reproduced with real git: the source is named without `.git`, the
+  // clone's origin with it, and git resolves both to the same bare repository. Before
+  // #2332 the guard compared the two strings, let them through, read the same tip twice
+  // and answered "current" — the one answer this module must never give by accident.
+  const dir = makeTempDir("mirror-freshness-dotgit");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const repo = join(dir, "r.git");
+  const work = join(dir, "w");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", repo], { env });
+  execFileSync("git", ["clone", "-q", repo, work], { env });
+  writeFileSync(join(work, "a.txt"), "one\n");
+  execFileSync("git", ["add", "-A"], { cwd: work, env });
+  execFileSync("git", ["commit", "-qm", "one"], { cwd: work, env });
+  execFileSync("git", ["push", "-q", "origin", "HEAD:main"], { cwd: work, env });
+
+  const withoutDotGit = join(dir, "r");
+  // The premise, checked rather than assumed: git really does reach the repository
+  // through the spelling without `.git`, so the old code saw the same tip on both sides.
+  assert.equal(remoteTip(withoutDotGit, "refs/heads/main", { cwd: work, env }), remoteTip(repo, "refs/heads/main", { cwd: work, env }));
+
+  assert.equal(
+    main({ ...env, SOURCE_REMOTE_URL: withoutDotGit, DESTINATION_REMOTE: "origin" }, work),
+    EXIT_UNKNOWN,
+    "a clone whose origin differs from the source only by `.git` reported the mirror as current",
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the UNKNOWN line printed by main never carries a token from the destination's URL", () => {
+  // Behavioural: the guard prints a URL, and the URL a clone stores can carry a
+  // credential. Asserted on what main() writes, not on the helper, so reverting the
+  // print to the raw resolved URL fails here.
+  const dir = makeTempDir("mirror-freshness-token");
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+  const work = join(dir, "w");
+  execFileSync("git", ["init", "-q", "-b", "main", work], { env });
+  execFileSync("git", ["remote", "add", "origin", "https://x-access-token:ghs_SECRET@github.com/oriontech-me/langflow-e2e.git"], { cwd: work, env });
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  let code;
+  try {
+    code = main({ ...env, SOURCE_REMOTE_URL: "https://github.com/oriontech-me/langflow-e2e", DESTINATION_REMOTE: "origin" }, work);
+  } finally {
+    console.log = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(code, EXIT_UNKNOWN);
+  const out = lines.join("\n");
+  assert.match(out, /same repository \(github\.com\/oriontech-me\/langflow-e2e\)/);
+  assert.doesNotMatch(out, /SECRET|x-access-token/, `main printed a credential:\n${out}`);
 });
 
 test("the walk fetches without writing FETCH_HEAD, because the removal path reads it (#1972)", () => {
