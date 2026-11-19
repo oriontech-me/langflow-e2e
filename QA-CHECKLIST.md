@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-19
 
 ---
 
@@ -1853,9 +1853,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 126 | 108 | 0 | 3 | 15 |
+| `integrations/` — Dedicated Integrations | 127 | 109 | 0 | 3 | 15 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **899** | **749 (83%)** | **91 (10%)** | **17 (2%)** | **42 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **900** | **750 (83%)** | **91 (10%)** | **17 (2%)** | **42 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1871,7 +1871,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 857 `test()` calls carrying the `@stable` tag, distributed across 311 spec
+> 860 `test()` calls carrying the `@stable` tag, distributed across 312 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1904,6 +1904,9 @@
 - [x] only the owner may allow non-interactive use, and anyone with write access may clear it → `api-connections-ownership.spec.ts`
 - [x] a superuser can check, rename, revoke and delete another user's connection → `api-connections-ownership.spec.ts`
 - [x] the write limit is per user, and deleting a user removes its connections → `api-connections-ownership.spec.ts`
+- [x] the read bucket holds 60, is shared with the OAuth registrations read, and spares the manifest and writes → `api-connections-rate-limits.spec.ts`
+- [x] the write bucket holds 30, and spending it refuses neither a read nor a test → `api-connections-rate-limits.spec.ts`
+- [x] /test and /health hold 5 each, independently, and spending them refuses neither a write nor a read → `api-connections-rate-limits.spec.ts`
 - [x] the Playground build resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
 - [x] POST /api/v1/run resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
 - [x] POST /api/v1/responses resolves the owner's and the instance's connection → `api-connections-resolution-entry-points.spec.ts`
