@@ -317,7 +317,7 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
 
   test(
     "mode=stream refuses a protected tweak and names the refusal",
-    { tag: ["@stable", "@api", "@regression"] },
+    { tag: ["@api", "@regression"] },
     async ({ request }) => {
       await assertStreamingSurface(request, "stream");
     },
