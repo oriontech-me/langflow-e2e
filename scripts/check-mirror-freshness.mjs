@@ -142,7 +142,7 @@ export function resolveRemote(nameOrUrl, { cwd, env } = {}) {
  * has no `.git`. Compared as strings, the same-repository guard below passed, both
  * tips were the same commit, and the check answered "current" while the real mirror was
  * two days behind (#2330). Dropped here: a trailing `/` or `.git`, repeated `/`, the
- * scheme, a default port, and any userinfo (a user or a token in the URL names a
+ * scheme, a `:443`, `:22` or `:80` port (whatever the scheme), and any userinfo (a user or a token in the URL names a
  * credential, not a repository).
  *
  * Case: a remote with a host is lowercased WHOLE, path included. GitHub serves
@@ -218,8 +218,8 @@ export function main(env = process.env, cwd = process.cwd()) {
   // The one answer this must never give by accident is "current", and pointing both
   // sides at the same repository produces it forever — which is what a dev clone made
   // straight from the source would do. Compared by resolved AND normalized URL, so an
-  // alias, a URL, and two spellings of one URL (`.git`, a trailing `/`, the scheme, a
-  // host's case) are caught too (#2332). The normalized form is what gets printed: it
+  // alias, a URL, and two spellings of one URL (see `normalizeRemoteUrl`) are caught
+  // too (#2332). The normalized form is what gets printed: it
   // carries no userinfo, so a credential written into the URL never reaches the log.
   const sourceResolved = resolveRemote(sourceUrl, { cwd, env });
   const destResolved = resolveRemote(destination, { cwd, env });
