@@ -8,7 +8,23 @@
 // port-less `redirect_uri`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { consentRedirect, holdConnectionList } from "./fake-oauth-provider";
+import registrations from "../../../scripts/lib/fake-oauth-registrations.json";
+import sites from "../../../scripts/lib/fake-integration-sites.json";
+import { PROVIDER_ORIGINS, consentRedirect, holdConnectionList } from "./fake-oauth-provider";
+
+test("every provider a fake registration names has an authorization origin to route (#2498)", () => {
+  // A provider missing here makes installFakeOAuthProvider route `undefined/**`: the
+  // popup then reaches the real provider and the test waits for a callback forever.
+  const providers = new Set(Object.values(registrations).map((registration) => registration.provider));
+  for (const provider of providers) {
+    assert.match(PROVIDER_ORIGINS[provider] ?? "", /^https:\/\/[^/]+$/, `${provider}: no origin to route`);
+  }
+});
+
+test("the site-bound origins are the lanes' fake sites, not a copy of them (#2499)", () => {
+  assert.equal(PROVIDER_ORIGINS.salesforce, sites.LANGFLOW_SALESFORCE_ORIGIN);
+  assert.equal(PROVIDER_ORIGINS.servicenow, sites.LANGFLOW_SERVICENOW_ORIGIN);
+});
 
 const AUTH = new URL(
   "https://accounts.google.com/o/oauth2/v2/auth?client_id=e2e-fake-client.apps.googleusercontent.com" +

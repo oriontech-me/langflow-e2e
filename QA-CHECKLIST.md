@@ -1766,6 +1766,15 @@
 - [x] *Authorize* on a `pending` token connection opens *Reconnect <handle>* with the token form only, writes `POST /api/v1/connections/{id}/token` to that row and creates nothing, and a refusal leaves the row `pending` without a credential → core-functionality/integrations/connection-token-providers.spec.ts
 - [ ] A token the provider accepts (the *connected* step, a `ready` row) — needs a live account (#2503)
 
+#### 24.18 OAuth for the site-bound providers (#2499)
+
+- [x] With #2498's fake sites, `GET /api/v1/connections/oauth/registrations` serves `e2e-jira`, `e2e-confluence`, `e2e-salesforce` and `e2e-servicenow` — `self_managed`, `confidential`, the canonical scopes and each one's `required_scopes` (`offline_access`; `api id refresh_token`; `langflow_table_read`) → api/connections/api-connections-oauth-site-bound.spec.ts
+- [x] `oauth/start` that leaves out a required scope answers `400` naming it (ServiceNow, Salesforce) and leaves the row `pending`; a callback with neither `code` nor `error` marks the row `error` / `oauth-expired` with no credential → api/connections/api-connections-oauth-site-bound.spec.ts
+- [x] Manage providers saves a registration for each of the four bound to its configured site (`204`; it was `422 "… deployment site is not configured."` on every lane) and refuses one bound to another site with the adapter's own `422` → api/connections/api-connections-oauth-site-bound.spec.ts
+- [x] The Add dialog offers each provider's registration scopes, all ticked, the required ones locked as *"Required for this connection"* and every optional one naming the actions that need it with their risk, plus the manifest's setup guide → core-functionality/integrations/connection-oauth-site-bound.spec.ts
+- [x] Continue starts consent with `e2e-<provider>` and the ticked scopes (an unticked optional scope reaches neither the start nor the provider); the authorization URL is Atlassian's (`audience`, `prompt=consent`) or the configured site's with PKCE `S256` (Salesforce `prompt=login consent`); a denied consent (Jira, Salesforce) or a cancelled wait (Confluence, ServiceNow) deletes the new row → core-functionality/integrations/connection-oauth-site-bound.spec.ts
+- [ ] A consent that completes at a real Atlassian, Salesforce or ServiceNow tenant — a callback carrying a `code` reaches the provider's real token host (measured: `oauth-failed` for a fake client), so no spec sends one
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)

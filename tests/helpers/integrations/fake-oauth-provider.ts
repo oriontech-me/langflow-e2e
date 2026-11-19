@@ -1,4 +1,5 @@
 import type { BrowserContext, Page, Response, Route } from "@playwright/test";
+import sites from "../../../scripts/lib/fake-integration-sites.json";
 import { type RateLimitWaitOptions, untilNotRateLimited } from "./oauth-callback";
 
 /**
@@ -28,11 +29,23 @@ export type ConsentOutcome =
   /** Serves a consent page and never redirects: a user who has not answered. */
   | "stall";
 
-/** The authorization endpoints #2301's registrations build, by provider. */
+/**
+ * The authorization endpoints the fake registrations build, by provider: #2301's
+ * three on their providers' fixed hosts, and #2498's four site-bound ones. Jira and
+ * Confluence authorize at Atlassian's fixed host; Salesforce and ServiceNow at the
+ * deployment site the server names, read from the same canonical file the lanes
+ * and starters are pinned to, so the route follows the site rather than a copy.
+ * Jira and Confluence share a host: install one of them at a time, since the later
+ * route answers both.
+ */
 export const PROVIDER_ORIGINS: Record<string, string> = {
   google: "https://accounts.google.com",
   microsoft: "https://login.microsoftonline.com",
   slack: "https://slack.com",
+  jira: "https://auth.atlassian.com",
+  confluence: "https://auth.atlassian.com",
+  salesforce: sites.LANGFLOW_SALESFORCE_ORIGIN,
+  servicenow: sites.LANGFLOW_SERVICENOW_ORIGIN,
 };
 
 /** Body of the `stall` page, so a popup showing it is recognisable. */
