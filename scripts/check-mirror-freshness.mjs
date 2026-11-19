@@ -133,6 +133,69 @@ export function resolveRemote(nameOrUrl, { cwd, env } = {}) {
   }
 }
 
+/**
+ * A remote URL reduced to the part that names the repository, so two spellings of one
+ * repository compare equal (#2332).
+ *
+ * `git remote get-url` returns the URL verbatim, and a clone of the source is free to
+ * spell it `https://github.com/oriontech-me/langflow-e2e.git` while the source default
+ * has no `.git`. Compared as strings, the same-repository guard below passed, both
+ * tips were the same commit, and the check answered "current" while the real mirror was
+ * two days behind (#2330). Dropped here: a trailing `/` or `.git`, the scheme, and any
+ * userinfo (a user or a token in the URL names a credential, not a repository). The host
+ * is lowercased because DNS names are case-insensitive; the path is left alone, because
+ * on a local path or a self-hosted forge it may not be.
+ *
+ * So `https://github.com/o/r`, `ssh://git@github.com/o/r.git` and `git@GitHub.com:o/r`
+ * all reduce to `github.com/o/r`. Matching wide is the safe direction for this guard: a
+ * false match costs an UNKNOWN that names itself, a missed one costs a false "current".
+ */
+export function normalizeRemoteUrl(url) {
+  if (typeof url !== "string") return null;
+  let rest = url.trim();
+  if (!rest) return null;
+
+  let host = null;
+  const scheme = rest.match(/^([a-z][a-z0-9+.-]*):\/\/(.*)$/i);
+  if (scheme) {
+    if (scheme[1].toLowerCase() === "file") {
+      rest = scheme[2];
+    } else {
+      // `scheme://[userinfo@]host[:port]/path`. Userinfo is everything up to the LAST
+      // `@` before the first `/`, since a token can carry its own characters.
+      const afterScheme = scheme[2];
+      const slash = afterScheme.indexOf("/");
+      const authority = slash === -1 ? afterScheme : afterScheme.slice(0, slash);
+      host = authority.slice(authority.lastIndexOf("@") + 1);
+      rest = slash === -1 ? "" : afterScheme.slice(slash);
+    }
+  } else {
+    // scp-like `[user@]host:path`, which git recognises only when no `/` comes before
+    // the first `:`; anything else is a local path.
+    const scp = rest.match(/^([^/:]+):(?!\/\/)(.*)$/);
+    if (scp) {
+      host = scp[1].slice(scp[1].lastIndexOf("@") + 1);
+      rest = `/${scp[2]}`;
+    }
+  }
+
+  let path = rest.replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
+  if (host != null) {
+    if (!path.startsWith("/")) path = `/${path}`;
+    // A default port is the same endpoint as no port, so it must not split the match.
+    const lowered = host.toLowerCase().replace(/:(443|22|80)$/, "");
+    return `${lowered}${path}`;
+  }
+  return path;
+}
+
+/** Whether two remote URLs name the same repository, by `normalizeRemoteUrl`. */
+export function sameRepository(a, b) {
+  const left = normalizeRemoteUrl(a);
+  const right = normalizeRemoteUrl(b);
+  return left != null && right != null && left === right;
+}
+
 export function main(env = process.env, cwd = process.cwd()) {
   const sourceUrl = env.SOURCE_REMOTE_URL || "https://github.com/oriontech-me/langflow-e2e";
   const destination = env.DESTINATION_REMOTE || "origin";
@@ -147,13 +210,15 @@ export function main(env = process.env, cwd = process.cwd()) {
 
   // The one answer this must never give by accident is "current", and pointing both
   // sides at the same repository produces it forever — which is what a dev clone made
-  // straight from the source would do. Compared by resolved URL, so an alias and a URL
-  // for the same remote are caught too.
+  // straight from the source would do. Compared by resolved AND normalized URL, so an
+  // alias, a URL, and two spellings of one URL (`.git`, a trailing `/`, the scheme, a
+  // host's case) are caught too (#2332). The normalized form is what gets printed: it
+  // carries no userinfo, so a credential written into the URL never reaches the log.
   const sourceResolved = resolveRemote(sourceUrl, { cwd, env });
   const destResolved = resolveRemote(destination, { cwd, env });
-  if (sourceResolved && destResolved && sourceResolved === destResolved) {
+  if (sameRepository(sourceResolved, destResolved)) {
     console.log(
-      `[mirror] UNKNOWN: the source and the destination resolve to the same repository (${sourceResolved}) — ` +
+      `[mirror] UNKNOWN: the source and the destination resolve to the same repository (${normalizeRemoteUrl(sourceResolved)}) — ` +
         `this clone cannot answer the question, and "current" would be an accident.`,
     );
     return EXIT_UNKNOWN;
