@@ -45,7 +45,8 @@ Measured on `1.14.0.dev32`, `rate_limit_enabled` at its default (on), no setting
   agree with `api-connections-ownership.md` (*"the 30th write is still accepted, and the 31st answers `429`"*) and
   with `connection_write_rate_limit_per_minute = 30`.
 - Creates, updates, revokes and deletes share this one bucket (the setting's docstring, and the lifecycle doc's
-  measurement). This file spends it with renames only and does not re-measure the sharing.
+  measurement). So do the credential-replacement `POST …/token` and the saved-registration `PUT`/`DELETE`
+  (`connections.py`). This file spends it with renames only and does not re-measure the sharing.
 - The ownership spec already proves that the bucket is keyed per **user**: B's write from the same client is
   accepted. It bounds the size only from above, because its user has already spent writes, and its doc leaves the
   exact size to this issue.
@@ -101,9 +102,14 @@ The two browser-facing OAuth routes answer an HTML `429` instead. Their refusal 
 two tests must never run in the same minute under the **same** user. Serial keeps the file in one worker, and a
 user per test keeps the tests apart from each other.
 
-**Per test.** `createConnectionsOwner` makes a throwaway user. Every call carries that user's token on the
-**test's own** `request`, so `apiCoverage` records it. The user is disposed in `finally`, which also removes every
-row it owns. Each owner costs one `POST /api/v1/login`, against the per-IP limit of 5/minute. The helper waits out
+**Per test.** `beforeEach` makes a throwaway user with `createConnectionsOwner`. Every call carries that user's
+token on the **test's own** `request`, so `apiCoverage` records it. `afterEach` disposes the user, which also
+removes every row it owns.
+
+**Why the counts cannot drift with the clock.** The limiter is fixed-window (slowapi's default strategy, with
+`memory://` storage), and a window starts at the key's **first hit**, not at a clock-minute boundary. A fresh user
+starts fresh keys, so a test cannot straddle a boundary and get extra calls through. Only a test that ran for more
+than 60 s could see a window reset, and that turns a refusal into a `200`: a red, never a false green. Each owner costs one `POST /api/v1/login`, against the per-IP limit of 5/minute. The helper waits out
 a refused window, so three tests in a row may pay up to a minute of setup when a sibling file logs in at the same
 moment. That cost is recorded rather than avoided.
 
@@ -148,6 +154,11 @@ Each count has a force-fail mutation executed against it: one more accepted call
 - A running Langflow **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login (the superuser) with user creation
   through `POST /api/v1/users/`, and rate limiting at its defaults (`rate_limit_enabled` on, no
   `LANGFLOW_*RATE_LIMIT*` override; the lanes set none).
+- **One Langflow worker, or a shared counter store.** With `memory://` storage each worker process keeps its own
+  counters, so with several workers the over-limit call can land on a worker that counted fewer and be accepted.
+  The daily, the PR lane and every start script pin `LANGFLOW_WORKERS=1`. `manual.yml` does not, so a dispatch
+  there can go red here for a reason that is not a Langflow regression; `LANGFLOW_RATE_LIMIT_STORAGE_URI` pointing
+  at a shared store removes the assumption.
 - No provider key, no OAuth registration, no network egress.
 - `src/backend/base/langflow/api/v1/connections.py`: the routes, and which limit and limiter scope each one
   checks.
