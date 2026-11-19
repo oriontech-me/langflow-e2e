@@ -5,6 +5,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createCatalogFlow, fetchComponentCatalog } from "../../../../helpers/flows/build-catalog-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 import { DRIVE_LIST_TYPE, driveListFlowSpec } from "../../../../helpers/integrations/connection-probe";
 import {
   type CreatedConnection,
@@ -13,6 +14,7 @@ import {
 } from "../../../../helpers/integrations/create-connection";
 
 // What a connector's failure looks like on the canvas, and the connection field no edge can reach (#2355).
+// Tests 4 and 5 run a provider other than Google, Jira (#2501).
 // Spec doc: docs/core-functionality/integrations/connector-run-errors.md
 //
 // Runs as the superuser: the canvas under auto-login cannot switch users. Flows come from the component catalog
@@ -43,6 +45,22 @@ const AUTH_EXPIRED = {
   message: "The provider credential is expired or was rejected.",
   hint: "Reconnect the integration and try again.",
 };
+
+// Jira, the non-Google provider #2501 runs on the canvas (measured on 1.14.0.dev32).
+const JIRA_SINCE = "1.14.0.dev23";
+const JIRA_NODE = "JiraRead-oracle";
+const JIRA_RUN_BUTTON = "button_run_jira: read issue";
+const BAD_JIRA_KEY = {
+  code: "invalid-request",
+  message: "Use a Jira issue key such as DEMO-123.",
+  hint: "Check the action's inputs and try again.",
+};
+const jiraReadFlowSpec = (handle: string, issue: string) => ({
+  nodes: [
+    { id: JIRA_NODE, type: "ext:jira:JiraReadIssueComponent@official", values: { connection: handle, issue } },
+  ],
+  edges: [],
+});
 
 interface RunError {
   type: "RUN_ERROR";
@@ -81,12 +99,15 @@ test.describe("Connector runs — the integration's own error on the canvas, and
     return flowId;
   }
 
-  /** Presses the Drive node's run button and returns the run's one `RUN_ERROR` and its raw stream. */
-  async function runNodeForError(page: Page): Promise<{ error: RunError; body: string }> {
+  /** Presses a node's run button (the Drive node's by default) and returns the run's one `RUN_ERROR` and its raw stream. */
+  async function runNodeForError(
+    page: Page,
+    node: { id: string; button: string } = { id: DRIVE_NODE, button: RUN_BUTTON },
+  ): Promise<{ error: RunError; body: string }> {
     const run = page.waitForResponse(
       (res) => new URL(res.url()).pathname === "/api/v2/workflows" && res.request().method() === "POST",
     );
-    await page.locator(`[data-id="${DRIVE_NODE}"]`).getByTestId(RUN_BUTTON).click();
+    await page.locator(`[data-id="${node.id}"]`).getByTestId(node.button).click();
     const body = await (await run).text();
     const errors = parseStreamEvents(body).filter(
       (event): event is RunError => (event as { type?: unknown } | null)?.type === "RUN_ERROR",
@@ -224,6 +245,70 @@ test.describe("Connector runs — the integration's own error on the canvas, and
             { timeout: 15000, message: "the autosaved flow's edges, by target field" },
           )
           .toEqual(["query"]);
+      });
+    },
+  );
+
+  test(
+    "a Jira action that cannot resolve its connection shows the integration's code and hint on the canvas",
+    { tag: ["@stable", "@integrations", "@ui-ux"] },
+    async ({ page, request }) => {
+      test.skip(!(await servedVersionAtLeast(request, JIRA_SINCE)), `the Jira bundle is served from ${JIRA_SINCE}`);
+      const handle = `jira/${uniqueConnectionName("connrunerr_jira")}`;
+      const expected = unresolved(handle);
+      const flowId = await saveFlow(request, jiraReadFlowSpec(handle, "DEMO-123"));
+      (page as PageWithErrorHooks).allowFlowErrors();
+      await openFlowById(page, flowId);
+
+      await test.step("the run's RUN_ERROR carries the code, and the message names the Jira handle", async () => {
+        const { error } = await runNodeForError(page, { id: JIRA_NODE, button: JIRA_RUN_BUTTON });
+        expect(error).toMatchObject({ code: expected.code, message: `${expected.message}\n\n${expected.hint}` });
+      });
+
+      await test.step("the canvas shows [code] message, and the hint on its own line", async () => {
+        await expectCanvasShows(page, expected);
+      });
+
+      await test.step("the fixture counted the run as a failure", async () => {
+        const report = await (page as PageWithErrorHooks).flowErrorReport();
+        expect(report.evaluated, "the run stream was read").toBeGreaterThan(0);
+        expect(report.unevaluatedTotal, report.summary).toBe(0);
+        expect(report.failures.map((failure) => failure.message).join("\n")).toContain(expected.message);
+      });
+    },
+  );
+
+  test(
+    "a Jira action whose input is malformed shows invalid-request and its hint on the canvas, before any connection is looked up",
+    { tag: ["@stable", "@integrations", "@ui-ux"] },
+    async ({ page, request }) => {
+      test.skip(!(await servedVersionAtLeast(request, JIRA_SINCE)), `the Jira bundle is served from ${JIRA_SINCE}`);
+      // Unbound on purpose: reading invalid-request rather than connection-unresolved is the proof of the order.
+      const handle = `jira/${uniqueConnectionName("connrunerr_jira")}`;
+      const flowId = await saveFlow(request, jiraReadFlowSpec(handle, "demo-123"));
+      (page as PageWithErrorHooks).allowFlowErrors();
+      await openFlowById(page, flowId);
+
+      await test.step("the run's RUN_ERROR is the bundle's own refusal, with the inputs hint", async () => {
+        const { error } = await runNodeForError(page, { id: JIRA_NODE, button: JIRA_RUN_BUTTON });
+        expect(error).toMatchObject({
+          code: BAD_JIRA_KEY.code,
+          message: `${BAD_JIRA_KEY.message}\n\n${BAD_JIRA_KEY.hint}`,
+        });
+      });
+
+      await test.step("the canvas shows [invalid-request] and the hint, and nothing about the connection", async () => {
+        await expectCanvasShows(page, BAD_JIRA_KEY);
+        for (const surface of failureSurfaces(page)) {
+          await expect(surface).not.toContainText("could not be resolved");
+        }
+      });
+
+      await test.step("the fixture counted the run as a failure", async () => {
+        const report = await (page as PageWithErrorHooks).flowErrorReport();
+        expect(report.evaluated, "the run stream was read").toBeGreaterThan(0);
+        expect(report.unevaluatedTotal, report.summary).toBe(0);
+        expect(report.failures.map((failure) => failure.message).join("\n")).toContain(BAD_JIRA_KEY.message);
       });
     },
   );
