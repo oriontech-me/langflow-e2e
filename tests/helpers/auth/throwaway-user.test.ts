@@ -37,7 +37,7 @@ test("eraseWaitVerdict: waits while the last progress is recent, fails once the 
 });
 
 test("eraseWaitVerdict: a long wait that keeps moving is fine until the ceiling", () => {
-  assert.deepEqual(eraseWaitVerdict({ now: 300_000, startedAt: 0, lastProgressAt: 299_000 }), { wait: true });
+  assert.deepEqual(eraseWaitVerdict({ now: 200_000, startedAt: 0, lastProgressAt: 199_000 }), { wait: true });
   const capped = eraseWaitVerdict({ now: ERASE_CEILING_MS, startedAt: 0, lastProgressAt: ERASE_CEILING_MS - 1 });
   assert.equal(capped.wait, false);
   assert.match((capped as { reason: string }).reason, /hard ceiling/);
@@ -60,8 +60,10 @@ function fakeClock(): EraseClock & { t: number } {
  * whatever `queueAt(t)` says (`null` = the read failed).
  */
 function fakeInstance(clock: { t: number }, erasedAt: number, queueAt: (t: number) => string[] | null) {
-  const get = async (url: string) => {
+  const get = async (url: string, options?: { params?: Record<string, unknown> }) => {
     if (url === "/api/v1/users/") {
+      // The filter is what makes this the erase queue; without it the list is every user.
+      assert.deepEqual(options?.params, { deletion_requested: "true", limit: 200 });
       const ids = queueAt(clock.t);
       if (ids === null) return { status: () => 500, json: async () => ({}) };
       return { status: () => 200, json: async () => ({ users: ids.map((id) => ({ id })) }) };
@@ -85,7 +87,7 @@ test("waitForUserErased: a queue that stops moving fails at the stall window, na
   const request = fakeInstance(clock, Number.POSITIVE_INFINITY, () => ["stuck", "me"]);
   await assert.rejects(waitForUserErased(request, {}, "me", clock), (error: Error) => {
     assert.match(error.message, /finished no erasure for 60s/);
-    assert.match(error.message, /queue 2 queued/);
+    assert.match(error.message, /queue 2 queued, this user still in it; 0 other erasure\(s\) finished meanwhile; last GET/);
     return true;
   });
   assert.ok(clock.t >= ERASE_STALL_MS && clock.t < ERASE_STALL_MS + 2_000, `failed at ${clock.t}`);
@@ -98,10 +100,20 @@ test("waitForUserErased: with the queue unreadable it degrades to a fixed stall 
   assert.ok(clock.t >= ERASE_STALL_MS && clock.t < ERASE_STALL_MS + 2_000, `failed at ${clock.t}`);
 });
 
+test("ERASE_CEILING_MS: below Playwright's 5-minute hook budget, so it can fire at all", () => {
+  assert.ok(ERASE_CEILING_MS < 5 * 60_000, `${ERASE_CEILING_MS}`);
+  assert.ok(ERASE_CEILING_MS > ERASE_STALL_MS);
+});
+
 test("waitForUserErased: a queue that moves forever without reaching us stops at the ceiling", async () => {
   // Someone else's deletions keep finishing while ours never does.
   const clock = fakeClock();
   const request = fakeInstance(clock, Number.POSITIVE_INFINITY, (t) => [`other-${Math.floor(t / 10_000)}`, "me"]);
-  await assert.rejects(waitForUserErased(request, {}, "me", clock), /hard ceiling/);
+  await assert.rejects(waitForUserErased(request, {}, "me", clock), (error: Error) => {
+    assert.match(error.message, /hard ceiling/);
+    // Others moved on and ours did not: the message must say so, not just "timed out".
+    assert.match(error.message, /this user still in it; \d+ other erasure\(s\) finished meanwhile, this one did not/);
+    return true;
+  });
   assert.ok(clock.t >= ERASE_CEILING_MS && clock.t < ERASE_CEILING_MS + 2_000, `failed at ${clock.t}`);
 });

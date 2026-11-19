@@ -115,11 +115,23 @@ export async function deleteThrowawayUser(
  * was and how long it had been still.
  */
 export const ERASE_STALL_MS = 60_000;
-/** A hard stop however steadily the queue moves: a run must not wait unboundedly on someone else's deletions. */
-export const ERASE_CEILING_MS = 10 * 60_000;
+/**
+ * A hard stop however steadily the queue moves: a run must not wait unboundedly on
+ * someone else's deletions. Below Playwright's 5-minute budget for the hook or test
+ * that calls this (`timeout` in `playwright.config.ts`) on purpose: a ceiling above
+ * it could never fire, and the bare Playwright timeout that fired instead would lose
+ * the queue diagnostic this wait exists to give.
+ */
+export const ERASE_CEILING_MS = 4 * 60_000;
 const ERASE_POLL_MS = 1_000;
 
-/** The ids the erase queue holds: `GET /api/v1/users/?deletion_requested=true`. `null` when unreadable. */
+/**
+ * The ids the erase queue holds: `GET /api/v1/users/?deletion_requested=true`.
+ * `null` when the read fails or the body has no `users` array. A build that ignored
+ * the filter would answer the full user list rather than `null`; any user deleted
+ * anywhere then still reads as progress, which is a real erasure all the same.
+ * (Builds before langflow#15470 answer the delete `200` and never reach this wait.)
+ */
 async function erasureQueue(request: APIRequestContext, superHeaders: Record<string, string>): Promise<Set<string> | null> {
   try {
     const res = await request.get("/api/v1/users/", {
@@ -186,16 +198,28 @@ export async function waitForUserErased(
   let lastProgressAt = startedAt;
   let queue = await erasureQueue(request, superHeaders);
   let last = "";
+  // Erasures of OTHER users seen to finish while waiting. With a stalled verdict
+  // this tells "the whole queue stopped" from "others moved on and ours did not" —
+  // the target's own erase failing and being retried (30/60/120/240 s) or stuck,
+  // while the rest of the queue keeps resetting the stall timer.
+  let othersFinished = 0;
   for (;;) {
     const res = await request.get(`/api/v1/users/${userId}`, { headers: superHeaders });
     if (res.status() === 404) return;
     last = `${res.status()}`;
     const current = await erasureQueue(request, superHeaders);
-    if (queueMoved(queue, current)) lastProgressAt = clock.now();
+    if (queueMoved(queue, current)) {
+      lastProgressAt = clock.now();
+      for (const id of queue as Set<string>) if (id !== userId && !(current as Set<string>).has(id)) othersFinished += 1;
+    }
     if (current !== null) queue = current;
     const verdict = eraseWaitVerdict({ now: clock.now(), startedAt, lastProgressAt });
     if (!verdict.wait) {
-      const depth = queue === null ? "unreadable" : `${queue.size} queued`;
+      const depth =
+        queue === null
+          ? "unreadable"
+          : `${queue.size} queued, this user ${queue.has(userId) ? "still in it" : "not listed"}; ` +
+            `${othersFinished} other erasure(s) finished meanwhile${othersFinished > 0 ? ", this one did not" : ""}`;
       throw new Error(
         `DELETE /api/v1/users/${userId} answered 202 but the user was not erased: ${verdict.reason} ` +
           `(after ${Math.round((clock.now() - startedAt) / 1000)}s; queue ${depth}; last GET: ${last})`,
