@@ -1885,7 +1885,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 863 `test()` calls carrying the `@stable` tag, distributed across 313 spec
+> 864 `test()` calls carrying the `@stable` tag, distributed across 313 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2755,6 +2755,7 @@
 #### ui-ux/
 - [x] select and delete a flow → `actionsMainPage-shard-1.spec.ts`
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
+- [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] zoom in and zoom out step the canvas scale and clamp at the React Flow bounds → `canvas-zoom-navigation.spec.ts`
 - [x] Fit View centers every node inside the canvas viewport → `canvas-zoom-navigation.spec.ts`
 - [x] Fit View is reachable from the canvas controls toolbar → `canvas-zoom-navigation.spec.ts`
