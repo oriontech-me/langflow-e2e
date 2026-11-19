@@ -67,5 +67,54 @@
       "reactions:write",
       "users:read"
     ]
+  },
+  "e2e-jira": {
+    "provider": "jira",
+    "client_id": "e2e-fake-jira-client",
+    "client_secret": "e2e-fake-jira-client-secret",
+    "tenant": "00000000-0000-4000-8000-0000000e2e10",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/jira/callback",
+    "scopes": [
+      "offline_access",
+      "read:jira-user",
+      "read:jira-work",
+      "write:jira-work"
+    ]
+  },
+  "e2e-confluence": {
+    "provider": "confluence",
+    "client_id": "e2e-fake-confluence-client",
+    "client_secret": "e2e-fake-confluence-client-secret",
+    "tenant": "00000000-0000-4000-8000-0000000e2e11",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/confluence/callback",
+    "scopes": [
+      "offline_access",
+      "read:confluence-user",
+      "read:page:confluence",
+      "write:page:confluence"
+    ]
+  },
+  "e2e-salesforce": {
+    "provider": "salesforce",
+    "client_id": "e2e-fake-salesforce-client",
+    "client_secret": "e2e-fake-salesforce-client-secret",
+    "tenant": "https://e2e-fake.my.salesforce.com",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/salesforce/callback",
+    "scopes": [
+      "api",
+      "id",
+      "refresh_token"
+    ]
+  },
+  "e2e-servicenow": {
+    "provider": "servicenow",
+    "client_id": "e2e-fake-servicenow-client",
+    "client_secret": "e2e-fake-servicenow-client-secret",
+    "tenant": "https://e2e-fake.service-now.com",
+    "redirect_uri": "http://localhost/api/v1/connections/oauth/servicenow/callback",
+    "scopes": [
+      "langflow_table_read",
+      "langflow_table_write"
+    ]
   }
 }

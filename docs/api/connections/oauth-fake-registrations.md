@@ -1,9 +1,10 @@
 # Fake OAuth registrations on every lane
 
-**Last validated:** Langflow 1.14.0.dev2 (`langflowai/langflow-nightly:latest`, 2026-10-22).
+**Last validated:** Langflow 1.14.0.dev32 (`langflowai/langflow-nightly:latest`, 2026-11-19) for the four
+site-bound registrations (#2498); 1.14.0.dev2 (2026-10-22) for the first four (#2301).
 
-Owning issue: #2301 (Dedicated Integrations, batch 2). Consumed by #2307 (the Add/Reconnect wizard and the OAuth
-callback).
+Owning issues: #2301 (Dedicated Integrations, batch 2) and #2498 (the site-bound providers). Consumed by #2307 (the
+Add/Reconnect wizard and the OAuth callback) and #2499 (OAuth for Jira, Confluence, Salesforce and ServiceNow).
 
 ---
 
@@ -50,6 +51,66 @@ The redirect is `http://localhost/api/v1/connections/oauth/<provider>/callback`:
 which the server accepts, and **no port**. No provider will ever redirect to it, because none accepts the fake
 client. Leaving the port out means one value serves every lane, whatever port its instance listens on. A spec must
 therefore assert the redirect's **path**, never its host.
+
+### The four site-bound providers (#2498)
+
+Jira, Confluence, Salesforce and ServiceNow joined the manifest in 1.14. Each signs in through OAuth only — a pasted
+token is refused with `422 "This integration does not support manually entered credentials."` — and each is bound to
+**one deployment site** the operator names in a server setting of its own. The provider's OAuth adapter refuses any
+registration that is not bound to that site with exactly its scopes, and a refused registration is **omitted** from
+`GET /oauth/registrations`. So a fake registration alone reaches nothing: without the site, the server drops it and
+says nothing.
+
+The lanes therefore carry four fake sites beside the registrations. Canonical copy:
+`scripts/lib/fake-integration-sites.json`.
+
+| Setting | Fake value | What the server accepts |
+|---|---|---|
+| `LANGFLOW_JIRA_CLOUD_ID` | `00000000-0000-4000-8000-0000000e2e10` | a canonical lowercase UUID |
+| `LANGFLOW_CONFLUENCE_CLOUD_ID` | `00000000-0000-4000-8000-0000000e2e11` | a canonical lowercase UUID |
+| `LANGFLOW_SALESFORCE_ORIGIN` | `https://e2e-fake.my.salesforce.com` | an HTTPS My Domain origin (`*.my.salesforce.com`) |
+| `LANGFLOW_SERVICENOW_ORIGIN` | `https://e2e-fake.service-now.com` | an HTTPS instance origin (`*.service-now.com`) |
+
+Each registration names its site as `tenant`, and the adapters demand these scope sets: Jira `offline_access
+read:jira-user read:jira-work write:jira-work`; Confluence `offline_access read:confluence-user read:page:confluence
+write:page:confluence`; Salesforce exactly `api id refresh_token`; ServiceNow a subset of `langflow_table_read
+langflow_table_write` that includes the read scope.
+
+Measured on `1.14.0.dev32` with these values:
+
+| Call | Result |
+|---|---|
+| `GET /oauth/registrations` | Lists all eight. A site-bound row carries non-empty `required_scopes`, which every `oauth/start` must request: `offline_access` for Jira and Confluence, `api id refresh_token` for Salesforce, `langflow_table_read` for ServiceNow. The first four carry `[]`. |
+| `POST /{id}/oauth/start`, Jira and Confluence | `200`, `https://auth.atlassian.com/authorize` with `audience=api.atlassian.com`, `prompt=consent`. |
+| `POST /{id}/oauth/start`, Salesforce | `200`, `https://e2e-fake.my.salesforce.com/services/oauth2/authorize` with `prompt=login consent` and PKCE (`code_challenge_method=S256`). |
+| `POST /{id}/oauth/start`, ServiceNow | `200`, `https://e2e-fake.service-now.com/oauth_auth.do` with PKCE (`S256`). |
+| `POST /{id}/oauth/start` without a required scope | `400 "Requested scopes must include offline_access for this connection."` (Salesforce: `"… include id, refresh_token …"`). |
+| Jira callback, `error=access_denied` with the cookie | `400` HTML *"OAuth authorization failed. …"*; the row moves to `status: error`, `status_reason: oauth-denied`. |
+| A pasted credential on Jira or Salesforce | Unchanged: `422 "This integration does not support manually entered credentials."` |
+| Manage providers: save a Jira registration bound to the site | `204` (it was `422 "The Jira Cloud deployment site is not configured."` on every lane). |
+| … bound to a different site | `422 "Jira requires a confidential OAuth registration bound to the configured site and scopes."` |
+
+Every `oauth/start` answered with the same cookie and three headers as the first four providers. **No provider is
+called**: the authorize URL is built locally. Only a token exchange would contact a site — a callback carrying a
+`code` — and the Salesforce and ServiceNow hosts are real third-party domains, so a spec that sends a code must expect
+whatever they answer for an unknown org (`provider-unavailable`, by the adapters' code).
+
+**What the default instance no longer shows.** Without a site, each adapter refuses with its own copy:
+`"The Jira Cloud deployment site is not configured."`, `"The deployment Confluence Cloud site is not configured."`,
+`"The Salesforce deployment org is not configured."` and `"The ServiceNow deployment instance is unavailable."`.
+These are operator-misconfiguration messages, and the same trade as the registrations applies: losing them on the
+lanes costs one copy each, while leaving the sites out costs every OAuth route of four providers. To reproduce the
+unconfigured state, start an instance with an **invalid** value (`LANGFLOW_JIRA_CLOUD_ID=none`). An empty value does
+not work: the starters write `${NAME:-default}`, which treats empty as unset.
+
+**No runtime check, by the same rule as #2301.** A registration the server drops is invisible at startup, so the
+guard is twofold: `scripts/fake-oauth-registrations.test.mjs` mirrors the adapters' rules (site, scope set, profile),
+and the specs that use a registration **fail** when it is missing (#2499). If upstream changes a scope set, the unit
+test still passes and the server drops the registration; the consuming spec then fails and names it.
+
+**Two settings are deliberately left out.** `LANGFLOW_CONFLUENCE_SPACE_IDS` and `LANGFLOW_SERVICENOW_TABLES` gate
+which spaces and tables an action may touch, not the OAuth registration. Their unset state is a contract of its own
+(`"Configure one to 100 approved Confluence space IDs …"`), which #2501 decides whether to assert.
 
 ### The decision: every lane, no selector
 
@@ -101,13 +162,16 @@ Where the value lives, and what keeps the copies equal:
 1. **Canonical:** `scripts/lib/fake-oauth-registrations.json`, readable and reviewed.
 2. **Workflows:** `pr-validation.yml`, `manual.yml` and `daily-stable.yml` set it on the Langflow **service**, beside
    the A2A flag. A service starts before any checkout, so it cannot read the file; each carries the compact JSON.
-3. **Starters:** `start-langflow-docker.sh`, `start-langflow-pip.sh`, `start-langflow-source.sh` and
-   `start-langflow-serving-identity.sh` carry it inlined as `DEFAULT_OAUTH_REGISTRATIONS='…'` and pass
+3. **Starters:** `start-langflow-docker.sh`, `start-langflow-pip.sh`, `start-langflow-source.sh`,
+   `start-langflow-serving-identity.sh` and `start-langflow-instance-migration.sh` carry it inlined as
+   `DEFAULT_OAUTH_REGISTRATIONS='…'` and pass
    `"${LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS:-$DEFAULT_OAUTH_REGISTRATIONS}"`. It is inlined rather than read
    from the file, because the VM lane pipes a starter to `bash -s` on the target, where no file of this repo
    exists. `start-langflow-enterprise.sh` is left out: it does not mirror that environment block.
-4. **The QA VM's daily** gets it through `start-langflow-source.sh`. `scripts/lib/vm-env-parity.mjs` classifies it
-   as starter-carried and compares the starter's literal with the daily's value. The reader resolves
+   The four sites travel the same way: each workflow's Langflow service sets them, and each starter passes
+   `NAME="${NAME:-<fake site>}"` right after the registrations.
+4. **The QA VM's daily** gets it through `start-langflow-source.sh`. `scripts/lib/vm-env-parity.mjs` classifies it,
+   and the four sites, as starter-carried and compares the starter's literals with the daily's values. The reader resolves
    `${NAME:-$DEFAULT_X}` to the single `DEFAULT_X='…'` assignment, the shape `LANGFLOW_SQLITE_PRAGMAS` already takes
    in `run-e2e.sh`.
 
@@ -115,15 +179,19 @@ Where the value lives, and what keeps the copies equal:
 
 ## Validation criterion *(required)*
 
-- `scripts/fake-oauth-registrations.test.mjs` checks four things:
-  - the four entries and the server's validation rules this file could break. A refused registration is
+- `scripts/fake-oauth-registrations.test.mjs` checks five things:
+  - the eight entries and the server's validation rules this file could break, including each site-bound
+    adapter's: `tenant` equal to its site, its exact scope set, the user profile. A refused registration is
     **omitted** from the list, not reported, so a broken entry would read as a shorter list;
+  - every fake site is a value the bundle's own reader accepts, and is used by exactly one registration;
   - every client id and secret is visibly fake, because the repository is public;
-  - every one of the seven copies equals `JSON.stringify` of the canonical file byte for byte;
+  - every one of the eight copies equals `JSON.stringify` of the canonical file byte for byte, and every lane and
+    starter carries each site with its canonical value, overridable;
   - no starter reads the file.
 - `start-langflow-docker.test.mjs` and `start-langflow-source.test.mjs` execute the starters and parse what reaches
-  docker and the server: the canonical JSON by default, `{}` when overridden.
-- `check-vm-env-parity` passes with 12 of 12 variables carried.
+  docker and the server: the canonical JSON by default, `{}` when overridden, and each site by default and when
+  overridden.
+- `check-vm-env-parity` passes with 16 of 16 variables carried.
 
 ---
 
@@ -137,3 +205,13 @@ Where the value lives, and what keeps the copies equal:
   and `LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS`.
 - `src/backend/base/langflow/api/v1/connections.py` — the registration list, `oauth/start`, the callback and its
   headers.
+- `src/backend/base/langflow/services/triggers/providers/jira/oauth.py`,
+  `src/backend/base/langflow/services/triggers/providers/confluence/oauth.py`,
+  `src/backend/base/langflow/services/triggers/providers/salesforce/oauth.py` and
+  `src/backend/base/langflow/services/triggers/providers/servicenow/oauth.py` — each site-bound adapter's
+  `validate_registration` and endpoints.
+- `src/bundles/jira/src/lfx_jira/schema.py`, `src/bundles/confluence/src/lfx_confluence/schema.py`,
+  `src/bundles/salesforce/src/lfx_salesforce/schema.py` and `src/bundles/servicenow/src/lfx_servicenow/schema.py` —
+  where each site setting is read and validated.
+- A Langflow **1.14** instance for the site-bound four: Jira ships from `1.14.0.dev10`, Confluence, Salesforce and
+  ServiceNow from `1.14.0.dev23`.

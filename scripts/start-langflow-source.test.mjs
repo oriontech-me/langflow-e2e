@@ -868,6 +868,22 @@ test("the fake OAuth registrations reach the server as the canonical JSON (#2301
   off.cleanup();
 });
 
+test("the deployment sites of the site-bound providers reach the server, each overridable (#2498)", () => {
+  // Inlined for the same reason as the registrations: the VM lane has no repo file to read.
+  const sites = JSON.parse(readFileSync(join(HERE, "lib", "fake-integration-sites.json"), "utf8"));
+  const r = runScript();
+  assertExit(r, 0);
+  for (const [name, value] of Object.entries(sites)) {
+    assert.equal(r.langflowEnv.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1], value, name);
+  }
+  r.cleanup();
+  const custom = "https://other-e2e.service-now.com";
+  const over = runScript({ env: { LANGFLOW_SERVICENOW_ORIGIN: custom } });
+  assertExit(over, 0);
+  assert.equal(over.langflowEnv.match(/^LANGFLOW_SERVICENOW_ORIGIN=(.*)$/m)?.[1], custom);
+  over.cleanup();
+});
+
 test("the default bind is loopback, unlike the pip starter's, because the VM is shared", () => {
   const r = runScript();
   assertExit(r, 0);
