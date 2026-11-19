@@ -85,6 +85,42 @@ function gridCell(page: Page, keyName: string, colId: string) {
   return row.locator(`[col-id="${colId}"]`);
 }
 
+/**
+ * Brings the row for `keyName` into the DOM before any of its cells is read.
+ *
+ * The page lists every key the user owns through AG-Grid, which virtualizes its
+ * rows: only those in (and just around) the viewport exist in the DOM. On a
+ * shared instance other specs leave keys behind, and on the VM daily of
+ * 2026-11-19 the browser received all 21 keys while the grid rendered 18 — this
+ * spec's two, listed last, were never rendered (#2505). The count is not this
+ * spec's to control, so it scrolls the body viewport one screen at a time until
+ * the row exists, and fails naming the key if the grid's bottom is reached first.
+ */
+async function revealKeyRow(page: Page, keyName: string): Promise<void> {
+  const cell = gridCell(page, keyName, "name");
+  const viewport = page.locator(".ag-body-viewport").first();
+  let reachedBottom = false;
+  await expect
+    .poll(
+      async () => {
+        if ((await cell.count()) > 0) return "rendered";
+        if (reachedBottom) return "absent from the whole grid";
+        reachedBottom = await viewport.evaluate((el) => {
+          const before = el.scrollTop;
+          el.scrollTop = before + el.clientHeight;
+          return el.scrollTop === before;
+        });
+        return "scrolling";
+      },
+      {
+        message: `the row for API key "${keyName}" must be rendered somewhere in the grid`,
+        timeout: 15_000,
+        intervals: [100, 250, 500],
+      },
+    )
+    .toBe("rendered");
+}
+
 test.describe("API key timestamp timezone handling (PR #13471)", () => {
   // Shared API keys are created once in beforeAll and read by both tests.
   test.describe.configure({ mode: "serial" });
@@ -164,7 +200,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
 
   test(
     "renders API key timestamps in the viewer's local timezone",
-    { tag: ["@regression", "@ui-ux", "@settings"] },
+    { tag: ["@regression", "@ui-ux", "@settings", "@stable"] },
     async ({ page, request }) => {
       const createdUtcWallClock = await test.step(
         "read the serialized created_at (UTC)",
@@ -192,6 +228,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
         await expect(page.locator(".ag-row").first()).toBeVisible({
           timeout: 30000,
         });
+        await revealKeyRow(page, expiringKeyName);
         await expect(gridCell(page, expiringKeyName, "name")).toBeVisible({
           timeout: 15000,
         });
@@ -215,6 +252,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
         await expect(gridCell(page, expiringKeyName, "last_used_at")).toHaveText(
           "Never",
         );
+        await revealKeyRow(page, foreverKeyName);
         await expect(gridCell(page, foreverKeyName, "expires_at")).toHaveText(
           "∞",
         );
