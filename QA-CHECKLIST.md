@@ -1884,9 +1884,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 138 | 118 | 0 | 3 | 17 |
+| `integrations/` — Dedicated Integrations | 143 | 122 | 0 | 3 | 18 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **911** | **759 (83%)** | **91 (10%)** | **17 (2%)** | **44 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **916** | **763 (83%)** | **91 (10%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1902,7 +1902,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 870 `test()` calls carrying the `@stable` tag, distributed across 315 spec
+> 876 `test()` calls carrying the `@stable` tag, distributed across 316 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1914,6 +1914,10 @@
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
 
 #### api/connections/
+- [x] <subject.name>: an unbound handle and a pending row both fail the run with connection-unresolved, naming the handle → `api-connections-action-runs.spec.ts`
+- [x] <subject.name>: a malformed <malformed.field> is refused before the connection is looked up, with the bundle's own copy → `api-connections-action-runs.spec.ts`
+- [x] WhatsApp: a malformed recipient is refused before the connection is looked up, as a plain error with no integration code → `api-connections-action-runs.spec.ts`
+- [x] Confluence: an unconfigured approved-space setting stops the action before its connection is looked up → `api-connections-action-runs.spec.ts`
 - [x] a run refused for an expired credential marks the connection expired and unhealthy, with no health check, while a run refused for a missing scope leaves its connection as it was → `api-connections-health.spec.ts`
 - [x] a pasted Slack token is checked with Slack before it is saved, and an app-level token breaking its rules is refused locally, each with its reason → `api-connections-health.spec.ts`
 - [x] checking an app-level token does not report it healthy → `api-connections-health.spec.ts`
@@ -2355,6 +2359,8 @@
 - [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
 - [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
 - [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
+- [x] a Jira action that cannot resolve its connection shows the integration's code and hint on the canvas → `connector-run-errors.spec.ts`
+- [x] a Jira action whose input is malformed shows invalid-request and its hint on the canvas, before any connection is looked up → `connector-run-errors.spec.ts`
 - [x] every dedicated integration action offers Tool Mode → `connector-tool-mode.spec.ts`
 - [x] an action in Tool Mode is one tool whose arguments exclude the connection → `connector-tool-mode.spec.ts`
 - [x] an action with a pagination output becomes two tools → `connector-tool-mode.spec.ts`
