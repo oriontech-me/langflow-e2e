@@ -1867,9 +1867,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 127 | 109 | 0 | 3 | 15 |
+| `integrations/` — Dedicated Integrations | 132 | 113 | 0 | 3 | 16 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **900** | **750 (83%)** | **91 (10%)** | **17 (2%)** | **42 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **905** | **754 (83%)** | **91 (10%)** | **17 (2%)** | **43 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1885,7 +1885,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 859 `test()` calls carrying the `@stable` tag, distributed across 312 spec
+> 863 `test()` calls carrying the `@stable` tag, distributed across 313 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2307,6 +2307,10 @@
 - [x] an abandoned Reconnect leaves a working connection as it was, and asks Microsoft for the offline access it never reports as granted → `connection-oauth-wizard.spec.ts`
 - [x] a pending connection the provider refuses shows Error, with the reason, on the page → `connection-oauth-wizard.spec.ts`
 - [x] the Add dialog explains its fields, links each provider's setup guide, and marks the Microsoft scopes only some inputs need → `connection-oauth-wizard.spec.ts`
+- [x] each pasted-token provider opens on its token form: no sign-in, no identity choice, no scopes, its own setup guide → `connection-token-providers.spec.ts`
+- [x] a token the provider refuses is shown verbatim, kept for correction, and stores nothing → `connection-token-providers.spec.ts`
+- [x] GitHub requires a future expiry, sent as UTC, and Allow background runs reaches the request → `connection-token-providers.spec.ts`
+- [x] Reconnect on a pending token connection sends the token to that row and leaves it pending when refused → `connection-token-providers.spec.ts`
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
 - [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
