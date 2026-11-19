@@ -1101,16 +1101,21 @@
 - [x] Tweak values passed to `POST /api/v1/run/{id}` cannot reach template fields as
       executable input (`langflow-ai/langflow#9319`, `#8672`)
       → security/tweaks-injection.spec.ts
-- [x] The floor holds on the **graph run path** — `POST /api/v2/workflows` `mode=stream` refuses a
-      `global_imports` and a `python_code` tweak on a code-execution node, and the refusal is
-      **named**: since `1.14.0.dev32` (#2504, upstream `#16466`) it arrives **before** any stream is
-      committed, as `422` with `code: TWEAKS_REFUSED` and `fields` naming the key — the shape
-      `POST /api/v1/run` returns — and only that shape is accepted. A benign tweak on the same
-      surface still answers `200` with an event stream and takes effect. This is the path
-      `langflow-ai/langflow#14538` says previously accepted tweaks the sync mode refused
+- [x] The floor holds on `POST /api/v2/workflows` `mode=stream` — a `global_imports` and a
+      `python_code` tweak on a code-execution node are refused, and the refusal is **named**: since
+      `1.14.0.dev32` (#2504, upstream `#16466`) it arrives **before** any stream is committed, as
+      `422` with `code: TWEAKS_REFUSED` and `fields` naming the key — the shape `POST /api/v1/run`
+      returns — and only that shape is accepted. A benign tweak on the same surface still answers
+      `200` with an event stream and takes effect. Since that build the refusal comes from a
+      pre-flight on the payload, so this bullet no longer exercises the **graph-path** enforcement
+      `langflow-ai/langflow#14538` added; the `mode=background` bullet below is now the one that does
       → security/tweaks-graph-path-floor.spec.ts
-- [x] The same on `mode=background`, read from `GET /api/v2/workflows/{job_id}/events` — kept as
-      its own bullet because `#14538` names both modes and they can regress independently
+- [x] The floor holds on the **graph run path** on `mode=background` — the same two protected
+      tweaks are refused and **named** in the job's events (`GET /api/v2/workflows/{job_id}/events`,
+      an `event: "error"` frame carrying `TweakRefusedError` and the refused key), and a benign
+      tweak still applies. Since `1.14.0.dev32` this is the only test reaching the graph-path
+      enforcement `langflow-ai/langflow#14538` added, the path it says previously accepted tweaks
+      the sync mode refused
       → security/tweaks-graph-path-floor.spec.ts
 - [x] `mode=sync` refuses a protected tweak **without ever answering 2xx**, and the refused request
       leaves the flow still running the author's code. Asserted shape-agnostically on purpose: the
