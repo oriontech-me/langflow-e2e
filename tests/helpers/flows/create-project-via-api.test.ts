@@ -3,7 +3,8 @@
 //
 // The load-bearing part is the TEARDOWN, not the creation. Langflow mints an API
 // key of its own (`MCP Project <name> - default`) whenever a project is created
-// (only with `auth_settings` on 1.12.0.dev18, always on 1.14.0.dev32, #2512), and
+// (only with `auth_settings` on 1.12.0.dev18; on 1.14.0.dev32 always, unless the
+// superuser skips auth under AUTO_LOGIN, #2512), and
 // `DELETE /api/v1/projects/{id}` answers 204 while leaving that key behind. If the sweep regresses, the
 // symptom is invisible: every spec using a restricted project keeps passing while
 // one orphan key accumulates per run on the shared superuser account.

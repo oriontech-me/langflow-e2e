@@ -28,11 +28,20 @@ import type { APIRequestContext } from "@playwright/test";
  * transaction, so any key in the first read whose project still exists is
  * matched by the second read and kept. Names that are not unique (the UI's
  * `New Project`) are covered by the same rule: while any `New Project` exists,
- * no `New Project` key is touched. The one case this cannot see is a concurrent
- * project CREATED under the same non-unique name and RENAMED since, whose key
- * keeps the old name; its MCP server would lose its key. Nothing in the suite
- * reads that key (the API returns it only masked, `********`), so the cost is
- * bounded to that project's auto-registered server.
+ * no `New Project` key is touched.
+ *
+ * **What a non-unique name costs, in both directions.** Langflow appends `(N)`
+ * only while the exact name is taken, so once a project created as `New
+ * Project` is renamed, the next sidebar create is `New Project` again, and the
+ * two keys share one name. The helper cannot tell them apart, and this is the
+ * NORMAL case under parallel workers, not a corner: several specs create a
+ * `New Project` and rename it at once. So (a) when no project is named `New
+ * Project`, every such key is revoked, including that of another worker's
+ * project which was renamed and still exists; its auto-registered MCP server
+ * loses its key, which nothing in the suite reads (the API returns it only
+ * masked, `********`). And (b) while any project is named `New Project`, none
+ * is revoked, so those keys are left for a later teardown. Unique names (every
+ * API-created project in the suite) have neither problem.
  *
  * Best-effort by design: this is teardown for a product defect, so every
  * failure is logged and nothing throws, never masking the test's own result.

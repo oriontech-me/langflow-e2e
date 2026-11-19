@@ -30,7 +30,8 @@ import { revokeProjectMintedKeys } from "./revoke-project-minted-keys";
  *
  * **It also revokes the API key Langflow minted for the project (#2512).**
  * Creating a project issues an account key named `MCP Project <name> -
- * default`, and the `204` of the delete leaves it active. The name is read from
+ * default` (on `1.14.0.dev32`, unless the superuser skips auth under
+ * `AUTO_LOGIN`), and the `204` of the delete leaves it active. The name is read from
  * the project list BEFORE the delete (the list, not `GET /projects/{id}`, so a
  * project the test already deleted costs no 404), and the key is revoked only
  * after a delete this call performed. That reads the CURRENT name, which is the

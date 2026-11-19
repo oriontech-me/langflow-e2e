@@ -27,7 +27,8 @@ import { revokeProjectMintedKeys } from "./revoke-project-minted-keys";
  * project makes the backend issue a key named `MCP Project <project name> -
  * default`, and `DELETE /api/v1/projects/{id}` answers `204` while leaving that
  * key behind. On `1.12.0.dev18` only a project created WITH `auth_settings`
- * minted one; on `1.14.0.dev32` every project does (#2512). Without the
+ * minted one; on `1.14.0.dev32` every project does, unless the superuser skips
+ * auth under `AUTO_LOGIN` (#2512). Without the
  * revocation every run of every caller leaves one orphan key on the shared
  * account, forever. `revokeProjectMintedKeys` matches the exact key name for the
  * generated project name, which is unique per call, so it cannot touch another

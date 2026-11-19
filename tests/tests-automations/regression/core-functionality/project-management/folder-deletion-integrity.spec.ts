@@ -123,7 +123,17 @@ test.afterEach(async ({ page, request }, testInfo) => {
   // the teardown adds no backend traffic of its own.
   await page.goto("about:blank").catch(() => {});
 
-  const authToken = await getAuthToken(request);
+  // Caught: `getAuthToken` throws once its retry budget is spent (a backend
+  // wedged at teardown, #1077), and a throw here is a hook error that fails a
+  // green test. Reached now also when a test recorded only a project name
+  // (#2512), so the guard is no longer theoretical for test 1.
+  let authToken: string;
+  try {
+    authToken = await getAuthToken(request);
+  } catch (error) {
+    console.warn(`⚠️ cleanup skipped, no auth token (#1077): ${error}`);
+    return;
+  }
   const headers = { Authorization: authToken };
   for (const id of flowIds) {
     // Not swallowed silently: a failed cleanup is reported, never hidden — but it
