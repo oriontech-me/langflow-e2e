@@ -23,11 +23,13 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
 1. **CRUD.** `POST /triggers` answers `201` with the exact 28-key `TriggerRead` and the defaults
    (`pending`, `flow` binding, `per_event`, `concurrency_limit: 1`, `max_attempts: 5`), owned by the flow's
    owner. `GET` by id, the list by `flow_id`, `PATCH` and `DELETE` (`204`, then `404` on every read).
-   `PATCH` with an explicit `null` is refused on the six required fields and accepted on the three
-   nullable references.
+   `PATCH` with an explicit `null` is refused on the six required fields and, on the three nullable
+   references, clears a value that was set. A `schedule` created through the API validates its cron on
+   create and on `PATCH`.
 2. **State machine.** `enable` arms (`active`) and `disable` pauses (`paused`). Both are idempotent.
-   `pending`, `expired`, `error` and `needs_reconnect` all enable. A `dead` trigger can be neither enabled
-   nor disabled, and stays `dead`.
+   `pending`, `expired` and `error` all enable. A `dead` trigger can be neither enabled nor disabled, and
+   stays `dead`. (`needs_reconnect` also enables while its `resume` reads blocked — measured and deliberately
+   not asserted, see *Measured, not asserted*.)
 3. **Pin.** `POST …/pin` takes a version of the trigger's own flow, or `null` to unpin. A version of
    another flow, or one that does not exist, is `404` on `pin`, on `PATCH` and on create alike. An empty
    body is refused rather than read as an unpin.
@@ -42,11 +44,12 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
    deployment binding without `deployment_id` (create and `PATCH`, the row unchanged after the refused
    `PATCH`), `config.mechanism_id` (create and `PATCH`), an extra field, a bad `kind`, an empty `name` and
    an unknown flow.
-7. **Owner scope.** Another user — the superuser included — gets `404 "Trigger not found"` on every
+7. **Owner scope.** Another user — here the superuser, which OSS does not exempt — gets `404 "Trigger not found"` on every
    per-trigger route of the owner's trigger, and on create and list for the owner's flow, and the row is
    unchanged afterwards.
 8. **The manual-QA leads, as the image behaves today** (TRG-2 / TRG-4). All three reproduce. None has an
-   upstream ticket, so they are asserted as the current behaviour, not declared failing (see *Leads*).
+   upstream ticket, so each is asserted as the current behaviour in a test of its own, not declared
+   failing (see *Leads*).
 
 ### Measured on `1.14.0.dev32`
 
@@ -57,8 +60,15 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
   `GET /{id}` returns it with `flow_name: null` (the operator file pins that difference).
 - **PATCH nulls.** `name`, `config`, `binding_target`, `session_policy`, `concurrency_limit` and
   `max_attempts` sent as `null` → `422`, `type: "value_error"`, `loc ["body", <field>]`, `msg` *"Value
-  error, This field cannot be null."*. `connection_id`, `deployment_id` and `flow_version_id` sent as
-  `null` → `200`.
+  error, This field cannot be null."*. `connection_id` (an owned connection), `deployment_id` (any UUID,
+  with the `flow` binding) and `flow_version_id` (through `pin`) can each be set, and a `PATCH` sending
+  `null` → `200` and a re-read reads `null`.
+- **Schedule through the API.** `kind: "schedule"` with `config: {cron: "0 0 1 1 *"}` → `201`, `pending`,
+  `config` filled to `{cron, timezone: "UTC", catchup_policy: "coalesce"}` (no `share_session`, which only
+  the reconciler adds). `{cron: "not a cron"}` → `422 {"detail": "Invalid cron expression: a valid
+  five-field cron expression is required."}`, and the same on a `PATCH`, which leaves the stored config
+  unchanged. A schedule with no config is accepted `pending`; with `state: "active"` and no config it is
+  refused with the same cron sentence (measured, not asserted).
 - **Delete.** `204` with an empty body. Afterwards `GET` and a second `DELETE` both answer `404
   {"detail": "Trigger not found"}`, and the flow's list is empty.
 - **Enable / disable.** `enable` on `pending` → `active`, `reason: null`; `enable` again → `200`, still
@@ -121,10 +131,19 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
 
 ### Leads from manual QA — reproduced, asserted as today's behaviour
 
-None of the three has an upstream ticket, so none is a `test.fail()` declaration (#1084's rule: a
-declaration names the ticket that will retire it). Each step asserts what the image does today, and its
-title and the assertion message say it is the lead. When upstream fixes one, that step goes red naming
-the lead, and the response is to turn it into the fixed contract.
+None of the three has an upstream ticket, and none will be filed without the team's confirmation, so
+none is a `test.fail()` declaration (#1084's rule: a declaration names the ticket that will retire it).
+Each lead is **its own test** asserting what the image does today, with *"LEAD:"* in its assertion
+messages. They are separate so that when upstream fixes one, the daily's `@stable` removal takes only
+that test, never the other two. A lead going red is upstream changing it; the response is to turn that
+test into the fixed contract, and — once a ticket exists — to name it here. Each lead is one candidate
+ticket:
+
+| Test | Candidate ticket |
+|---|---|
+| *lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch* | Create (and `PATCH`) should refuse a `deployment_id` that names no deployment, instead of accepting it and failing every event at dispatch |
+| *lead: enable arms a webhook whose payload_schema is malformed, and erases the error* | `enable` should refuse an `inbound_webhook` whose config the reconciler recorded as invalid, as it does a schedule, and must not erase that reason |
+| *lead: a stored payload_schema is not enforced on delivery* | Ingress should validate a delivery against the trigger's `payload_schema`, or the node should stop offering a schema it never applies |
 
 - **A `deployment` binding accepts a `deployment_id` that names nothing.** A random UUID → `201`,
   `binding_target: "deployment"`; `enable` → `active`; `POST …/test` → an event that ends `failed` with
@@ -166,7 +185,8 @@ the lead, and the response is to turn it into the fixed contract.
 
 `@stable`: no provider key, no model and no network egress (the one delivery goes to the instance's own
 ingress). Every row is created by a throwaway user made once per worker and deleted with it, so nothing
-touches another spec's triggers, and the one schedule armed in this file is on `0 0 1 1 *`, which does
+touches another spec's triggers (its deletion waits on Langflow's serial erase queue for as long as that
+queue keeps moving — `ERASE_STALL_MS` in `throwaway-user.ts`), and the one schedule armed in this file is on `0 0 1 1 *`, which does
 not fire inside a run. The floor is `1.14.0.dev16`, where `TriggerRead` gained `last_error_code`
 (upstream #16132) — the 28-key set this file asserts. The canvas-only kinds were measured on
 `1.14.0.dev32` only.
@@ -175,7 +195,7 @@ not fire inside a run. The floor is `1.14.0.dev16`, where `TriggerRead` gained `
 
 ## Step by step *(required)*
 
-Eight tests over the `request` fixture, each declaring its operations through `apiCoverage`. A throwaway
+Ten tests over the `request` fixture, each declaring its operations through `apiCoverage`. A throwaway
 **owner** (`createConnectionsOwner`) is created once per worker and owns every flow and trigger here;
 deleting it in `afterAll` takes them with it, and each test also deletes its own flows by id. Flows are
 empty (`{nodes: [], edges: []}`) unless stated. Names carry a per-run suffix.
@@ -187,14 +207,19 @@ empty (`{nodes: [], edges: []}`) unless stated. Names carry a per-run suffix.
 3. `PATCH {name, concurrency_limit: 3, max_attempts: 7, session_policy: "shared"}` → `200` with the four
    values; a re-read agrees.
 4. `PATCH` each of the six required fields to `null` → `422`, the exact entry; a re-read is unchanged.
-5. `PATCH` each of the three nullable references to `null` → `200`.
-6. `DELETE` → `204`, empty body. `GET`, a second `DELETE` → `404 "Trigger not found"`; the list is `[]`.
+5. Set the three nullable references (a connection planted through `createConnectionViaApi`, a random
+   `deployment_id`, a pin to a snapshot of A) and re-read them set; `PATCH` each to `null` → `200`, and a
+   re-read reads `null`.
+6. Create a `schedule` with a valid cron → `201`, the filled config, a re-read agrees. A malformed cron on
+   create and on `PATCH` → `422`, the exact sentence; the stored config is unchanged.
+7. `DELETE` → `204`, empty body. `GET`, a second `DELETE` → `404 "Trigger not found"`; the list is `[]`.
 
 ### 2. Enable arms and disable pauses, idempotently, from every state but dead
 
 1. Create a `pending` `inbound_webhook`. `enable` twice → `active`, `reason: null` both times; `disable`
    twice → `paused`, `reason: "paused"` both times; `enable` → `active`. A re-read agrees after each.
-2. Create one each in `expired`, `error` and `needs_reconnect`; `enable` each → `active`.
+2. Create one each in `expired` and `error`, each read back in that state; `enable` each → `active`.
+   `needs_reconnect` is left out on purpose (see *Measured, not asserted*).
 3. Create a `dead` one. `enable` → the exact `409` object; `disable` → the exact `409` string; a re-read
    reads `dead`.
 
@@ -241,38 +266,47 @@ empty (`{nodes: [], edges: []}`) unless stated. Names carry a per-run suffix.
 ### 7. Only the flow's owner can see or act on its triggers
 
 1. The owner creates a flow and an `active` trigger on it.
-2. As the superuser: `GET`, `PATCH`, `DELETE`, `enable`, `disable` and `pin` of that trigger, a create on
+2. As another user — the superuser, which OSS does not exempt: `GET`, `PATCH`, `DELETE`, `enable`, `disable` and `pin` of that trigger, a create on
    that flow and `GET ?flow_id=` of it → each `404 {"detail": "Trigger not found"}`.
 3. The owner's re-read is unchanged (`active`, same name, same `updated_at`), and its list holds only it.
 
-### 8. The three manual-QA leads, as the image behaves today
+### 8. Lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch
 
-1. **Lead — deployment binding.** Create with `binding_target: "deployment"` and a random
-   `deployment_id` → `201`. `enable` → `active`. `POST …/test` → `202`; poll the events until it settles →
-   `failed`, the exact `error`. The trigger reads `active`, `reason: "degraded"`, that `last_error`.
-2. **Lead — enable skips the webhook config.** Flow with a `"not json"` webhook node → `pending`, the
-   parse error in `last_error`. `enable` → `200`, `active`, `last_error: null`, `config.payload_schema`
-   still `"not json"`.
-3. **Lead — schema not enforced.** Flow with the `required: ["x"]` webhook node; `enable`; mint its
-   signing secret (`mintSigningSecret`) and deliver `{"y": 1}` → `202`; poll its events → one `completed`
-   row whose `payload.delivery` is `{"y": 1}`.
+1. Create with `binding_target: "deployment"` and a random `deployment_id` → `201`; a re-read holds both.
+2. `enable` → `active`, re-read.
+3. `POST …/test` → `202`; poll the events until it settles → `failed`, the exact `error`. The trigger
+   reads `active`, `reason: "degraded"`, that `last_error`.
+
+### 9. Lead: enable arms a webhook whose payload_schema is malformed, and erases the error
+
+1. Flow with a `"not json"` webhook node → `pending`, the parse error in `last_error`.
+2. `enable` → `200`; its answer and a re-read both read `active`, `last_error: null`,
+   `config.payload_schema` still `"not json"`.
+
+### 10. Lead: a stored payload_schema is not enforced on delivery
+
+1. Flow with the `required: ["x"]` webhook node → the schema stored as an object; `enable` → `active`,
+   re-read.
+2. Mint its signing secret (`mintSigningSecret`) and deliver `{"y": 1}` → `202`; poll its events → one
+   `completed` row whose `payload.delivery` is `{"y": 1}`.
 
 ---
 
 ## Validation criterion *(required)*
 
-Tests 1–8 pass five consecutive times at `--retries=0 --workers=1` against `1.14.0.dev32`, and once at the
-default worker count, with:
+Tests 1–10 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev32`, and three
+times at the default worker count, with:
 
 - every refusal asserted by its status and its exact body, or its `type` and `loc`;
-- every write's effect re-read through `GET` — never inferred from the write's own answer alone;
+- every write's effect re-read through `GET` or the flow's list — never inferred from the write's own
+  answer alone;
 - each lead step's message naming the lead, so a fix arriving reads as such;
 - the declared coverage matching what the fixture recorded: `POST /api/v1/triggers`,
   `GET /api/v1/triggers`, `GET /api/v1/triggers/{trigger_id}`, `PATCH /api/v1/triggers/{trigger_id}`,
   `DELETE /api/v1/triggers/{trigger_id}`, `POST /api/v1/triggers/{trigger_id}/enable`,
   `POST /api/v1/triggers/{trigger_id}/disable`, `POST /api/v1/triggers/{trigger_id}/pin`,
   `POST /api/v1/triggers/{trigger_id}/test`, `GET /api/v1/triggers/{trigger_id}/events`,
-  `POST /api/v1/triggers/{trigger_id}/signing-secret`, `POST /api/v1/flows/`,
+  `POST /api/v1/triggers/{trigger_id}/signing-secret`, `POST /api/v1/connections`, `POST /api/v1/flows/`,
   `PATCH /api/v1/flows/{flow_id}`, `DELETE /api/v1/flows/{flow_id}` and
   `POST /api/v1/flows/{flow_id}/versions/`.
 
@@ -300,6 +334,7 @@ The file drives only the `request` fixture, so the HTTP-error monitor sees none 
 - `src/lfx/src/lfx/components/triggers/schedule_trigger.py` and
   `src/lfx/src/lfx/components/triggers/inbound_webhook_trigger.py` — the two nodes the reconciler reads.
 - `tests/helpers/triggers/trigger-api.ts`, `tests/helpers/triggers/sign-webhook.ts`,
-  `tests/helpers/integrations/connections-owner.ts`, `tests/helpers/flows/build-catalog-flow.ts`,
+  `tests/helpers/integrations/connections-owner.ts`, `tests/helpers/integrations/create-connection.ts`,
+  `tests/helpers/auth/throwaway-user.ts`, `tests/helpers/flows/build-catalog-flow.ts`,
   `tests/helpers/flows/create-flow.ts`, `tests/helpers/flows/delete-flow.ts` and
   `tests/helpers/other/served-version.ts`.
