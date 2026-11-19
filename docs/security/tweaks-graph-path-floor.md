@@ -1,6 +1,6 @@
 # Tweaks — the protected-field floor on the graph run path
 
-**Last validated:** Langflow 1.12.0.dev38 — manifest list shared by `:latest` and `:1.12.0.dev38` (verified identical), `linux/amd64` `sha256:5082eb1ecb056f94491c4debe25925be48948dabc15db7186eeeb9fe645021d0` (the image every CI lane pulls) / `linux/arm64` `sha256:5813e74988bf09fdfd6c16fd5aad39aae0099469907ec48d5e5625a3f9c66683` (the one this validation ran on, named because the arch is part of the measurement); upstream revision `814fbceeb1dd38d3e52f60ce1e638af6fb725ffe`. First validated on 1.12.0.dev37 (`sha256:b672ab7e…`, revision `50340f2a4322…`); the measured table below is unchanged between the two builds, re-measured for `mode=sync` on dev38.
+**Last validated:** Langflow 1.14.0.dev32 — the published `langflow==1.14.0.dev32` wheel (the distribution the VM daily installs), served locally with `--workers 1`; re-validated for #2504 after `mode=stream` changed its refusal shape (see **Measured contract**). Previously validated on Langflow 1.12.0.dev38 — manifest list shared by `:latest` and `:1.12.0.dev38` (verified identical), `linux/amd64` `sha256:5082eb1ecb056f94491c4debe25925be48948dabc15db7186eeeb9fe645021d0` (the image every CI lane pulls) / `linux/arm64` `sha256:5813e74988bf09fdfd6c16fd5aad39aae0099469907ec48d5e5625a3f9c66683` (the one this validation ran on, named because the arch is part of the measurement); upstream revision `814fbceeb1dd38d3e52f60ce1e638af6fb725ffe`. First validated on 1.12.0.dev37 (`sha256:b672ab7e…`, revision `50340f2a4322…`); the measured table below is unchanged between the two builds, re-measured for `mode=sync` on dev38.
 
 ---
 
@@ -30,7 +30,9 @@ Every refusal is paired with a **benign** tweak on the same surface and the same
 
 No **functional** tag applies: the tag table has no security area, and the sibling `security/` specs (`tweaks-injection`, `code-execution-endpoints`, `ssrf-url-validation`) also carry only cross-cutting tags. `@api` marks the layer; `@regression` is what issue #1567 asks for.
 
-**`@stable` was added in the validation cycle #1572 asked for, not in the first delivery.** PR #1571 shipped the file `@api @regression` only, which the repo's own mechanism turns into *no scheduled lane at all*: `daily-stable.yml` selects `--grep @stable` and `nightly.yml` has been dispatch-only since 2026-03, so the three tests ran only when `pr-validation.yml`'s impacted-specs gate happened to select them. The graph-path half of `langflow-ai/langflow#14538` — the half that closed a real bypass — was therefore watched by nothing, while the sync-endpoint sibling (`security/tweaks-injection.spec.ts`) was watched daily. The lane profile is why promotion needed no design change: pure API, no browser, no LLM, no provider key, no `@destructive` state, three tests in ~3 s, and no failure mode that depends on a provider key or quota. Validated on the build in **Last validated** above — five consecutive `--workers=1 --retries=0` runs plus one default-parallel run (3 workers, one `beforeAll` per worker), 18/18 tests green, zero orphan flows left behind, and an executed force-fail for every assertion family — attribution, liveness, the sync `2xx` floor, and acceptance, the last of which takes a two-part mutation on the streaming surfaces for a reason recorded under **Validation criterion**.
+**`@stable` was added in the validation cycle #1572 asked for, not in the first delivery.** PR #1571 shipped the file `@api @regression` only, which the repo's own mechanism turns into *no scheduled lane at all*: `daily-stable.yml` selects `--grep @stable` and `nightly.yml` has been dispatch-only since 2026-03, so the three tests ran only when `pr-validation.yml`'s impacted-specs gate happened to select them. The graph-path half of `langflow-ai/langflow#14538` — the half that closed a real bypass — was therefore watched by nothing, while the sync-endpoint sibling (`security/tweaks-injection.spec.ts`) was watched daily. The lane profile is why promotion needed no design change: pure API, no browser, no LLM, no provider key, no `@destructive` state, three tests in ~3 s on 1.12 (8–9 s on the 1.14.0.dev32 wheel served locally), and no failure mode that depends on a provider key or quota. Validated on the build in **Last validated** above — five consecutive `--workers=1 --retries=0` runs plus one default-parallel run (3 workers, one `beforeAll` per worker), 18/18 tests green, zero orphan flows left behind, and an executed force-fail for every assertion family — attribution, liveness, the sync `2xx` floor, and acceptance, the last of which takes a two-part mutation on the streaming surfaces for a reason recorded under **Validation criterion**.
+
+**Test 1 lost `@stable` on 2026-11-19 and had it restored in the #2504 fix.** The VM daily's hard failure on 1.14.0.dev32 removed it (PR #2497, by hand because that lane's automatic removal was switched off, #2330); the failure was the refusal-shape change recorded under **Measured contract**, not a weakened floor, and the tag came back with the assertion that pins the new shape.
 
 Not `@destructive`, and that is a **precondition of the promotion, not a note**: `@stable` combined with `@destructive` would put the tests back in no scheduled lane, since `daily-stable.yml` has no destructive lane (#1010). The file creates and deletes only its own two flows and sets no instance-wide state.
 
@@ -48,6 +50,26 @@ Measured on 1.12.0.dev37 and re-verified on the dev38 digest above, against the 
 | `python_code` (protected) | `422` · `fields: ["python_code"]` | **`500`, same generic body** | same as above | same as above |
 | `sender_name` (benign control) | `200`, applied | `200`, applied | `200`, applied | `200`, applied |
 | none (control) | `200`, author value | `200`, author value | `200`, author value | `200`, author value |
+
+### What changed on 1.14.0.dev32 (#2504)
+
+Re-measured on `langflow==1.14.0.dev32`, the build on which the `mode=stream` test went red on the VM daily of 2026-11-19 (3 of 3 attempts, `Expected: 200, Received: 422`; it had passed on dev31 the day before). Two cells of the table above changed, and both for the same reason:
+
+| tweak on the interpreter node | `/api/v2/workflows` `sync` | `/api/v2/workflows` `stream` | `/api/v2/workflows` `background` |
+|---|---|---|---|
+| `global_imports: ["os"]` (protected) | `422` · `code: TWEAKS_REFUSED` · `fields: ["global_imports"]` | **`422` · `application/json` · `{"detail": {"error": "Refused tweaks", "code": "TWEAKS_REFUSED", "message": "The field is protected and keeps the value set by the flow author.", "fields": ["global_imports"]}}`** — no stream is opened | unchanged: `200` + the error frame on `GET /{job_id}/events` |
+| `python_code` (protected) | `422` · `fields: ["python_code"]` | **`422`, same body with `fields: ["python_code"]`** | unchanged |
+| `input_value` (benign control, chat flow) | `200`, applied | `200` · `text/event-stream`, applied, no error frame | `200`, applied |
+
+**Cause: upstream `langflow-ai/langflow#16466`** (*"fix(api): stop v2 workflow runs at Human Input"*, merged into `release-1.14.0` on 2026-11-18, `79a10cf2ef`, first in `v1.14.0.dev32`). It adds `_reject_hitl_outside_background()` to `api/v2/workflow_validation.py` and calls it from both `run_sync_with_mapping` and `build_stream_response` **before the response is constructed**. To see whether a tweak adds a Human-in-the-Loop gate, it applies the tweaks to the graph data with `process.process_tweaks(...)` — and that is where the floor now refuses. Its own comment says so: *"A refused tweak raises TweakRefusedError here, as it would at run time"*. The exception therefore reaches the app-level handler in `main.py` while nothing has been sent, which answers the same structured `422` as `POST /api/v1/run`. The hook does not run for `mode=background`, so that surface is unchanged.
+
+**The floor did not move** — the refusal still happens, it happens earlier, and no build runs at all. What changed is how it reaches the caller, and on both surfaces the change is towards the contract this file had been comparing them against: `sync` lost its generic `500` (the defect recorded below, fixed as a side effect), and `stream` now matches `POST /api/v1/run` exactly instead of reporting on an already-committed `200`.
+
+**What this costs in coverage — Test 1 no longer reaches the graph path.** The pre-flight refuses with `process.process_tweaks`, the *payload*-path enforcement `security/tweaks-injection.spec.ts` already pins on `POST /api/v1/run`, and it refuses before the graph is built — so on `mode=stream` the graph-path enforcement `#14538` added (`process_tweaks_on_graph` in `api/build.py`) is now masked and cannot be reached from the API with a protected tweak. If that `build.py` filter regressed to filtering only `code` while the pre-flight stays, Test 1 would stay green. **Test 2 (`mode=background`, which the pre-flight does not touch) is now the only test in this file that exercises the graph-path refusal**; Test 1 pins how the stream surface reports a refusal, and that the floor holds on it end to end, not which layer enforces it.
+
+**Test 1 now pins the up-front `422` and only that.** Accepting both shapes was weighed and declined: the daily runs the 1.14 nightly, where the old shape no longer occurs, and a test accepting either would stay green if the stream silently went back to committing a `200` before validating — a contract change this file exists to record. The `422` arrives through a side effect of a Human-in-the-Loop check rather than through a validation written for tweaks, which makes it easier to lose in a refactor; a red Test 1 is how that would be noticed. Test 3 (`sync`) is **unchanged**: it was written to stay green under both the `500` and the `422`, and it does.
+
+The paragraphs below describe the 1.12 measurement and are kept as the record of why the file was shaped as it is.
 
 **The floor holds on all four surfaces** — no protected tweak was ever applied, on any surface, in any policy state. The graph path enforces it, which is what `#14538` claims and what this spec pins so a regression cannot return it silently.
 
@@ -94,15 +116,21 @@ The spec runs **3 tests** via Playwright's `request` fixture. No browser, no LLM
 
 **Test 1 — `mode=stream` refuses a protected tweak, and says so** *(`@stable @api @regression`)*
 
-1. `POST /api/v2/workflows` with `mode: "stream"` and `tweaks: { <pythonNodeId>: { global_imports: ["os"] } }`; assert `200` (the stream is committed before the build runs).
-2. Parse the body with `parseStreamEvents()` and assert an `event: "error"` frame exists whose serialized text names both `TweakRefusedError` and the refused key `global_imports` — the refusal is attributable, not a bare failure.
-3. Assert `WIDENED:` appears nowhere in the stream: the sandbox was not widened, in the one place a silent acceptance would show.
-4. Repeat 1–3 for `python_code`, asserting the caller's sentinel never appears.
-5. **Control, same surface:** the benign `input_value` tweak on the chat flow produces that value in the `add_message` text and emits **no** error frame; the same call with no tweaks produces the flow's stored value. Without this, steps 2–4 pass equally well against a dead mechanism.
+Since 1.14.0.dev32 (#2504) this surface refuses **before** the stream is opened, so its refusal steps differ from Test 2's; the control step is shared.
+
+1. `POST /api/v2/workflows` with `mode: "stream"` and `tweaks: { <pythonNodeId>: { global_imports: ["os"] } }`; assert `422` — the request is refused before any stream is committed.
+2. Assert the JSON body's `detail.code` is `TWEAKS_REFUSED` and `detail.fields` names `global_imports` — the refusal is attributable, the same shape `POST /api/v1/run` returns.
+3. Assert `WIDENED:` appears nowhere in the body: the sandbox was not widened. On this shape no build runs, so this is a guard against a future shape that runs and refuses late, not the causal probe it is on Test 2.
+4. Repeat 1–3 for `python_code`, asserting `fields` names `python_code` and the caller's sentinel never appears.
+5. **Control, same surface:** the benign `input_value` tweak on the chat flow answers `200` with an event stream, produces that value in the `add_message` text and emits **no** error frame. Without this, steps 1–4 pass equally well against an endpoint that refuses everything.
 
 **Test 2 — `mode=background` refuses it too, and says so** *(`@stable @api @regression`)*
 
-Same five steps, with the events read from `GET /api/v2/workflows/{job_id}/events` after the submit returns a `job_id`. Kept as its own test because `#14538` names both modes and they can regress independently.
+1. Submit with `mode: "background"` and the `global_imports` tweak; assert `200` and a `job_id` (the job is queued before the build runs).
+2. Read `GET /api/v2/workflows/{job_id}/events` and assert an `event: "error"` frame whose serialized text names both `TweakRefusedError` and the refused key — the refusal is attributable, not a bare failure.
+3. Assert `WIDENED:` appears nowhere in the events.
+4. Repeat 1–3 for `python_code`, asserting the caller's sentinel never appears.
+5. **Control:** the benign tweak produces its value and no error frame. Kept as its own test because `#14538` names both modes and they can regress independently.
 
 **Test 3 — `mode=sync` refuses a protected tweak without ever answering `2xx`** *(`@stable @api @regression`)*
 
@@ -131,13 +159,27 @@ Force-fail evidence for the `@stable` promotion (#1572), each mutation executed 
 
 **Why the acceptance check on the two streaming surfaces needs that last, two-part mutation, and what that says about it.** On `mode=stream` and `mode=background` a protected tweak is refused *before the build runs*, so the refused request emits no program output whatsoever — measured, not inferred: mutating `sandboxProbe` so that **both** of its branches print the sentinel leaves tests 1 and 2 **green** (only test 3 fails, on its own no-residue step). No test-side edit to the probe or the sentinel alone can make the streaming `WIDENED:` assertion fire. It fires only when the run actually executes while the sentinel matches what it prints, which is exactly the causal shape of a real acceptance — and that is the mutation in the last row. Read the row as what it is: the assertion is proven live, by the one mutation that reproduces the bypass `langflow-ai/langflow#14538` closed, and by nothing cheaper.
 
+Force-fail evidence for the #2504 re-validation, each mutation executed against `langflow==1.14.0.dev32` with `--retries=0` and reverted (the file restored byte-for-byte from a copy, then one final green run). Five consecutive `--workers=1 --retries=0` runs were green beforehand (3/3, 8–9 s each), and the instance's flow count was the same before and after.
+
+| mutation | emulates | tests that failed, and on which assertion |
+|---|---|---|
+| the protected `global_imports` tweak replaced by a benign `sender_name` one | the floor stops refusing | 1 — the `422` assertion, `Received: 200` with an event stream; 2 — *"the refusal must be attributable on this surface"*; 3 — *"a refused global_imports tweak must not answer 2xx"* |
+| the expected `fields` → `[field + "-x"]` | the refusal no longer names the key | 1 — *"and it must name the key it refused"* |
+| the expected `code` → `TWEAKS_REFUSED_X` | the refusal is unattributable | 1 — *"the refusal must be attributable on this surface"* |
+| the up-front `absent` sentinel → `Refused tweaks`, text the body carries | the refused request ran the injected code | 1 — *"the refused request must not have run the widened or injected code"* |
+| the expected status `422` → `200` | the stream went back to committing before validating (the shape this file no longer accepts) | 1 — the status assertion, `Received: 422` |
+| `CHAT_INPUT_NODE_ID` → an id no node has | the tweaks mechanism is dead | 1, 2 — *"tweaks must be alive on this surface"* |
+| `REFUSAL_MARKER` → a string the frame does not carry | the background refusal is unattributable | 2 — *"the refusal must be attributable on this surface"*; Test 1 no longer reads that marker, by design |
+
+On the up-front shape no build runs, so the causal `WIDENED:` probe has nothing to observe on Test 1: its `absent` check is shown to execute by the fourth row — which proves the assertion runs, not that it can detect a real acceptance on a shape that carries no program output — not by the two-part acceptance mutation in the 1.12 table above, which now applies to Test 2 only.
+
 ---
 
 ## What this test does not cover *(optional)*
 
 - **`POST /api/v1/run/{flow_id}`** — owned by `security/tweaks-injection.spec.ts` and by #1566, which is adapting that file to the `422` contract this build returns. Covering it here would duplicate assertions across two files that must then change together. It is measured in the table above only as the reference the other surfaces are compared against.
 - **`LANGFLOW_TWEAKS_POLICY` and the `api_editable` allowlist.** Measured working (above), so this is a lane decision and not a product question: the setting is instance-global, cannot be set from a test, and no lane starts a container with it — so a gated spec would `skip` on every lane the suite runs, which is the failure mode #1010 exists to prevent. It is a *coverable* surface awaiting a lane, and the exact refusal reasons are recorded here so that spec does not have to re-measure them.
-- **The exact refusal shape on `mode=sync`** — `422` + `TWEAKS_REFUSED` + `fields`, as `POST /api/v1/run` returns. Measured to be a generic `500` (above) and deliberately not asserted: the difference is an API-contract cost, not a security one, and a spec pinning either number would be wrong in one of the two worlds. A one-arm addition to that router's `except` ladder would fix it, at which point Test 3 keeps passing unchanged and this entry can be tightened.
+- **The exact refusal shape on `mode=sync`** — `422` + `TWEAKS_REFUSED` + `fields`, as `POST /api/v1/run` returns. Measured as a generic `500` on 1.12 and as that `422` on 1.14.0.dev32 (#16466, above), and still deliberately not asserted: the dev32 `422` comes from a pre-flight check, not from the router's `except` ladder, so a flow that slips past the pre-flight would still land in the catch-all `500` — tightening Test 3 to the `422` would pin the side effect rather than the handler. Test 3 keeps passing under both.
 - **The traceback in the stream's error frame.** The frame carries an absolute-path traceback (`/app/.venv/.../langflow/api/build.py`, line 564). Whether that should reach a client is governed by `expose_error_details` and is the same for every component error, so it is a separate question from the tweaks contract and is not asserted either way.
 - **Non-owner callers.** `_enforce_owner_only_tweaks` restricts tweaks to the flow's owner, so the boundary covered here is a run-time bypass of the *build-time* code policies, not a cross-tenant one. Asserting the ownership gate is a separate property and a separate spec.
 - **Whether the refusal is logged server-side.** Same reason as the sibling: an API caller cannot observe it, and asserting on container logs would couple the spec to the deployment shape.
@@ -167,5 +209,7 @@ Force-fail evidence for the `@stable` promotion (#1572), each mutation executed 
 - `src/lfx/src/lfx/exceptions/tweaks.py` — `TweakRefusedError` itself: its `refused` and `reason` fields are the text the stream-frame assertions match. It exists **only on `release-1.12.0`, not on upstream `main`** — measured 2026-08-25: `404` on `main`, blob `e21fcaf833e7` on `release-1.12.0`, `404` on `release-1.11.5`. `#14538` has not been merged back and the merge-back is sporadic (~1–2 months). Declaring it here is correct rather than risky: the guard resolves this section against `main` **and** the two newest release lines, so a path satisfied by only one side passes and is NAMED in a `::notice::` (#1574). The sibling `tweaks-injection.md` declares the same module for the same reason.
 - `src/backend/base/langflow/main.py` — the app-level `TweakRefusedError` handler that produces the structured `422`, i.e. the shape `mode=sync` never reaches. The **path** resolves on every ref while the *handler inside it* is 1.12-only (`TweakRefusedError` appears 3 times on `release-1.12.0`, 0 times on `main`, measured 2026-08-25) — the general rule for this section: a resolved path is evidence that a **file** exists, never that the code is in it.
 - `src/backend/base/langflow/api/v2/workflow_execution.py` — `POST /api/v2/workflows`: the `WorkflowRunRequest` schema (`mode`, `tweaks`), the sync response shape, the `except TweakRefusedError` re-raise at the graph-build seam, and where the streaming mode hands tweaks to the v1 build path.
+- `src/backend/base/langflow/api/v2/workflow_validation.py` — `_reject_hitl_outside_background()` (#16466): the pre-flight that applies the tweaks with `process.process_tweaks` before a `sync` or `stream` response is built, which is why both surfaces answer the structured `422` on 1.14.0.dev32. The function exists only on `release-1.14.0` (measured 2026-11-19: 0 occurrences on `main` and `release-1.13.0`); the path resolves on all three.
+- `src/backend/base/langflow/api/v2/workflow.py` — `run_sync_with_mapping` and `build_stream_response`, the two call sites of that pre-flight.
 - `src/backend/base/langflow/api/build.py` — `generate_flow_events` / `build_graph_and_get_order`: the graph-path call site, and the comment recording that a refusal there surfaces as a stream error event on an already-committed `200`.
 - Upstream references: `langflow-ai/langflow#14538` (the change under test) and `#9319` (the original defect the floor exists for).

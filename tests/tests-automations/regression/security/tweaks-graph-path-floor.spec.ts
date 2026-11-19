@@ -30,6 +30,16 @@ import { createRunnableChatFlowViaApi } from "../../../helpers/flows/create-runn
 //                              run the build in their own task, so a refusal is
 //                              reported on an already-committed 200.
 //
+// RE-MEASURED on 1.14.0.dev32 (#2504): upstream langflow-ai/langflow#16466
+// added a pre-flight to the sync and stream paths that applies the tweaks
+// before the response is built, so both now refuse up front:
+//   /api/v2/workflows sync   -> 422, code TWEAKS_REFUSED (Test 3 is
+//                               shape-agnostic and unchanged)
+//   /api/v2/workflows stream -> 422, code TWEAKS_REFUSED, fields naming the
+//                               key; no stream is opened. Test 1 pins this
+//                               shape and only this one.
+//   /api/v2/workflows background -> unchanged, 200 plus the error frame.
+//
 // Both failure directions are asserted on every surface, because they are
 // opposite and a spec catching one can miss the other: ACCEPTANCE is caught
 // causally (the author's code branches on whether the widened module is in
@@ -256,47 +266,117 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
   }
 
   /**
+   * `mode=stream` since 1.14.0.dev32 (#2504): the refusal arrives BEFORE any
+   * stream is committed, as the structured 422 `POST /api/v1/run` returns.
+   * Upstream langflow-ai/langflow#16466 runs `process_tweaks` in a pre-flight
+   * (`_reject_hitl_outside_background`) before the response is built, so
+   * TweakRefusedError reaches the app-level handler with nothing sent yet.
+   *
+   * Only this shape is accepted, deliberately: a stream that went back to
+   * committing a 200 before validating is a contract change the daily should
+   * report, not absorb. `absent` is checked against the whole body — no build
+   * runs on this shape, so it guards against a future one that runs and refuses
+   * late, not the causal probe it is on `mode=background`.
+   */
+  async function assertRefusedUpFront(
+    request: APIRequestContext,
+    tweak: Record<string, unknown>,
+    field: string,
+    absent: string,
+  ): Promise<void> {
+    const res = await postWorkflow(request, bearerToken, pythonFlowId, "stream", {
+      [pythonNodeId]: tweak,
+    });
+    const raw = await res.text();
+    expect(
+      res.status(),
+      `POST /api/v2/workflows (mode=stream) refuses a protected ${field} tweak with 422 before any stream is committed — body: ${raw.slice(0, 300)}`,
+    ).toBe(422);
+    expect(raw, "the refused request must not have run the widened or injected code").not.toContain(
+      absent,
+    );
+    let detail: { code?: unknown; fields?: unknown } | undefined;
+    try {
+      detail = JSON.parse(raw)?.detail;
+    } catch {
+      detail = undefined;
+    }
+    expect(
+      detail?.code,
+      "the refusal must be attributable on this surface, not a bare failure",
+    ).toBe("TWEAKS_REFUSED");
+    expect(detail?.fields, "and it must name the key it refused").toEqual([field]);
+  }
+
+  /**
+   * `mode=background`: the job is queued before the build runs, so the refusal
+   * is reported as an `event: "error"` frame on the job's events.
+   */
+  async function assertRefusedInStream(
+    request: APIRequestContext,
+    mode: StreamingMode,
+    tweak: Record<string, unknown>,
+    field: string,
+    absent: string,
+    absentMessage: string,
+  ): Promise<void> {
+    const facts = await runStreaming(request, mode, pythonFlowId, {
+      [pythonNodeId]: tweak,
+    });
+    expect(facts.raw, absentMessage).not.toContain(absent);
+    expect(
+      facts.errorFrames.join("\n"),
+      "the refusal must be attributable on this surface, not a bare failure",
+    ).toContain(REFUSAL_MARKER);
+    expect(facts.errorFrames.join("\n"), "and it must name the key it refused").toContain(
+      field,
+    );
+  }
+
+  /** Routes a refusal to the shape its mode reports it in. */
+  async function assertRefused(
+    request: APIRequestContext,
+    mode: StreamingMode,
+    tweak: Record<string, unknown>,
+    field: string,
+    absent: string,
+    absentMessage: string,
+  ): Promise<void> {
+    if (mode === "stream") return assertRefusedUpFront(request, tweak, field, absent);
+    return assertRefusedInStream(request, mode, tweak, field, absent, absentMessage);
+  }
+
+  /**
    * The whole contract for one streaming-family mode. Shared so the two surfaces
-   * cannot drift apart: an assertion added for one is added for both.
+   * cannot drift apart: an assertion added for one is added for both. Only the
+   * SHAPE of the refusal differs between them (see the two helpers above); the
+   * benign control is the same call on both.
    */
   async function assertStreamingSurface(
     request: APIRequestContext,
     mode: StreamingMode,
   ): Promise<void> {
     await test.step(`a global_imports tweak is refused and named (mode=${mode})`, async () => {
-      const facts = await runStreaming(request, mode, pythonFlowId, {
-        [pythonNodeId]: SANDBOX_WIDENING_TWEAK,
-      });
-      expect(
-        facts.raw,
+      await assertRefused(
+        request,
+        mode,
+        SANDBOX_WIDENING_TWEAK,
+        "global_imports",
+        WIDENED_PREFIX,
         "the flow author's sandbox must still be in effect — the run reached the widened branch",
-      ).not.toContain(WIDENED_PREFIX);
-      expect(
-        facts.errorFrames.join("\n"),
-        "the refusal must be attributable on this surface, not a bare failure",
-      ).toContain(REFUSAL_MARKER);
-      expect(
-        facts.errorFrames.join("\n"),
-        "and it must name the key it refused",
-      ).toContain("global_imports");
+      );
     });
 
     await test.step(`a python_code tweak is refused and named (mode=${mode})`, async () => {
       const pwned = unique("PWNED");
-      const facts = await runStreaming(request, mode, pythonFlowId, {
-        [pythonNodeId]: { python_code: `print("${pwned}")` },
-      });
-      expect(facts.raw, "the caller's code must never be what executes").not.toContain(
+      await assertRefused(
+        request,
+        mode,
+        { python_code: `print("${pwned}")` },
+        "python_code",
         pwned,
+        "the caller's code must never be what executes",
       );
-      expect(
-        facts.errorFrames.join("\n"),
-        "the refusal must be attributable on this surface, not a bare failure",
-      ).toContain(REFUSAL_MARKER);
-      expect(
-        facts.errorFrames.join("\n"),
-        "and it must name the key it refused",
-      ).toContain("python_code");
     });
 
     await test.step(`a benign tweak on the same surface still applies (mode=${mode})`, async () => {
@@ -317,7 +397,7 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
 
   test(
     "mode=stream refuses a protected tweak and names the refusal",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       await assertStreamingSurface(request, "stream");
     },
