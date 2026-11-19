@@ -96,23 +96,111 @@ export async function deleteThrowawayUser(
   }
 }
 
-const ERASE_TIMEOUT_MS = 30_000;
-const ERASE_POLL_MS = 500;
+/**
+ * How long the erase queue may go without finishing ANY erasure before the wait
+ * gives up — not how long one user may take.
+ *
+ * The erase is one singleton worker that runs requests one at a time
+ * (`services/data_subjects/worker.py`, a 5 s idle tick). Measured on
+ * `1.14.0.dev32`: one empty user is erased in ~9–15 s, and six deleted at once come
+ * back at 13 / 32 / 47 / 65 / 80 / 91 s — strictly serial. So a fixed budget per
+ * user is wrong in proportion to how many users the run deletes together: four
+ * workers disposing their owners in the same `afterAll` put the last one ~40 s
+ * behind, and the old 30 s budget failed a spec whose every assertion had passed.
+ *
+ * What a stuck erase looks like is the queue not moving, so that is what is timed:
+ * the deadline is this long after the last erasure seen to finish anywhere on the
+ * instance. 60 s is four measured erasures; a worker that never started, or one
+ * stalled on a request, still fails here, and the message says how deep the queue
+ * was and how long it had been still.
+ */
+export const ERASE_STALL_MS = 60_000;
+/** A hard stop however steadily the queue moves: a run must not wait unboundedly on someone else's deletions. */
+export const ERASE_CEILING_MS = 10 * 60_000;
+const ERASE_POLL_MS = 1_000;
 
-async function waitForUserErased(
+/** The ids the erase queue holds: `GET /api/v1/users/?deletion_requested=true`. `null` when unreadable. */
+async function erasureQueue(request: APIRequestContext, superHeaders: Record<string, string>): Promise<Set<string> | null> {
+  try {
+    const res = await request.get("/api/v1/users/", {
+      headers: superHeaders,
+      params: { deletion_requested: "true", limit: 200 },
+    });
+    if (res.status() !== 200) return null;
+    const body = (await res.json()) as { users?: Array<{ id?: unknown }> };
+    if (!Array.isArray(body.users)) return null;
+    return new Set(body.users.map((user) => String(user.id)));
+  } catch {
+    return null;
+  }
+}
+
+/** Whether an erasure finished between two reads of the queue: an id the first held is gone from the second. */
+export function queueMoved(previous: Set<string> | null, current: Set<string> | null): boolean {
+  if (previous === null || current === null) return false;
+  for (const id of previous) if (!current.has(id)) return true;
+  return false;
+}
+
+/**
+ * The wait's verdict at one instant: keep waiting, or the reason to give up. An
+ * unreadable queue never counts as progress, so without it the wait degrades to a
+ * fixed `stallMs` from the delete — still longer than the old 30 s, never unbounded.
+ */
+export function eraseWaitVerdict(state: {
+  now: number;
+  startedAt: number;
+  lastProgressAt: number;
+  stallMs?: number;
+  ceilingMs?: number;
+}): { wait: true } | { wait: false; reason: string } {
+  const stallMs = state.stallMs ?? ERASE_STALL_MS;
+  const ceilingMs = state.ceilingMs ?? ERASE_CEILING_MS;
+  if (state.now - state.startedAt >= ceilingMs) {
+    return { wait: false, reason: `the erase queue was still moving after ${ceilingMs / 1000}s, the hard ceiling` };
+  }
+  if (state.now - state.lastProgressAt >= stallMs) {
+    return { wait: false, reason: `the erase queue finished no erasure for ${stallMs / 1000}s` };
+  }
+  return { wait: true };
+}
+
+export interface EraseClock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+const REAL_CLOCK: EraseClock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+/** Waits until `userId` answers 404, for as long as the erase queue keeps moving (see `ERASE_STALL_MS`). */
+export async function waitForUserErased(
   request: APIRequestContext,
   superHeaders: Record<string, string>,
   userId: string,
+  clock: EraseClock = REAL_CLOCK,
 ): Promise<void> {
-  const deadline = Date.now() + ERASE_TIMEOUT_MS;
+  const startedAt = clock.now();
+  let lastProgressAt = startedAt;
+  let queue = await erasureQueue(request, superHeaders);
   let last = "";
-  while (Date.now() < deadline) {
+  for (;;) {
     const res = await request.get(`/api/v1/users/${userId}`, { headers: superHeaders });
     if (res.status() === 404) return;
     last = `${res.status()}`;
-    await new Promise((resolve) => setTimeout(resolve, ERASE_POLL_MS));
+    const current = await erasureQueue(request, superHeaders);
+    if (queueMoved(queue, current)) lastProgressAt = clock.now();
+    if (current !== null) queue = current;
+    const verdict = eraseWaitVerdict({ now: clock.now(), startedAt, lastProgressAt });
+    if (!verdict.wait) {
+      const depth = queue === null ? "unreadable" : `${queue.size} queued`;
+      throw new Error(
+        `DELETE /api/v1/users/${userId} answered 202 but the user was not erased: ${verdict.reason} ` +
+          `(after ${Math.round((clock.now() - startedAt) / 1000)}s; queue ${depth}; last GET: ${last})`,
+      );
+    }
+    await clock.sleep(ERASE_POLL_MS);
   }
-  throw new Error(
-    `DELETE /api/v1/users/${userId} answered 202 but the user was not erased within ${ERASE_TIMEOUT_MS / 1000}s (last GET: ${last})`,
-  );
 }
