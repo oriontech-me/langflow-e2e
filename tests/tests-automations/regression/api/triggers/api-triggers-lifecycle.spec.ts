@@ -382,6 +382,7 @@ test.describe("Triggers — the lifecycle", () => {
         for (const state of ["expired", "error"] as const) {
           const row = await make(request, flowId, `from ${state}`, { state });
           expect(row.state, `the row was created ${state}`).toBe(state);
+          expect((await getTrigger(request, headers(), row.id)).state, `the row was created ${state}, re-read`).toBe(state);
           expect((await setTriggerEnabled(request, headers(), row.id, true)).state, `enable from ${state}`).toBe("active");
           expect((await getTrigger(request, headers(), row.id)).state, `enable from ${state}, re-read`).toBe("active");
         }
