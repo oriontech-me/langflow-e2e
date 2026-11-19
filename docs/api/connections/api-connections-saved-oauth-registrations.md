@@ -90,7 +90,7 @@ clients support the bot profile"`. Hence the `user` profile.
 
 ### The environment wins (premise 3)
 
-Every lane and starter sets four fake registrations (#2301, `scripts/lib/fake-oauth-registrations.json`). Saving
+Every lane and starter sets eight fake registrations (#2301, #2498, `scripts/lib/fake-oauth-registrations.json`). Saving
 the ID `e2e-slack-bot` with a different `client_id` and scope list answers `204`, and the entry's `status` is
 `overridden`. What the instance uses is unchanged:
 
@@ -127,9 +127,11 @@ is still listed, unchanged. That the page hides the tab from a regular user is #
   `oauth/registrations`). The page then shows it as `Active` with `Server environment` as the saver, which it is
   not. The next save or removal, by anyone, re-merges and drops it. That is why this spec removes every
   registration through the API **before** deleting its throwaway superuser.
-- **Four of the panel's providers cannot be saved on any lane.** Jira, Confluence, Salesforce and ServiceNow
+- **Four of the panel's providers need a deployment site.** Jira, Confluence, Salesforce and ServiceNow
   refuse a save until the server names their deployment site (`422`, for example `"The Jira Cloud
-  deployment site is not configured."`). No lane sets one, so this file saves Slack registrations only.
+  deployment site is not configured."`). Every lane names one since #2498 (fake sites, see
+  `oauth-fake-registrations.md`), where a Jira save bound to it answers `204`. This file still saves Slack
+  registrations only: saving the site-bound four is #2499's scope.
 - **A `403` wins over a malformed body.** A regular user's `PUT` with an empty `registration` answers `403`, not
   `422`: the superuser dependency runs before the body is validated.
 

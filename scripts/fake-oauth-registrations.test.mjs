@@ -8,6 +8,12 @@
 // The specs built on it FAIL, not skip, against an instance without them, so a lane
 // that loses the variable goes red instead of passing while testing nothing (#1010).
 //
+// Four of the providers (Jira, Confluence, Salesforce, ServiceNow, #2498) are bound to a
+// deployment site the operator names in its own server setting, and the server refuses
+// their registration without it. Those four settings travel with the registrations:
+// canonical copy scripts/lib/fake-integration-sites.json, carried by the same lanes and
+// starters, and pinned below the same way.
+//
 // One value, eight copies. The canonical one is scripts/lib/fake-oauth-registrations.json.
 // The three workflows carry it in their Langflow service env, which starts before any
 // checkout and so cannot read a file; the five starters carry it inlined, because the
@@ -33,6 +39,29 @@ const CANONICAL_PATH = "scripts/lib/fake-oauth-registrations.json";
 const read = (rel) => readFileSync(join(REPO_ROOT, rel), "utf8");
 const canonical = JSON.parse(read(CANONICAL_PATH));
 const compact = JSON.stringify(canonical);
+const SITES_PATH = "scripts/lib/fake-integration-sites.json";
+const sites = JSON.parse(read(SITES_PATH));
+
+// The site each site-bound provider reads, and the scope set its OAuth adapter demands.
+// Mirrored from the adapters' validate_registration (services/triggers/providers/<p>/oauth.py)
+// and the bundles' schema.py on release-1.14.0, and measured on 1.14.0.dev29: a registration
+// that misses either is OMITTED from GET /oauth/registrations, never reported.
+const SITE_BOUND = {
+  jira: {
+    site: "LANGFLOW_JIRA_CLOUD_ID",
+    scopes: { exactly: ["offline_access", "read:jira-user", "read:jira-work", "write:jira-work"] },
+  },
+  confluence: {
+    site: "LANGFLOW_CONFLUENCE_CLOUD_ID",
+    scopes: { exactly: ["offline_access", "read:confluence-user", "read:page:confluence", "write:page:confluence"] },
+  },
+  salesforce: { site: "LANGFLOW_SALESFORCE_ORIGIN", scopes: { exactly: ["api", "id", "refresh_token"] } },
+  // ServiceNow accepts a subset of these two, as long as the read scope is in it.
+  servicenow: {
+    site: "LANGFLOW_SERVICENOW_ORIGIN",
+    scopes: { within: ["langflow_table_read", "langflow_table_write"], including: "langflow_table_read" },
+  },
+};
 
 // Every workflow that starts a Langflow service for a spec run — the same list
 // a2a-flag-lanes.test.mjs keeps, for the same reason.
@@ -53,7 +82,16 @@ test("the canonical file holds one fake registration per provider and Slack prof
     Object.entries(canonical)
       .map(([, r]) => `${r.provider}:${r.profile ?? "user"}`)
       .sort(),
-    ["google:user", "microsoft:user", "slack:bot", "slack:user"],
+    [
+      "confluence:user",
+      "google:user",
+      "jira:user",
+      "microsoft:user",
+      "salesforce:user",
+      "servicenow:user",
+      "slack:bot",
+      "slack:user",
+    ],
   );
 });
 
@@ -65,7 +103,10 @@ test("each registration passes the rules the server applies, so none is silently
   for (const [id, r] of Object.entries(canonical)) {
     // OAuthStartRequest.registration_id's pattern — the id a start request must name.
     assert.match(id, /^[a-z0-9][a-z0-9_-]*$/, `${id}: not a registration id oauth/start accepts`);
-    assert.ok(["google", "microsoft", "slack"].includes(r.provider), `${id}: unknown provider ${r.provider}`);
+    assert.ok(
+      ["google", "microsoft", "slack", ...Object.keys(SITE_BOUND)].includes(r.provider),
+      `${id}: unknown provider ${r.provider}`,
+    );
     // Loopback HTTP at the provider's exact callback path. No port, deliberately: the
     // redirect is never followed (no real provider accepts the fake client), so one
     // value serves every lane whatever port its instance listens on.
@@ -79,7 +120,52 @@ test("each registration passes the rules the server applies, so none is silently
     if (r.provider === "microsoft") {
       assert.match(r.tenant ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, `${id}: tenant`);
     }
+    const bound = SITE_BOUND[r.provider];
+    if (bound) {
+      // The adapters accept only the user profile on a confidential, self-managed client.
+      assert.equal(r.profile ?? "user", "user", `${id}: a site-bound provider has only the user profile`);
+      // The registration's tenant must be the site the server names, character for character.
+      assert.equal(r.tenant, sites[bound.site], `${id}: tenant is not ${bound.site} (${SITES_PATH})`);
+      const { exactly, within, including } = bound.scopes;
+      if (exactly) assert.deepEqual([...r.scopes].sort(), [...exactly].sort(), `${id}: the adapter demands exactly these scopes`);
+      if (within) {
+        for (const scope of r.scopes) assert.ok(within.includes(scope), `${id}: scope ${scope} is outside ${within}`);
+        assert.ok(r.scopes.includes(including), `${id}: ${including} is required`);
+      }
+    }
   }
+});
+
+test("every site-bound provider has exactly one registration, and every site is used", () => {
+  const providers = Object.values(canonical).map((r) => r.provider);
+  for (const provider of Object.keys(SITE_BOUND)) {
+    assert.equal(providers.filter((p) => p === provider).length, 1, `${provider}: expected one registration`);
+  }
+  assert.deepEqual(Object.keys(sites).sort(), Object.values(SITE_BOUND).map((b) => b.site).sort());
+});
+
+test("each fake site is a value the server accepts, and visibly fake", () => {
+  // The bundles' own readers (lfx_<provider>/schema.py): a value they refuse is the same as
+  // no site at all — the registration is dropped and nothing says so.
+  const canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  assert.match(sites.LANGFLOW_JIRA_CLOUD_ID, canonicalUuid, "Jira wants a canonical lowercase UUID");
+  assert.match(sites.LANGFLOW_CONFLUENCE_CLOUD_ID, canonicalUuid, "Confluence wants a canonical lowercase UUID");
+  const salesforceHost =
+    /^[a-z0-9][a-z0-9-]*(?:--[a-z0-9-]+)?\.(?:(?:demo|develop|patch|sandbox|scratch|trailblaze)\.)?my\.salesforce\.com$/;
+  const serviceNowHost = /^[a-z0-9][a-z0-9-]*\.service-now\.com$/;
+  for (const [name, host] of [
+    ["LANGFLOW_SALESFORCE_ORIGIN", salesforceHost],
+    ["LANGFLOW_SERVICENOW_ORIGIN", serviceNowHost],
+  ]) {
+    const url = new URL(sites[name]);
+    assert.equal(url.protocol, "https:", `${name}: HTTPS only`);
+    assert.match(url.hostname, host, `${name}: host`);
+    // An origin, exactly: no port, path, query or fragment, and no trailing slash, since the
+    // registration's tenant is compared with the origin the server rebuilds from the host.
+    assert.equal(sites[name], `https://${url.hostname}`, `${name}: not a bare origin`);
+  }
+  for (const [name, value] of Object.entries(sites)) assert.match(value, /e2e/, `${name}: does not look fake`);
+  for (const value of Object.values(sites)) assert.doesNotMatch(value, /['"\s$`\\{}]/);
 });
 
 test("every client id and secret is visibly fake, because this repository is public", () => {
@@ -104,7 +190,26 @@ for (const lane of LANES) {
   });
 }
 
+for (const lane of LANES) {
+  test(`${lane} names the deployment site of every site-bound provider on its Langflow service`, () => {
+    const env = readServiceEnv(read(`.github/workflows/${lane}`));
+    for (const [name, value] of Object.entries(sites)) {
+      assert.ok(env.has(name), `${lane}: the Langflow service does not set ${name}`);
+      assert.equal(evaluateWorkflowValue(env.get(name), {}), value, `${lane}: ${name} drifted from ${SITES_PATH}`);
+    }
+  });
+}
+
 for (const [starter, shape] of Object.entries(STARTERS)) {
+  test(`${starter} passes the deployment sites, overridable`, () => {
+    const lines = stripComments(read(starter)).split("\n");
+    for (const [name, value] of Object.entries(sites)) {
+      const passed = `${name}="\${${name}:-${value}}" \\`;
+      const line = shape === "docker" ? `  -e ${passed}` : passed;
+      assert.ok(lines.includes(line), `${starter}: the launch does not pass ${name} as \`${line}\``);
+    }
+  });
+
   test(`${starter} inlines the canonical registrations and passes them, overridable`, () => {
     const text = stripComments(read(starter));
     const literals = [...text.matchAll(/^DEFAULT_OAUTH_REGISTRATIONS='([^']*)'$/gm)];

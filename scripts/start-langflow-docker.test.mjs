@@ -278,6 +278,19 @@ test("the fake OAuth registrations reach the container intact, and '{}' restores
   assert.equal(sent(runScript({ env: { LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS: "{}" } })), "{}");
 });
 
+test("the deployment sites of the site-bound providers reach the container, each overridable (#2498)", () => {
+  // Without its site the server drops a site-bound provider's registration from the list,
+  // silently, so what docker receives is the property — not the script's spelling.
+  const sites = JSON.parse(
+    readFileSync(fileURLToPath(new URL("./lib/fake-integration-sites.json", import.meta.url)), "utf8"),
+  );
+  const sent = (r, name) => r.calls.find((c) => c.startsWith("run ")).match(new RegExp(`(?:^| )${name}=(\\S+)`))?.[1];
+  const r = runScript();
+  for (const [name, value] of Object.entries(sites)) assert.equal(sent(r, name), value, name);
+  const custom = "11111111-1111-4111-8111-111111111111";
+  assert.equal(sent(runScript({ env: { LANGFLOW_JIRA_CLOUD_ID: custom } }), "LANGFLOW_JIRA_CLOUD_ID"), custom);
+});
+
 // #2085 — the knobs a lane sets. Each default is asserted as well as the override,
 // because the defaults are what every documented `docker exec langflow-e2e-runner …`
 // and every developer's instance depend on.

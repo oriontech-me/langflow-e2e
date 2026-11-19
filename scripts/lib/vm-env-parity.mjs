@@ -240,6 +240,10 @@ export function readServiceEnv(text, service = "langflow") {
  * purpose; the reason is then the whole content of the decision, because nothing else
  * in the repo will state it.
  */
+// Shared by the four deployment-site variables (#2498): one decision, four names.
+const SITE_REASON =
+  "the deployment site a site-bound OAuth provider (Jira, Confluence, Salesforce, ServiceNow) is bound to. Without it the server refuses that provider's fake registration and drops it from the list, so its OAuth routes are unreachable; each value is the one its registration in LANGFLOW_CONNECTION_OAUTH_REGISTRATIONS names, so the two travel together and the starter carries both";
+
 export const CLASSIFICATION = {
   LANGFLOW_AUTO_LOGIN: {
     carrier: "starter",
@@ -278,6 +282,22 @@ export const CLASSIFICATION = {
     carrier: "starter",
     reason:
       "fake OAuth registrations, one per provider and Slack profile (#2301). The product ships none, which stops the Add/Reconnect wizard before consent and leaves every OAuth route unexercised, and the specs that cover those routes fail rather than skip without them. Right for any test instance, so the starter carries it — inlined as DEFAULT_OAUTH_REGISTRATIONS, because this lane pipes the starter to `bash -s` on the target and no file of this repo exists there",
+  },
+  LANGFLOW_JIRA_CLOUD_ID: {
+    carrier: "starter",
+    reason: SITE_REASON,
+  },
+  LANGFLOW_CONFLUENCE_CLOUD_ID: {
+    carrier: "starter",
+    reason: SITE_REASON,
+  },
+  LANGFLOW_SALESFORCE_ORIGIN: {
+    carrier: "starter",
+    reason: SITE_REASON,
+  },
+  LANGFLOW_SERVICENOW_ORIGIN: {
+    carrier: "starter",
+    reason: SITE_REASON,
   },
   LANGFLOW_KB_ALLOWED_FOLDER_ROOTS: {
     carrier: "starter",

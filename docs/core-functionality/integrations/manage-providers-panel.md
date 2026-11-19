@@ -36,7 +36,7 @@ Measured on `1.14.0.dev28`:
     restart."*;
   - `overridden` reads *"Not in use: the server environment defines this ID"*.
 - **The empty state *"No providers configured yet."* cannot be reached on any lane**, because every lane serves
-  the four fake registrations of #2301. It is asserted with both reads answered empty by a route; nothing else in
+  the fake registrations of #2301 and #2498. It is asserted with both reads answered empty by a route; nothing else in
   this file is mocked.
 
 ### Add provider
