@@ -11,6 +11,7 @@ import {
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { type ConnectionsOwner, createConnectionsOwner } from "../../../../helpers/integrations/connections-owner";
+import { createConnectionViaApi } from "../../../../helpers/integrations/create-connection";
 import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 import { deliverSignedWebhook, jsonBody, mintSigningSecret } from "../../../../helpers/triggers/sign-webhook";
 import {
@@ -49,6 +50,7 @@ test.describe("Triggers — the lifecycle", () => {
       message: "The trigger node was removed from the flow. Add it back to resume the trigger.",
     },
   };
+  const INVALID_CRON = "Invalid cron expression: a valid five-field cron expression is required.";
   const BAD_SCHEMA_ERROR = "The payload schema must be valid JSON, or empty to accept any body.";
   const DEPLOYMENT_NOT_DISPATCHED =
     "Trigger binding target 'deployment' is stored but not dispatched in this release; re-bind the trigger to its flow to run it.";
@@ -222,10 +224,13 @@ test.describe("Triggers — the lifecycle", () => {
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
+        "POST /api/v1/flows/{flow_id}/versions/",
+        "POST /api/v1/connections",
         "POST /api/v1/triggers",
         "GET /api/v1/triggers",
         "GET /api/v1/triggers/{trigger_id}",
         "PATCH /api/v1/triggers/{trigger_id}",
+        "POST /api/v1/triggers/{trigger_id}/pin",
         "DELETE /api/v1/triggers/{trigger_id}",
       ]);
       const flowId = await emptyFlow(request, "crud");
@@ -282,11 +287,55 @@ test.describe("Triggers — the lifecycle", () => {
         expect(await getTrigger(request, headers(), created.id)).toEqual(before);
       });
 
-      await test.step("An explicit null on each nullable reference is accepted", async () => {
+      await test.step("An explicit null clears each nullable reference that was set, and a re-read agrees", async () => {
+        // Each reference is SET first: clearing a field that is already null proves
+        // nothing, and would pass a server that dropped nulls (exclude_none) instead
+        // of honouring them (exclude_unset).
+        const connection = await createConnectionViaApi(request, headers(), { label: "trglife refs" });
+        const version = await snapshot(request, flowId);
+        const set = {
+          connection_id: connection.id,
+          deployment_id: randomUUID(),
+          flow_version_id: version,
+        };
+        await updateTrigger(request, headers(), created.id, { connection_id: set.connection_id, deployment_id: set.deployment_id });
+        await pinTrigger(request, headers(), created.id, set.flow_version_id);
+        const before = await getTrigger(request, headers(), created.id);
+        expect(
+          { connection_id: before.connection_id, deployment_id: before.deployment_id, flow_version_id: before.flow_version_id },
+          "the three references are set before they are cleared",
+        ).toEqual(set);
         for (const field of ["connection_id", "deployment_id", "flow_version_id"] as const) {
-          const row = await updateTrigger(request, headers(), created.id, { [field]: null });
-          expect(row[field], `PATCH {${field}: null}`).toBeNull();
+          expect((await updateTrigger(request, headers(), created.id, { [field]: null }))[field], `PATCH {${field}: null}`).toBeNull();
+          expect((await getTrigger(request, headers(), created.id))[field], `PATCH {${field}: null}, re-read`).toBeNull();
         }
+      });
+
+      await test.step("A schedule created through the API validates its cron, on create and on PATCH", async () => {
+        const schedule = await createTrigger(request, headers(), {
+          flow_id: flowId,
+          name: `crud schedule ${run}`,
+          kind: "schedule",
+          config: { cron: CRON },
+        });
+        const expected = { kind: "schedule", state: "pending", config: { cron: CRON, timezone: "UTC", catchup_policy: "coalesce" } };
+        expect(schedule).toMatchObject(expected);
+        expect(await getTrigger(request, headers(), schedule.id)).toMatchObject(expected);
+        await expectDetail(
+          await request.post("/api/v1/triggers", {
+            headers: headers(),
+            data: { flow_id: flowId, name: `crud bad cron ${run}`, kind: "schedule", config: { cron: "not a cron" } },
+          }),
+          422,
+          { detail: INVALID_CRON },
+        );
+        await expectDetail(
+          await request.patch(`/api/v1/triggers/${schedule.id}`, { headers: headers(), data: { config: { cron: "not a cron" } } }),
+          422,
+          { detail: INVALID_CRON },
+        );
+        expect((await getTrigger(request, headers(), schedule.id)).config).toEqual(expected.config);
+        await deleteTrigger(request, headers(), schedule.id);
       });
 
       await test.step("DELETE answers 204; afterwards GET and a second DELETE are 404 and the list is empty", async () => {
@@ -326,9 +375,13 @@ test.describe("Triggers — the lifecycle", () => {
         await expectState(await setTriggerEnabled(request, headers(), row.id, true), "active", null, "enable after a pause");
       });
 
-      await test.step("expired, error and needs_reconnect each enable to active", async () => {
-        for (const state of ["expired", "error", "needs_reconnect"] as const) {
+      // `needs_reconnect` also enables, while its `resume` reads blocked: the spec doc
+      // records that as measured and deliberately unpinned (a candidate defect), so it
+      // is not in this loop.
+      await test.step("expired and error each enable to active", async () => {
+        for (const state of ["expired", "error"] as const) {
           const row = await make(request, flowId, `from ${state}`, { state });
+          expect(row.state, `the row was created ${state}`).toBe(state);
           expect((await setTriggerEnabled(request, headers(), row.id, true)).state, `enable from ${state}`).toBe("active");
           expect((await getTrigger(request, headers(), row.id)).state, `enable from ${state}, re-read`).toBe("active");
         }
@@ -707,33 +760,44 @@ test.describe("Triggers — the lifecycle", () => {
     },
   );
 
+  // The three leads from manual QA (TRG-2 / TRG-4). Each reproduces on the image
+  // and none has an upstream ticket yet, so each asserts TODAY's behaviour, in its
+  // own test so a fix to one cannot take the others' @stable with it. When one goes
+  // red with a "LEAD:" message, upstream changed it: turn it into the fixed contract.
   test(
-    "the three manual-QA leads, as the image behaves today",
+    "lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch",
     { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
         "POST /api/v1/triggers",
-        "GET /api/v1/triggers",
         "GET /api/v1/triggers/{trigger_id}",
         "POST /api/v1/triggers/{trigger_id}/enable",
         "POST /api/v1/triggers/{trigger_id}/test",
         "GET /api/v1/triggers/{trigger_id}/events",
-        "POST /api/v1/triggers/{trigger_id}/signing-secret",
       ]);
+      const flowId = await emptyFlow(request, "lead deployment");
+      const deploymentId = randomUUID();
 
-      await test.step("Lead (TRG-2): a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch", async () => {
-        const flowId = await emptyFlow(request, "lead deployment");
-        const deploymentId = randomUUID();
-        const row = await make(request, flowId, "lead deployment", {
+      const row = await test.step("Create accepts a deployment_id that names no deployment", async () => {
+        const created = await make(request, flowId, "lead deployment", {
           binding_target: "deployment",
           deployment_id: deploymentId,
         });
+        const reread = await getTrigger(request, headers(), created.id);
         expect(
-          { binding_target: row.binding_target, deployment_id: row.deployment_id },
+          { binding_target: reread.binding_target, deployment_id: reread.deployment_id },
           "LEAD: create accepts a deployment_id that names no deployment",
         ).toEqual({ binding_target: "deployment", deployment_id: deploymentId });
+        return created;
+      });
+
+      await test.step("Enable arms it", async () => {
         expect((await setTriggerEnabled(request, headers(), row.id, true)).state, "LEAD: enable arms it").toBe("active");
+        expect((await getTrigger(request, headers(), row.id)).state, "LEAD: enable arms it, re-read").toBe("active");
+      });
+
+      await test.step("The refusal arrives only when an event is dispatched", async () => {
         const res = await request.post(`/api/v1/triggers/${row.id}/test`, { headers: headers(), data: { payload: {} } });
         expect(res.status(), await res.text()).toBe(202);
         const event = await settledOnlyEvent(request, row.id, "the test event");
@@ -748,24 +812,67 @@ test.describe("Triggers — the lifecycle", () => {
           last_error: DEPLOYMENT_NOT_DISPATCHED,
         });
       });
+    },
+  );
 
-      await test.step("Lead (TRG-4): enable arms a webhook whose payload_schema is malformed, and clears the error", async () => {
-        const flowId = await catalogFlow(request, "lead bad schema", await webhookGraph(request, "not json"));
-        const row = await nodeTrigger(request, flowId, WEBHOOK_NODE);
-        expect({ state: row.state, last_error: row.last_error }).toEqual({ state: "pending", last_error: BAD_SCHEMA_ERROR });
-        const enabled = await setTriggerEnabled(request, headers(), row.id, true);
-        expect(
-          { state: enabled.state, last_error: enabled.last_error, payload_schema: enabled.config.payload_schema },
-          "LEAD: enable validates only schedule configs — the malformed schema arms and its error is erased",
-        ).toEqual({ state: "active", last_error: null, payload_schema: "not json" });
+  test(
+    "lead: enable arms a webhook whose payload_schema is malformed, and erases the error",
+    { tag: ["@api", "@integrations", "@stable"] },
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare([
+        "POST /api/v1/flows/",
+        "GET /api/v1/triggers",
+        "GET /api/v1/triggers/{trigger_id}",
+        "POST /api/v1/triggers/{trigger_id}/enable",
+      ]);
+      const flowId = await catalogFlow(request, "lead bad schema", await webhookGraph(request, "not json"));
+
+      const row = await test.step("The save records the malformed schema on a pending row", async () => {
+        const trigger = await nodeTrigger(request, flowId, WEBHOOK_NODE);
+        expect({ state: trigger.state, last_error: trigger.last_error }).toEqual({ state: "pending", last_error: BAD_SCHEMA_ERROR });
+        return trigger;
       });
 
-      await test.step("Lead (TRG-4): a stored payload_schema is not enforced on delivery", async () => {
-        const schema = { type: "object", required: ["x"] };
-        const flowId = await catalogFlow(request, "lead schema", await webhookGraph(request, JSON.stringify(schema)));
-        const row = await nodeTrigger(request, flowId, WEBHOOK_NODE);
-        expect(row.config.payload_schema).toEqual(schema);
-        expect((await setTriggerEnabled(request, headers(), row.id, true)).state).toBe("active");
+      await test.step("Enable arms it anyway and the error is gone, while the schema is still malformed", async () => {
+        const enabled = await setTriggerEnabled(request, headers(), row.id, true);
+        const reread = await getTrigger(request, headers(), row.id);
+        for (const [what, answer] of [
+          ["enable's answer", enabled],
+          ["re-read", reread],
+        ] as const) {
+          expect(
+            { state: answer.state, last_error: answer.last_error, payload_schema: answer.config.payload_schema },
+            `LEAD: enable validates only schedule configs — the malformed schema arms and its error is erased (${what})`,
+          ).toEqual({ state: "active", last_error: null, payload_schema: "not json" });
+        }
+      });
+    },
+  );
+
+  test(
+    "lead: a stored payload_schema is not enforced on delivery",
+    { tag: ["@api", "@integrations", "@stable"] },
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare([
+        "POST /api/v1/flows/",
+        "GET /api/v1/triggers",
+        "GET /api/v1/triggers/{trigger_id}",
+        "POST /api/v1/triggers/{trigger_id}/enable",
+        "GET /api/v1/triggers/{trigger_id}/events",
+        "POST /api/v1/triggers/{trigger_id}/signing-secret",
+      ]);
+      const schema = { type: "object", required: ["x"] };
+      const flowId = await catalogFlow(request, "lead schema", await webhookGraph(request, JSON.stringify(schema)));
+
+      const row = await test.step("The save stores the schema, and enable arms the trigger", async () => {
+        const trigger = await nodeTrigger(request, flowId, WEBHOOK_NODE);
+        expect(trigger.config.payload_schema).toEqual(schema);
+        expect((await setTriggerEnabled(request, headers(), trigger.id, true)).state).toBe("active");
+        expect((await getTrigger(request, headers(), trigger.id)).state, "enable, re-read").toBe("active");
+        return trigger;
+      });
+
+      await test.step("A signed delivery breaking the schema is accepted and runs to completion", async () => {
         const ingress = await mintSigningSecret(request, row.id, headers());
         const delivery = { y: 1 };
         expect(
