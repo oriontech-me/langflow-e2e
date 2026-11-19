@@ -34,8 +34,6 @@ import {
 } from "../../../../helpers/knowledge/knowledge-base";
 import { selectPinnedModelOption } from "../../../../helpers/provider-setup/model-option";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
-import { cancelledRunKeepsNullFinishedAt } from "../../../../helpers/knowledge/cancelled-run-finished-at";
-import { servedVersion } from "../../../../helpers/other/served-version";
 
 // Memory Base — ingestion (QA-CHECKLIST §20.4, issue #2043).
 // Spec doc: docs/core-functionality/memory/memory-base-ingestion.md
@@ -516,7 +514,7 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
 
   test(
     "should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",
@@ -569,8 +567,8 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
       });
 
       await test.step("the run reports the cancellation, not a completion, and holds no chunk", async () => {
-        // Read on the terminal status alone: finished_at gets its own step below, so
-        // every assertion here runs on every build, unweakened (#2417).
+        // Read on the terminal status alone: finished_at gets its own step below, so a
+        // missing one fails by name, apart from the cancellation itself (#2417).
         const run = await waitForRunToFinish(request, dirName, runId, { ...auth(), requireFinishedAt: false });
         expect(run.status).toBe("cancelled");
         // The run reads `cancelled` the moment the cancel route flips the JOB; its own
@@ -590,18 +588,9 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
         expect(total, "chunks left behind by the cancelled run").toBe(0);
       });
 
-      // DECLARED FAILING on the builds that carry the regression, and only from here:
-      // everything above has already passed, so a broken bootstrap, cancel or rollback
-      // is still a real failure. Since 1.14.0.dev23 (upstream #13508) a cancelled run
-      // keeps finished_at null forever — the cancel route sets no finished_timestamp and
-      // the guarded success write no longer sets it as a side effect (#2417, LE-3447,
-      // measured 90 s and in the job row). The day upstream fixes it this step passes, Playwright
-      // reports "expected to fail but passed", and the declaration has to go.
-      test.fail(
-        cancelledRunKeepsNullFinishedAt(await servedVersion(request)),
-        "#2417 / LE-3447: a cancelled ingestion run keeps finished_at null on 1.14.0.dev23+ (upstream #13508)",
-      );
-
+      // Was declared failing from 1.14.0.dev23 to dev26 (#2417, LE-3447: upstream #13508
+      // left a cancelled run's finished_at null forever); fixed upstream by
+      // langflow-ai/langflow#15433, in 1.14.0.dev27.
       await test.step("the cancelled run records when it finished", async () => {
         const run = await waitForRunToFinish(request, dirName, runId, auth());
         expect(run.finished_at, "finished_at of the cancelled run").toBeTruthy();

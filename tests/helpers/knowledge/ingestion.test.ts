@@ -3,8 +3,8 @@
 //
 // The default is the strict one, and it is what caught #2417: a terminal run whose
 // `finished_at` never appears fails by name. The option exists for the one test that
-// must read a run whose `finished_at` is KNOWN to stay null on some builds (a
-// cancelled run on 1.14.0.dev23+), so it can assert everything else first — it must
+// asserts everything else about a cancelled run before it checks the timestamp in its
+// own step (a cancelled run kept `finished_at: null` on 1.14.0.dev23 to dev26) — it must
 // return on the terminal status alone, and must still wait while the run is in flight.
 import { test } from "node:test";
 import assert from "node:assert/strict";
