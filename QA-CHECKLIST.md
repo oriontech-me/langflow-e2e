@@ -1876,9 +1876,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 132 | 113 | 0 | 3 | 16 |
+| `integrations/` — Dedicated Integrations | 138 | 118 | 0 | 3 | 17 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **905** | **754 (83%)** | **91 (10%)** | **17 (2%)** | **43 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **911** | **759 (83%)** | **91 (10%)** | **17 (2%)** | **44 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1894,7 +1894,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 864 `test()` calls carrying the `@stable` tag, distributed across 313 spec
+> 870 `test()` calls carrying the `@stable` tag, distributed across 315 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1922,6 +1922,10 @@
 - [x] a callback without the binding cookie is refused and leaves the state usable, and the state completes neither on another provider's path nor twice → `api-connections-oauth-callback.spec.ts`
 - [x] a newer start supersedes the older one, and a denied consent keeps the saved credential → `api-connections-oauth-callback.spec.ts`
 - [x] the OAuth routes a browser reaches answer an HTML 429, and oauth/start answers the JSON one → `api-connections-oauth-callback.spec.ts`
+- [x] the four site-bound registrations are served, self-managed and confidential, with their required scopes → `api-connections-oauth-site-bound.spec.ts`
+- [x] a start that leaves out a required scope is refused, naming it, and the row stays pending → `api-connections-oauth-site-bound.spec.ts`
+- [x] a callback that brings neither a code nor an error marks the row oauth-expired → `api-connections-oauth-site-bound.spec.ts`
+- [x] Manage providers saves each site-bound registration bound to its site, and refuses one bound elsewhere → `api-connections-oauth-site-bound.spec.ts`
 - [x] another user's connection answers 404 on every route, exactly like one that does not exist → `api-connections-ownership.spec.ts`
 - [x] an instance connection is visible to every user, but only a superuser may create, change or remove it → `api-connections-ownership.spec.ts`
 - [x] only the owner may allow non-interactive use, and anyone with write access may clear it → `api-connections-ownership.spec.ts`
@@ -2309,6 +2313,8 @@
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/integrations/
+- [x] each site-bound provider lists its scopes ticked, locks the required ones, and names its setup guide → `connection-oauth-site-bound.spec.ts`
+- [x] consent at each site-bound provider starts with the ticked scopes, and a denied or cancelled one leaves no row → `connection-oauth-site-bound.spec.ts`
 - [x] the Add dialog lists every Google scope with the risk of each action that needs it, and offers Slack a token instead of a sign-in → `connection-oauth-wizard.spec.ts`
 - [x] with no OAuth registration, the dialog explains the operator setup and offers this instance's callback URL → `connection-oauth-wizard.spec.ts`
 - [x] the registration picked is the one consent starts with, a lost sign-in window still learns the provider's answer, and Cancel discards the half-made connection → `connection-oauth-wizard.spec.ts`
