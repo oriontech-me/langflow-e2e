@@ -7,6 +7,7 @@ import {
 } from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { revokeProjectMintedKeys } from "../../../../helpers/flows/revoke-project-minted-keys";
 import {
   projectSidebarEntry,
   type ProjectRef,
@@ -36,6 +37,10 @@ test(
     const mainPage = new MainPage(page);
     const renamedFolder = `crud-folder-${Date.now()}`;
     let createdId: string | undefined;
+    // The name the backend assigned at creation. The API key Langflow mints for
+    // the project keeps it through the rename below, and the key outlives the
+    // project's deletion (#2512).
+    let createdName: string | undefined;
     let project: ProjectRef | undefined;
 
     try {
@@ -48,6 +53,7 @@ test(
         // keys the testid on the id and 1.11.x still keys it on the name.
         project = await createProjectThroughSidebar(page);
         createdId = project.id;
+        createdName = project.name;
       });
 
       await test.step("Rename the folder to a unique name", async () => {
@@ -83,11 +89,12 @@ test(
       // leaving the folder on the instance for every later run to trip over.
       // `deleteProject` retries the 500 and treats 404 (the happy path) as done.
       if (createdId) {
-        await deleteProject(request, createdId, {
-          headers: { Authorization: await getAuthToken(request) },
-        }).catch((error) => {
+        const headers = { Authorization: await getAuthToken(request) };
+        await deleteProject(request, createdId, { headers }).catch((error) => {
           console.warn(`⚠️ Orphan project left behind (${createdId}): ${error}`);
         });
+        // An empty name is dropped by the helper.
+        await revokeProjectMintedKeys(request, headers, [createdName ?? ""]);
       }
     }
   },
@@ -173,6 +180,13 @@ test(
           console.warn(`⚠️ Orphan project left behind (${folderId}): ${error}`);
         });
       }
+      // Whichever path deleted the folder, the key Langflow minted for it is
+      // still there (#2512).
+      await revokeProjectMintedKeys(
+        request,
+        { Authorization: authToken },
+        [folderName],
+      );
     }
   },
 );

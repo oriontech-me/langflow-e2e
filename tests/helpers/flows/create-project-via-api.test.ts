@@ -3,8 +3,8 @@
 //
 // The load-bearing part is the TEARDOWN, not the creation. Langflow mints an API
 // key of its own (`MCP Project <name> - default`) whenever a project is created
-// with `auth_settings`, and `DELETE /api/v1/projects/{id}` answers 204 while
-// leaving that key behind — measured on 1.12.0.dev18. If the sweep regresses, the
+// (only with `auth_settings` on 1.12.0.dev18, always on 1.14.0.dev32, #2512), and
+// `DELETE /api/v1/projects/{id}` answers 204 while leaving that key behind. If the sweep regresses, the
 // symptom is invisible: every spec using a restricted project keeps passing while
 // one orphan key accumulates per run on the shared superuser account.
 //
@@ -67,6 +67,9 @@ function fakeRequest(
     },
     get: async (url: string) => {
       calls.push({ method: "GET", url });
+      // The revocation reads the project list to prove a key is orphaned; the
+      // project is gone by then, so the list is empty.
+      if (url.startsWith("/api/v1/projects/")) return res(200, []);
       return res(keyListStatus, { api_keys: live });
     },
     delete: async (url: string) => {
