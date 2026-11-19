@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, connect } from "node:net";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,7 @@ function look(
     reason ??
     {
       [UP]: "ports open",
-      [DOWN]: "no connection on port(s) 22 443",
+      [DOWN]: "no connection on port(s) 443",
       [UNKNOWN]: "could not tell",
     }[exitCode];
   writeFileSync(probe, `#!/bin/sh\necho '${text}'\nexit ${exitCode}\n`, {
@@ -87,7 +87,7 @@ test("the third consecutive down look posts once, and the fourth does not post a
   assert.match(third.posted, /cannot reach ghe\.example\.invalid/);
   assert.match(third.posted, /3 checks in a row/);
   assert.match(third.posted, /will not pull the suite or open its umbrella/);
-  assert.match(third.posted, /no connection on port\(s\) 22 443/);
+  assert.match(third.posted, /no connection on port\(s\) 443/);
   assert.equal(alerted(dir), true);
   const fourth = look(dir, DOWN);
   assert.equal(fourth.posted, "");
@@ -102,6 +102,111 @@ test("recovery after an announced outage posts once, and only then", () => {
   assert.match(back.posted, /reaches ghe\.example\.invalid again/);
   assert.equal(alerted(dir), false);
   assert.equal(look(dir, UP).posted, "");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const REFUSED = "ports open, but the credential was refused — [credential] HTTP 401";
+const markFile = (dir) => join(dir, "state", "destination-reachability.alerted");
+
+test("a change of cause during an announced outage posts once, each way (#2490)", () => {
+  const dir = makeTempDir("reach-cause");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "network");
+
+  const toCredential = look(dir, DOWN, { reason: REFUSED });
+  assert.match(toCredential.posted, /on the network again, but the credential was refused/);
+  assert.match(toCredential.posted, /HTTP 401/);
+  assert.match(toCredential.posted, /outage stays open/);
+  assert.equal(alerted(dir), true, "the outage must stay open");
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "credential");
+  assert.equal(look(dir, DOWN, { reason: REFUSED }).posted, "", "same cause, no second post");
+
+  const toNetwork = look(dir, DOWN);
+  assert.match(toNetwork.posted, /no longer reaches ghe\.example\.invalid on the network/);
+  assert.equal(look(dir, DOWN).posted, "");
+
+  const back = look(dir, UP);
+  assert.match(back.posted, /reaches ghe\.example\.invalid again/);
+  assert.equal(alerted(dir), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a Workflow Builder post names the credential case in its headline", () => {
+  const dir = makeTempDir("reach-cause-headline");
+  const hook = "https://hooks.slack.invalid/triggers/T/1/abc";
+  for (let i = 0; i < 3; i++) look(dir, DOWN, { webhook: hook });
+  const r = look(dir, DOWN, { webhook: hook, reason: REFUSED });
+  assert.equal(JSON.parse(r.posted).headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an undelivered change of cause is retried, and the mark keeps the old cause", () => {
+  const dir = makeTempDir("reach-cause-retry");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  const failed = look(dir, DOWN, { reason: REFUSED, httpStatus: "500" });
+  assert.match(failed.stdout, /not accepted/);
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "network");
+  assert.match(look(dir, DOWN, { reason: REFUSED }).posted, /credential was refused/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a mark written before #2490 reads as a network outage (#2490)", () => {
+  const dir = makeTempDir("reach-cause-legacy");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  writeFileSync(markFile(dir), "1794447600\n");
+  assert.equal(look(dir, DOWN).posted, "", "still the network: nothing new");
+  // The network came back before any look of the new version: the change is news.
+  const r = look(dir, DOWN, { reason: REFUSED });
+  assert.match(r.posted, /on the network again, but the credential was refused/);
+  assert.match(r.posted, /since 2026-11-12/);
+  assert.deepEqual(readFileSync(markFile(dir), "utf8").split("\n").slice(0, 2), ["1794447600", "credential"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the pre-daily reminder speaks the cause it sees, and leaves the mark to the hourly look", () => {
+  const dir = makeTempDir("reach-cause-reminder");
+  const hook = "https://hooks.slack.invalid/triggers/T/1/abc";
+  for (let i = 0; i < 3; i++) look(dir, DOWN, { webhook: hook });
+  const r = look(dir, DOWN, { webhook: hook, announce: true, reason: REFUSED });
+  const body = JSON.parse(r.posted);
+  assert.equal(body.headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  assert.match(body.body, /^Reminder: .*credential was refused/);
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "network");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a recovery with an unconfirmed credential claims the network only", () => {
+  const dir = makeTempDir("reach-cause-unconfirmed");
+  for (let i = 0; i < 3; i++) look(dir, DOWN);
+  const r = look(dir, UP, { reason: "ports open, credential not confirmed (exit 2)" });
+  assert.match(r.posted, /on the network again/);
+  assert.match(r.posted, /could not be confirmed/);
+  assert.doesNotMatch(r.posted, /can pull and open its umbrella/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("headlines follow the cause on fresh outages and the unconfirmed recovery", () => {
+  const hook = "https://hooks.slack.invalid/triggers/T/1/abc";
+  const dir = makeTempDir("reach-headlines");
+  for (let i = 0; i < 2; i++) look(dir, DOWN, { webhook: hook, reason: REFUSED });
+  const fresh = JSON.parse(look(dir, DOWN, { webhook: hook, reason: REFUSED }).posted);
+  assert.equal(fresh.headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  const back = JSON.parse(
+    look(dir, UP, { webhook: hook, reason: "ports open, credential not confirmed (exit 2)" }).posted,
+  );
+  assert.equal(back.headline, "✅ QA VM reaches the destination on the network again");
+  rmSync(dir, { recursive: true, force: true });
+  const dir2 = makeTempDir("reach-headlines-announce");
+  const ann = JSON.parse(look(dir2, DOWN, { webhook: hook, announce: true, reason: REFUSED }).posted);
+  assert.equal(ann.headline, "🚨 QA VM reaches the destination, but its credential is refused");
+  rmSync(dir2, { recursive: true, force: true });
+});
+
+test("an announce look that opens an outage records its cause", () => {
+  const dir = makeTempDir("reach-cause-announce");
+  look(dir, DOWN, { announce: true, reason: REFUSED });
+  assert.equal(readFileSync(markFile(dir), "utf8").split("\n")[1], "credential");
+  assert.equal(look(dir, DOWN, { reason: REFUSED }).posted, "");
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -350,6 +455,34 @@ test("real probe: open ports map the credential's answer — 0 up, 2 up, 3 down"
   } finally {
     listening.close();
   }
+});
+
+/** Whether something on this machine accepts a connection on `port`. */
+function listensLocally(port) {
+  return new Promise((resolve) => {
+    const s = connect({ host: "127.0.0.1", port });
+    s.setTimeout(2000);
+    s.once("connect", () => { s.destroy(); resolve(true); });
+    s.once("error", () => resolve(false));
+    s.once("timeout", () => { s.destroy(); resolve(false); });
+  });
+}
+
+test("real probe: by default only 443 is probed, never 22 (#2490)", async (t) => {
+  // The reason names every port that failed. Before #2490 it read "22 443". It needs
+  // both ports closed locally to tell the two apart, so it skips where either listens.
+  if ((await listensLocally(443)) || (await listensLocally(22))) {
+    t.skip("something listens on 127.0.0.1:443 or :22 here");
+    return;
+  }
+  const dir = makeTempDir("reach-probe-default");
+  const r = look(dir, null, {
+    threshold: 1,
+    lane: LOCAL,
+    extraEnv: { PROBE_PORTS: "", PROBE_TIMEOUT: "3", CREDENTIAL_BIN: credStub(dir, 0) },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  assert.match(r.stdout, /\[reach\] down: no connection on port\(s\) 443$/m);
 });
 
 test("real probe: no ISSUE_HOST is unknown, not down", () => {
