@@ -278,9 +278,11 @@ export const FINISHED_AT_GRACE_MS = 5_000;
  * within `FINISHED_AT_GRACE_MS` (`finishedAtGraceMs` overrides it, for the unit tests).
  *
  * `requireFinishedAt: false` returns on the terminal status alone. It exists for one
- * caller: a cancelled run keeps `finished_at: null` forever on `1.14.0.dev23`+ (#2417),
- * and the cancel test must assert everything else about that run before it checks the
- * timestamp under a declared-failing step. Every other caller keeps the strict default.
+ * caller: the cancel test asserts everything else about a cancelled run first, then
+ * checks `finished_at` in its own step, so a missing timestamp fails by name rather
+ * than as a failed cancellation. That split is what isolated #2417 (LE-3447: from
+ * `1.14.0.dev23` to `dev26` a cancelled run kept `finished_at: null` forever; fixed in
+ * `dev27`). Every other caller keeps the strict default.
  */
 export async function waitForRunToFinish(
   request: APIRequestContext,

@@ -1,6 +1,6 @@
 # Memory Base — ingestion: chunk settings, preview, folder connector, runs and cancel
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev25`, #2417) · first validated on `1.14.0.dev18`
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`, #2417 lift) · first validated on `1.14.0.dev18`
 
 ---
 
@@ -50,10 +50,8 @@ the only way a caller can reach it.
    (`finished_at: null`); `POST /{kb}/cancel` answers `200`; the run then reports
    `cancelled` with `error_message: "ingestion cancelled by user"` — never
    `succeeded` — and `GET /{kb}/chunks?job_id=<run>` holds no chunk from it. Last,
-   the cancelled run must report a `finished_at`; on the builds where it never does
-   (`1.14.0.dev23`+, a confirmed regression — #2417, LE-3447) that one check is **declared
-   failing**, so the test stays green on everything else and turns red the day
-   upstream fixes it.
+   the cancelled run must report a `finished_at` (it never did on `1.14.0.dev23` to
+   `dev26`, a confirmed regression fixed in `dev27` — #2417, LE-3447).
 
 ---
 
@@ -77,6 +75,9 @@ kept it while declared failing. The daily's auto-removal stripped it on 2026-10-
 (`c8cce0d2`), when the fix made the declared failure pass. It was restored together with
 the lift (#2115). Quarantined 2026-10-05 (#2175) together with every spec that creates a knowledge base through `helpers/knowledge/knowledge-base.ts`: the helper still asked for `backend_type: "chroma"`, which langflow-ai/langflow#15509 retired on the 1.13 line (`1.13.0.dev33` answers `422`). The helper now creates `sqlite` knowledge bases and the tag is back. Tests 2–5 were the ones quarantined;
 test 1 drives the Knowledge page and never used the helper.
+Test 5 kept the tag while its `finished_at` check was declared failing (#2417). The
+daily's auto-removal stripped it on 2026-11-17 (#2474), when the upstream fix made the
+declared failure pass, and it was restored together with the lift (#2417).
 
 ---
 
@@ -144,21 +145,16 @@ test 1 drives the Knowledge page and never used the helper.
   list and the detail. A run that finished before the cancel landed fails the test
   naming that — it is never read as "cancel works". `GET /{kb}/chunks?job_id=<run>`
   must answer `total: 0` (the cancel path rolls back what the run had written).
-- **Test 5 checks `finished_at` last, and on affected builds declares it failing.**
-  Everything above runs unweakened on every build; the run is read for those with
-  `waitForRunToFinish(…, { requireFinishedAt: false })`, which returns on the terminal
-  status alone. That status flips the moment the cancel route marks the **job**
-  cancelled, while the run's own reason (`error_message`) is written by `finalize_run`
-  a moment later — read once right away it was still `null` 3 times out of 3 on
-  `1.14.0.dev25` — so the reason is **polled** for (15 s), not read once. Then a
-  separate step waits for `finished_at` with the usual 5 s grace.
-  On a build the regression affects (`1.14.0.dev23`+, `cancelledRunKeepsNullFinishedAt`)
-  that step is wrapped in `test.fail()`: the failure is the expected outcome, and
-  when upstream fixes it the step passes, Playwright reports "expected to fail but
-  passed", and the test goes red asking for the declaration to be removed. A failure
-  in any earlier step is still a real failure, because the declaration is made only
-  once those steps have passed. On every other build (1.13.x, and `main` while it
-  lacks upstream #13508) the step must pass, as it did before.
+- **Test 5 checks `finished_at` last, in its own step.** The cancellation is asserted
+  first, reading the run with `waitForRunToFinish(…, { requireFinishedAt: false })`,
+  which returns on the terminal status alone. That status flips the moment the cancel
+  route marks the **job** cancelled, while the run's own reason (`error_message`) is
+  written by `finalize_run` a moment later — read once right away it was still `null`
+  3 times out of 3 on `1.14.0.dev25` — so the reason is **polled** for (15 s), not read
+  once. Then a separate step waits for `finished_at` with the usual 5 s grace, so a
+  missing timestamp fails by name rather than as a failed cancellation. That split is
+  what isolated #2417: from `1.14.0.dev23` to `dev26` the step was declared failing
+  (`test.fail()`), and the declaration was removed once the fix landed (see *Notes*).
 - **A run is read once it has settled.** A run reports its terminal status a moment
   before its `finished_at`: the status is written into the job's metadata by
   `finalize_run`, `finished_at` is projected from the job row's `finished_timestamp`,
@@ -284,7 +280,7 @@ of the job row's timestamp — so the fix is one line upstream, but a client pol
 a terminal status reads `finished_at: null` in the meantime. Recorded for the upstream
 draft; the test waits it out rather than failing on a 70 ms race.
 
-### A cancelled run never gets `finished_at` (regression, `1.14.0.dev23`+, #2417)
+### A cancelled run never got `finished_at` (regression, `1.14.0.dev23` to `dev26`, #2417, fixed)
 
 Measured on `1.14.0.dev25`: a cancelled folder ingestion reports `status: "cancelled"`
 and the right `error_message`, but its `finished_at` stays `null` — 5 s, then 90 s,
@@ -308,11 +304,17 @@ Two upstream pieces combine:
   `finished_timestamp`.
 
 Scope: only `release-1.14.0` carries #13508; `main` and `release-1.13.3` keep the old
-success path and are unaffected (checked at their tips, 2026-11-12). Not fixed at the
-`release-1.14.0` tip either. Either one-line fix works upstream: pass
-`finished_timestamp=True` from the cancel route, or let `_job_to_run_row` fall back to
-`job_metadata.finished_at`. Filed as [LE-3447](https://datastax.jira.com/browse/LE-3447)
-(`REGRESSIONS.md` → Ledger, `Open`).
+success path and are unaffected (checked at their tips, 2026-11-12). Filed as
+[LE-3447](https://datastax.jira.com/browse/LE-3447) (`REGRESSIONS.md` → Ledger).
+
+**Fixed** by [langflow#15433](https://github.com/langflow-ai/langflow/pull/15433)
+(*stamp the finish time on every cancel path*, `d1234084eb`, merged into
+`release-1.14.0` on 2026-11-13): the cancel route now writes `finished_timestamp`
+together with `CANCELLED`, as do the v2 workflow stop route and the memory base cancel
+that runs on flow deletion. The commit is an ancestor of the `v1.14.0.dev27` tag and not
+of `dev26`. The declared failure passed 3/3 on the daily dispatched on `1.14.0.dev29`
+(2026-11-16) and 3/3 on the VM daily on `1.14.0.dev30` (2026-11-17), so `test.fail()`
+was removed and `@stable` restored.
 
 ### Measured side effects of a cancel (not asserted)
 
