@@ -85,6 +85,69 @@ function gridCell(page: Page, keyName: string, colId: string) {
   return row.locator(`[col-id="${colId}"]`);
 }
 
+/**
+ * Brings the row for `keyName` into the DOM before any of its cells is read.
+ *
+ * The page lists every key the user owns through AG-Grid, which virtualizes its
+ * rows: only those in (and just around) the viewport exist in the DOM. On a
+ * shared instance other specs leave keys behind, and on the VM daily of
+ * 2026-11-19 the browser received all 21 keys while the grid rendered 18 — this
+ * spec's two, listed last, were never rendered (#2505). The count is not this
+ * spec's to control, so the helper walks the grid: it scrolls the body viewport
+ * one screen at a time from the top, and at the bottom of a page moves to the
+ * next one, since the grid is also PAGINATED (100 rows a page — measured with
+ * 106 keys, "1 to 100 of 106 / Page 1 of 2"). It fails naming the key only when
+ * the last page's bottom is reached without the row.
+ * It searches FORWARD from the current page, which suffices because this spec's
+ * keys are created together and listed in creation order.
+ */
+async function revealKeyRow(page: Page, keyName: string): Promise<void> {
+  const cell = gridCell(page, keyName, "name");
+  const viewport = page.locator(".ag-body-viewport").first();
+  const nextPageButton = page.getByRole("button", { name: "Next Page" }).first();
+  await viewport.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  let exhausted = false;
+  await expect
+    .poll(
+      async () => {
+        if ((await cell.count()) > 0) return "rendered";
+        if (exhausted) return "absent from every page of the grid";
+        const atBottom = await viewport.evaluate((el) => {
+          const before = el.scrollTop;
+          el.scrollTop = before + el.clientHeight;
+          return el.scrollTop === before;
+        });
+        if (!atBottom) return "scrolling";
+        // The bottom of this page: move to the next one, or stop on the last.
+        const lastPage =
+          (await nextPageButton.count()) === 0 ||
+          (await nextPageButton.getAttribute("aria-disabled")) === "true";
+        if (lastPage) {
+          exhausted = true;
+          return "scrolling";
+        }
+        // By keyboard, not a pointer click: a floating notice anchored to the
+        // bottom-right corner (`storage-upgrade-notice`, "Upgrading your data")
+        // was measured covering the paging buttons. Moving to the next page is
+        // navigation, not the behaviour under test, so the pointer target is not
+        // what this spec should depend on.
+        await nextPageButton.press("Enter");
+        await viewport.evaluate((el) => {
+          el.scrollTop = 0;
+        });
+        return "next page";
+      },
+      {
+        message: `the row for API key "${keyName}" must be rendered somewhere in the grid`,
+        timeout: 30_000,
+        intervals: [100, 250, 500],
+      },
+    )
+    .toBe("rendered");
+}
+
 test.describe("API key timestamp timezone handling (PR #13471)", () => {
   // Shared API keys are created once in beforeAll and read by both tests.
   test.describe.configure({ mode: "serial" });
@@ -164,7 +227,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
 
   test(
     "renders API key timestamps in the viewer's local timezone",
-    { tag: ["@regression", "@ui-ux", "@settings"] },
+    { tag: ["@regression", "@ui-ux", "@settings", "@stable"] },
     async ({ page, request }) => {
       const createdUtcWallClock = await test.step(
         "read the serialized created_at (UTC)",
@@ -192,6 +255,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
         await expect(page.locator(".ag-row").first()).toBeVisible({
           timeout: 30000,
         });
+        await revealKeyRow(page, expiringKeyName);
         await expect(gridCell(page, expiringKeyName, "name")).toBeVisible({
           timeout: 15000,
         });
@@ -215,6 +279,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
         await expect(gridCell(page, expiringKeyName, "last_used_at")).toHaveText(
           "Never",
         );
+        await revealKeyRow(page, foreverKeyName);
         await expect(gridCell(page, foreverKeyName, "expires_at")).toHaveText(
           "∞",
         );

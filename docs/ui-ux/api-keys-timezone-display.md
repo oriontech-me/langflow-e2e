@@ -1,6 +1,6 @@
 # API Keys — Timestamp Timezone Display
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.14.0.dev32 (the published wheel, served locally) — re-validated for #2505
 
 ---
 
@@ -37,10 +37,10 @@ If this test fails, either the backend dropped the offset (timestamps render in 
 
 **Test 2 — `@ui-ux` local rendering**
 1. Read the serialized `created_at` (UTC) via API to derive the raw UTC wall clock the bug used to show.
-2. Log in and open `/settings/api-keys`.
+2. Log in, open `/settings/api-keys`, and **walk the grid (scroll, then next page) until the key's row is rendered** before reading any of its cells (see *Notes* — the grid virtualizes its rows, so a row below the fold is not in the DOM at all).
 3. Assert the expiring key's **expires** cell reads `2026-06-10 20:59:59` (23:59:59 UTC − 03:00).
 4. Assert the **created** cell matches `YYYY-MM-DD HH:MM:SS` **and** differs from the raw UTC wall clock (proves the offset was applied).
-5. Assert the unused key's **last used** cell reads `Never` and the no-expiry key's **expires** cell reads `∞`.
+5. Assert the unused key's **last used** cell reads `Never`; bring the no-expiry key's row into the DOM the same way, and assert its **expires** cell reads `∞`.
 
 ---
 
@@ -60,6 +60,7 @@ If this test fails, either the backend dropped the offset (timestamps render in 
 - `src/frontend/src/pages/SettingsPage/pages/ApiKeysPage/components/LastUsedAtCellRender/index.tsx` — renders `last_used_at`; emits `Never` when null.
 - `src/frontend/src/pages/SettingsPage/pages/ApiKeysPage/components/ExpiryDateCellRender/index.tsx` — renders `expires_at`; emits the `∞` glyph when null.
 - `src/frontend/src/pages/SettingsPage/pages/ApiKeysPage/helpers/column-defs.ts` — wires the three renderers to their columns.
+- `src/frontend/src/pages/SettingsPage/pages/ApiKeysPage/index.tsx` and `src/frontend/src/components/core/parameterRenderComponent/components/tableComponent/index.tsx` — the page renders its keys through the shared ag-grid `TableComponent`, whose row virtualization is why Test 2 scrolls before it reads a row.
 
 ---
 
@@ -82,3 +83,4 @@ If this test fails, either the backend dropped the offset (timestamps render in 
 ## Notes *(optional)*
 
 - The UI assertion is intentionally a hard-coded local value rather than a value re-derived from the served timestamp: re-deriving in-browser would also shift with a regressed (offset-less) backend and mask the bug. Pinning the timezone and asserting `20:59:59` keeps the regression guard real.
+- **The grid virtualizes its rows, and the test scrolls for that reason (#2505).** The page lists every key the user owns through ag-grid, which keeps only the rows in (and just around) the viewport in the DOM. On the VM daily of 2026-11-19 (`1.14.0.dev32`) the browser received all 21 keys — the trace's `GET /api/v1/api_key/` carries both of this test's keys — while the grid rendered 18 rows, all of them `MCP Project … - default` keys left by other specs; this test's two keys come last and were never rendered, so `toBeVisible` failed 3/3 with `element(s) not found`. Reproduced on `1.14.0.dev32` locally by minting 25 filler keys first: the same failure, while the same build with one pre-existing key passes 5/5. The number of keys on a shared instance is not this test's to control, so the test walks the grid rather than assuming every row is rendered: it scrolls the body viewport one screen at a time from the top and, at the bottom of a page, moves to the next one, because the grid is also **paginated** at 100 rows (measured with 106 keys: `1 to 100 of 106 / Page 1 of 2`). It moves pages by keyboard rather than with a pointer click, because a floating `storage-upgrade-notice` ("Upgrading your data") anchored bottom-right was measured covering the paging buttons. It fails, naming the key, only when the last page's bottom is reached without the row. Validated on `1.14.0.dev32` with 1, 26 and 111 keys on the instance.
