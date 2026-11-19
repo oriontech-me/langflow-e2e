@@ -5,7 +5,8 @@
 **Last validated:** Langflow 1.14.x (`1.14.0.dev31`)
 
 Owning issue: #2308 (Dedicated Integrations, batch 2). The issue names #2303 as the source of a
-trigger helper; #2303 is still open, so this file makes its own trigger calls, the way #2309 did.
+trigger helper; #2303 was still open when this file landed, so it made its own trigger calls, the way
+#2309 did (they moved to `tests/helpers/triggers/trigger-api.ts` with #2448).
 It reuses the throwaway owner from #2295 (`tests/helpers/integrations/connections-owner.ts`) and the
 catalog flow builder (`tests/helpers/flows/build-catalog-flow.ts`). The trigger lifecycle itself
 (CRUD, the state machine, flow-save reconciliation) is #2303's; who a trigger run executes as is
