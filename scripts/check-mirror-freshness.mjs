@@ -141,14 +141,22 @@ export function resolveRemote(nameOrUrl, { cwd, env } = {}) {
  * spell it `https://github.com/oriontech-me/langflow-e2e.git` while the source default
  * has no `.git`. Compared as strings, the same-repository guard below passed, both
  * tips were the same commit, and the check answered "current" while the real mirror was
- * two days behind (#2330). Dropped here: a trailing `/` or `.git`, the scheme, and any
- * userinfo (a user or a token in the URL names a credential, not a repository). The host
- * is lowercased because DNS names are case-insensitive; the path is left alone, because
- * on a local path or a self-hosted forge it may not be.
+ * two days behind (#2330). Dropped here: a trailing `/` or `.git`, repeated `/`, the
+ * scheme, a default port, and any userinfo (a user or a token in the URL names a
+ * credential, not a repository).
  *
- * So `https://github.com/o/r`, `ssh://git@github.com/o/r.git` and `git@GitHub.com:o/r`
- * all reduce to `github.com/o/r`. Matching wide is the safe direction for this guard: a
- * false match costs an UNKNOWN that names itself, a missed one costs a false "current".
+ * Case: a remote with a host is lowercased WHOLE, path included. GitHub serves
+ * `Oriontech-Me/Langflow-E2E` and `oriontech-me/langflow-e2e` as one repository
+ * (measured: one sha from `ls-remote` for both), and a forge that is case-sensitive
+ * costs at most a false match — which is the safe direction for this guard: a false
+ * match costs an UNKNOWN that names itself, a missed one costs a false "current". A
+ * local or `file://` path keeps its case, since on Linux two such paths are two
+ * directories.
+ *
+ * So `https://github.com/o/r`, `ssh://git@github.com/o/r.git` and `git@GitHub.com:O/R`
+ * all reduce to `github.com/o/r`. What this does NOT see through, all of them dev or
+ * local setups rather than the VM's: an ssh `Host` alias, a `url.<base>.insteadOf`
+ * rewrite that only `git remote get-url` applies, a relative or symlinked local path.
  */
 export function normalizeRemoteUrl(url) {
   if (typeof url !== "string") return null;
@@ -179,12 +187,11 @@ export function normalizeRemoteUrl(url) {
     }
   }
 
-  let path = rest.replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
+  let path = rest.replace(/\/{2,}/g, "/").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
   if (host != null) {
     if (!path.startsWith("/")) path = `/${path}`;
     // A default port is the same endpoint as no port, so it must not split the match.
-    const lowered = host.toLowerCase().replace(/:(443|22|80)$/, "");
-    return `${lowered}${path}`;
+    return `${host.replace(/:(443|22|80)$/, "")}${path}`.toLowerCase();
   }
   return path;
 }

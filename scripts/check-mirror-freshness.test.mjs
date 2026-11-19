@@ -333,6 +333,12 @@ test("one repository spelled two ways is still one repository (#2332)", () => {
     "ssh://git@github.com/oriontech-me/langflow-e2e.git",
     "git@github.com:oriontech-me/langflow-e2e.git",
     "  https://github.com/oriontech-me/langflow-e2e\n",
+    // GitHub serves both cases as one repository (one sha from ls-remote), so a
+    // case-sensitive comparison was #2332 again in another spelling (review).
+    "https://github.com/Oriontech-Me/Langflow-E2E",
+    "git@github.com:Oriontech-Me/Langflow-E2E.git",
+    "https://github.com//oriontech-me/langflow-e2e",
+    "git@github.com:/oriontech-me/langflow-e2e.git",
   ]) {
     assert.ok(sameRepository(source, spelling), `${spelling} read as a different repository than ${source}`);
   }
@@ -356,7 +362,7 @@ test("different repositories stay different, so the guard does not swallow a rea
   assert.equal(sameRepository(undefined, undefined), false);
 });
 
-test("the normalized form drops userinfo, so the UNKNOWN line never prints a token", () => {
+test("the normalized form drops userinfo and keeps a local path's case", () => {
   assert.equal(
     normalizeRemoteUrl("https://x-access-token:ghs_secret@github.com/oriontech-me/langflow-e2e.git"),
     "github.com/oriontech-me/langflow-e2e",
@@ -400,6 +406,31 @@ test("end to end: a clone whose origin adds .git to the source URL is UNKNOWN, n
     "a clone whose origin differs from the source only by `.git` reported the mirror as current",
   );
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("the UNKNOWN line printed by main never carries a token from the destination's URL", () => {
+  // Behavioural: the guard prints a URL, and the URL a clone stores can carry a
+  // credential. Asserted on what main() writes, not on the helper, so reverting the
+  // print to the raw resolved URL fails here.
+  const dir = makeTempDir("mirror-freshness-token");
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+  const work = join(dir, "w");
+  execFileSync("git", ["init", "-q", "-b", "main", work], { env });
+  execFileSync("git", ["remote", "add", "origin", "https://x-access-token:ghs_SECRET@github.com/oriontech-me/langflow-e2e.git"], { cwd: work, env });
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  let code;
+  try {
+    code = main({ ...env, SOURCE_REMOTE_URL: "https://github.com/oriontech-me/langflow-e2e", DESTINATION_REMOTE: "origin" }, work);
+  } finally {
+    console.log = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(code, EXIT_UNKNOWN);
+  const out = lines.join("\n");
+  assert.match(out, /same repository \(github\.com\/oriontech-me\/langflow-e2e\)/);
+  assert.doesNotMatch(out, /SECRET|x-access-token/, `main printed a credential:\n${out}`);
 });
 
 test("the walk fetches without writing FETCH_HEAD, because the removal path reads it (#1972)", () => {
