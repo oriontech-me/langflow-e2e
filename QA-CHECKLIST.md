@@ -1103,19 +1103,20 @@
       → security/tweaks-injection.spec.ts
 - [x] The floor holds on the **graph run path** — `POST /api/v2/workflows` `mode=stream` refuses a
       `global_imports` and a `python_code` tweak on a code-execution node, and the refusal is
-      **named** in the stream (an `event: "error"` frame carrying `TweakRefusedError` and the
-      refused key) rather than being a bare failure. Both failure directions are asserted because
-      they are opposite: acceptance is caught causally (the author's code branches on whether the
-      widened module is in scope) and an unattributable refusal by requiring the frame to name the
-      key. This is the path `langflow-ai/langflow#14538` says previously accepted tweaks the sync
-      mode refused → security/tweaks-graph-path-floor.spec.ts
+      **named**: since `1.14.0.dev32` (#2504, upstream `#16466`) it arrives **before** any stream is
+      committed, as `422` with `code: TWEAKS_REFUSED` and `fields` naming the key — the shape
+      `POST /api/v1/run` returns — and only that shape is accepted. A benign tweak on the same
+      surface still answers `200` with an event stream and takes effect. This is the path
+      `langflow-ai/langflow#14538` says previously accepted tweaks the sync mode refused
+      → security/tweaks-graph-path-floor.spec.ts
 - [x] The same on `mode=background`, read from `GET /api/v2/workflows/{job_id}/events` — kept as
       its own bullet because `#14538` names both modes and they can regress independently
       → security/tweaks-graph-path-floor.spec.ts
 - [x] `mode=sync` refuses a protected tweak **without ever answering 2xx**, and the refused request
       leaves the flow still running the author's code. Asserted shape-agnostically on purpose: the
       status body is a generic `500` on `1.12.0.dev37` and still on `dev38`, where `POST /api/v1/run`
-      returns `422 TWEAKS_REFUSED` naming the field; the property pinned here holds under both, while
+      returns `422 TWEAKS_REFUSED` naming the field, and that same `422` on `1.14.0.dev32` (#2504,
+      a pre-flight upstream `#16466` added); the property pinned here holds under both, while
       still catching the failure that matters — a refusal answering `200` because the tweak took
       effect or was dropped and the run proceeded anyway. The shape difference is recorded in the
       spec doc → security/tweaks-graph-path-floor.spec.ts
