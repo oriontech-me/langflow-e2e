@@ -1871,7 +1871,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 860 `test()` calls carrying the `@stable` tag, distributed across 312 spec
+> 857 `test()` calls carrying the `@stable` tag, distributed across 312 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2087,7 +2087,6 @@
 - [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
 - [x] lists the caller's own triggers across flows, newest first, filtered by provider and state → `api-triggers-operator.spec.ts`
 - [x] scope=all is superuser-only and shows every user's triggers with their owner and no actions on rows the caller does not own → `api-triggers-operator.spec.ts`
-- [x] computes each trigger's actions on the server, by state and by kind → `api-triggers-operator.spec.ts`
 - [x] bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused → `api-triggers-operator.spec.ts`
 - [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
@@ -2727,7 +2726,6 @@
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
 - [x] the refusal surfaces in the editor as an error, not a silent empty result → `ssrf-url-validation.spec.ts`
-- [x] mode=stream refuses a protected tweak and names the refusal → `tweaks-graph-path-floor.spec.ts`
 - [x] mode=background refuses a protected tweak and names the refusal → `tweaks-graph-path-floor.spec.ts`
 - [x] mode=sync refuses a protected tweak without ever answering 2xx → `tweaks-graph-path-floor.spec.ts`
 - [x] a code tweak is refused with a 422 naming the field, and the flow is left untouched → `tweaks-injection.spec.ts`
@@ -2737,7 +2735,6 @@
 #### ui-ux/
 - [x] select and delete a flow → `actionsMainPage-shard-1.spec.ts`
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
-- [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] zoom in and zoom out step the canvas scale and clamp at the React Flow bounds → `canvas-zoom-navigation.spec.ts`
 - [x] Fit View centers every node inside the canvas viewport → `canvas-zoom-navigation.spec.ts`
 - [x] Fit View is reachable from the canvas controls toolbar → `canvas-zoom-navigation.spec.ts`
