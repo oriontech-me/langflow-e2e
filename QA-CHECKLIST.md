@@ -1758,6 +1758,14 @@
 - [x] A pasted credential is checked against the provider before it is stored: GitHub, GitLab, Telegram, Discord and WhatsApp refuse a fake token with their reason (or *could not reach* with no egress), Jira, Confluence, ServiceNow and Salesforce refuse manual credentials, and the same create without credentials is `pending` → api/connections/api-connections-lifecycle.spec.ts
 - [ ] A consent that completes at a real provider, and an Agent calling an action as a tool — both need a real account
 
+#### 24.17 The pasted-token providers in the Add dialog (#2500)
+
+- [x] GitHub, GitLab, Discord, Telegram and WhatsApp open *Add connection* on the token form — no sign-in step, no identity choice (each profile has one identity, sent without asking), no scope list — with the token field and its help, the setup guide the manifest's `docs_url` names, an expiry field only for GitHub (`requires_expiry`), and Continue enabled only once everything the profile needs is filled → core-functionality/integrations/connection-token-providers.spec.ts
+- [x] A refused token: Continue sends the manifest profile's identity and `required_scopes`, the server answers `422`, and the dialog shows that `detail` verbatim in its alert, stays open and keeps the token for correction (editing it clears the alert); no refused handle reaches the list → core-functionality/integrations/connection-token-providers.spec.ts
+- [x] GitHub's past expiry is `aria-invalid` and cannot be sent; a future one is sent as UTC (`expires_at`), and *Allow background runs* reaches the create as `allow_non_interactive: true` → core-functionality/integrations/connection-token-providers.spec.ts
+- [x] *Authorize* on a `pending` token connection opens *Reconnect <handle>* with the token form only, writes `POST /api/v1/connections/{id}/token` to that row and creates nothing, and a refusal leaves the row `pending` without a credential → core-functionality/integrations/connection-token-providers.spec.ts
+- [ ] A token the provider accepts (the *connected* step, a `ready` row) — needs a live account (#2503)
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
