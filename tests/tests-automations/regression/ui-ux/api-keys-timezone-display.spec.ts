@@ -164,7 +164,7 @@ test.describe("API key timestamp timezone handling (PR #13471)", () => {
 
   test(
     "renders API key timestamps in the viewer's local timezone",
-    { tag: ["@regression", "@ui-ux", "@settings", "@stable"] },
+    { tag: ["@regression", "@ui-ux", "@settings"] },
     async ({ page, request }) => {
       const createdUtcWallClock = await test.step(
         "read the serialized created_at (UTC)",
