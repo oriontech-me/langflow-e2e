@@ -34,16 +34,20 @@
  *
  *   > #1432 is still worth fixing: it is the reason this took three dailies.
  *
- * MEASURED, and it is what the fix stands on: **Chromium does not retain a
- * zero-length response body**, so `response.text()` REJECTS with `response.text:
- * Protocol error (Network.getResponseBody): No data found for resource with
- * given identifier` rather than resolving to `""`. Not specific to `400` —
- * verified across 200 / 204 / 400 / 404 / 500, with an explicit
- * `content-length: 0`, and with a gzip of the empty string; a redirect gives a
- * third real message (`Response body is unavailable for redirect responses`).
- * So the branch the fixture used to swallow in silence is not exotic: it is what
- * every bodyless response does, and until now every one of them looked exactly
- * like a body nobody printed.
+ * MEASURED, and it is what the fix stood on: on Playwright 1.58.2 (Chromium 145)
+ * **Chromium did not retain a zero-length response body**, so `response.text()`
+ * REJECTED with `response.text: Protocol error (Network.getResponseBody): No
+ * data found for resource with given identifier` rather than resolving to `""`
+ * — across 200 / 204 / 400 / 404 / 500, with an explicit `content-length: 0`,
+ * and with a gzip of the empty string. So the branch the fixture used to swallow
+ * in silence was not exotic: it was what every bodyless response did. On
+ * Playwright 1.65.1 (Chromium 159, #2167) all of those RESOLVE to `""` and print
+ * as `<empty body>`. What still rejects, on both versions, is a body that never
+ * arrived — headers sent, the connection dropped mid-body (same `No data found`
+ * message) — a response whose page navigated away before the read (`No resource
+ * with given identifier found`), and a redirect (`Response body is unavailable
+ * for redirect responses`). The branch matters as much as it did; it is just no
+ * longer the bodyless case.
  *
  * THREE states, not two. The fixture records the entry BEFORE reading the body
  * on purpose (the read is an `await` inside an async event handler and teardown
@@ -176,12 +180,13 @@ export function describeResponseBody(read: BodyRead): BodyOutcome {
     // Said out loud rather than printed as a bare `Response:` with nothing
     // after it, which reads exactly like a line that was cut short.
     //
-    // Reachable on this very transport, and the case is worth naming because it
-    // is narrow: a body of **non-zero length that decodes to the empty string**.
-    // A 3-byte UTF-8 BOM does it — Chromium retains the bytes, `text()`
-    // resolves, and the result is `""`. A genuinely zero-length body rejects
-    // instead (see the header), so this branch and the one above are two
-    // different observations rather than two spellings of one.
+    // Reachable on this very transport: a zero-length body on Chromium 159
+    // (Playwright 1.65.1), and on every version a body of non-zero length that
+    // decodes to the empty string — a 3-byte UTF-8 BOM, whose bytes Chromium
+    // retains, so `text()` resolves to `""`. On Chromium 145 a zero-length body
+    // rejected instead (see the header). Either way this branch and the one
+    // above stay two different observations rather than two spellings of one:
+    // here the body was read and was empty; there it was never obtained.
     return { responseBody: "", line: "   Response: <empty body>" };
   }
   return { responseBody: read.body, line: `   Response: ${read.body}` };
