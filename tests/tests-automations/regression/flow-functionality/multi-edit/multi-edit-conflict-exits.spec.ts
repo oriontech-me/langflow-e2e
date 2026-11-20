@@ -9,6 +9,7 @@ import {
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "../../../../helpers/flows/permissions-gate";
 
 // Multi-edit safety (upstream #14903 / #15824): each exit of the "Review Version Changes"
 // dialog promises where the viewer's work ends up, and every promise is checked on the
@@ -215,6 +216,14 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
         createdFlowIds.push(id);
         await expect(page).toHaveURL(new RegExp(`/flow/${id}`));
         await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({ timeout: 60_000 });
+        // The copy is reached by an in-app navigation, not through openFlowById, so its
+        // writability gate is taken here: the editor is read-only while the copy's
+        // permissions load, and a drag in that window is swallowed with no request
+        // (#1005). Measured: without this, 3 of 5 runs timed out waiting for the copy's
+        // PATCH at a host load of 23–33 on 10 cores; with it, none.
+        await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
+          timeout: PERMISSIONS_GATE_TIMEOUT_MS,
+        });
         return id;
       });
 

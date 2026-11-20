@@ -113,6 +113,11 @@ flow it created, the fork included. Waits key on this flow's responses, never on
      `/flow/<copy id>`.
    - The copy is named `<original> (copy)`, has *Mine Prompt* moved and Chat Input at
      `hello`.
+   - Wait for the copy's header to be enabled before editing it. The copy is reached by an
+     in-app navigation, so `openFlowById`'s writability gate does not run; the editor is
+     read-only while the copy's permissions load, and a drag in that window is swallowed
+     with no request (#1005). Without this wait, 3 of 5 runs timed out on the copy's
+     `PATCH` at a host load of 23–33 on 10 cores.
    - Edit the copy and wait for its autosave (`200`). That save comes after the
      debounce, so any save still queued for the original would already have been sent.
      None was: no `PATCH` reached the original.

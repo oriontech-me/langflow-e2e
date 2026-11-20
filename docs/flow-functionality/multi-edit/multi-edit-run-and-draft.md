@@ -37,7 +37,7 @@ written, and measured again on `1.14.0.dev14`:
 
 | Behaviour | Measured |
 |---|---|
-| **Run with an unsaved edit** (edit, then Run before the 5 s autosave) | The run reads `GET {id}/version-state`, then the flow. It raises the conflict: the banner *"A newer version of this flow is available"* appears. The viewer sends no `PATCH` and no `POST /api/v2/workflows`. |
+| **Run with an unsaved edit** (edit, then Run before the 5 s autosave) | The run reads `GET {id}/version-state`, then the flow. It raises the conflict: the banner *"A newer version of this flow is available"* appears. The viewer sends no `POST /api/v2/workflows`, and no `PATCH` succeeds (see test 1 for the refused one a slow check lets through). |
 | **Run while a conflict stands** | The notice *"This flow moved on while you were editing. Review the changes to run it."*. No request reaches `/api/v2/workflows`. |
 | **Run with no edit** | `version-state`, then the flow is re-read and adopted. The notice reads *"langflow updated this flow. The canvas now shows the latest version — run again to execute it."*. The field shows the other session's value, and no `POST /api/v2/workflows` is sent. The **next** Run sends `POST /api/v2/workflows` → `200`, and the stored User message carries the other session's text. |
 | **The draft** | Written to `localStorage` under `lf_draft_<userId>_<flowId>` as soon as the conflict is registered, whichever way it was found. |
@@ -114,8 +114,13 @@ on time.
    - `version-state` is read and the conflict banner appears.
    - Click run again. The notice *"This flow moved on while you were editing. Review the
      changes to run it."* appears.
-   - No `POST /api/v2/workflows` and no `PATCH` were sent. The server still holds
-     `their text`.
+   - No `POST /api/v2/workflows` was sent and no `PATCH` succeeded. The server still holds
+     `their text`. A refused `PATCH` (`409`) may appear: the pre-run check is three
+     requests, and the edit's 5 s autosave debounce keeps running while they are in
+     flight, so a check that outlasts it lets the stale save go out and be refused.
+     Measured once in 5 runs at a host load of ~25 on 10 cores, never at ~10. That
+     refusal also logs an advisory `🚨 Backend Error: 409`, which is this path and not a
+     defect. The banner gets 30 s after `version-state`, for the same three requests.
 
 2. **A run on a stale canvas with no edit adopts the latest version, and only the next run
    executes it.**
