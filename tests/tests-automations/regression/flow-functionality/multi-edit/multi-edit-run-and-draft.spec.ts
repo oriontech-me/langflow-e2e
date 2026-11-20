@@ -217,17 +217,40 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
       });
 
       await test.step("an edit followed at once by Run raises the conflict instead of running", async () => {
+        // The edit's 5 s autosave debounce keeps running while the pre-run check is in
+        // flight, and nothing cancels it, so a slow check lets the stale save go out. Its
+        // 409 raises the same banner through the save path, which would let this step
+        // pass with the pre-run check broken. So any save of this flow is held until the
+        // banner is up: the banner can then only come from the check, and the held save
+        // is let through afterwards to be refused as upstream designs it.
+        let releaseSaves: () => void = () => {};
+        const bannerUp = new Promise<void>((resolve) => {
+          releaseSaves = resolve;
+        });
+        await page.route(
+          (url) => url.pathname === `/api/v1/flows/${ctx.flowId}`,
+          async (route) => {
+            if (route.request().method() !== "PATCH") return route.fallback();
+            await bannerUp;
+            await route.continue();
+          },
+        );
+
         const checked = page.waitForResponse(
           (r) => new URL(r.url()).pathname === `/api/v1/flows/${ctx.flowId}/version-state`,
         );
         await chatInput(page).fill(MY_TEXT);
         await runButton(page).click();
         expect((await checked).status()).toBe(200);
-        // The pre-run check is three requests (version-state, the flow, then their
-        // version for the dialog) before it raises the banner: upstream
-        // checkFlowVersion. Only the first is awaited above, so the banner gets the
-        // budget of the other two, measured past the 5 s default on a loaded host.
-        await expect(conflictBanner(page)).toBeVisible({ timeout: 30_000 });
+        // Upstream checkFlowVersion raises the banner after TWO requests, version-state
+        // and then a read of the flow for the diff (attachTheirFlow comes after it).
+        // Only the first is awaited above, so the banner gets the second's budget,
+        // measured past the 5 s default on a loaded host.
+        try {
+          await expect(conflictBanner(page)).toBeVisible({ timeout: 30_000 });
+        } finally {
+          releaseSaves();
+        }
       });
 
       await test.step("Run while the conflict stands is refused with a notice", async () => {
@@ -241,11 +264,10 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
           await chatInput(page).blur();
         });
         expect(writes.runs, `run requests: ${writes.runs}`).toEqual([]);
-        // No save may SUCCEED. A refused one may be sent: the edit's 5 s autosave
-        // debounce keeps running while the pre-run check is in flight, and when the
-        // check outlasts it the stale save goes out and is refused with 409 (measured
-        // once in 5 runs at a host load of ~25 on 10 cores). The server value below is
-        // what proves nothing was written.
+        // No save may SUCCEED. A refused one may be sent: the save held in the step
+        // above, when the check outlasted the debounce, goes out and is refused with
+        // 409 (measured once in 5 runs at a host load of ~25 on 10 cores). The server
+        // value below is what proves nothing was written.
         expect(
           writes.patches.filter((status) => status < 400),
           `PATCH statuses: ${writes.patches}`,

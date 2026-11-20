@@ -114,16 +114,22 @@ on time.
    - Open the flow. Another session saves.
    - Type `my text` into Chat Input, then click Chat Output's run button at once, before
      the 5 s autosave.
-   - `version-state` is read and the conflict banner appears.
+   - `version-state` is read and the conflict banner appears. Upstream's pre-run check
+     raises it after two requests, `version-state` and then a read of the flow for the
+     diff, so the banner gets 30 s after `version-state`.
+   - Any `PATCH` of this flow is **held** until the banner is visible. The edit's 5 s
+     autosave debounce keeps running while the check is in flight, and nothing cancels
+     it, so a slow check lets the stale save go out. Its `409` raises the same banner
+     through the save path, so without the hold the step would pass with the pre-run
+     check broken (measured: a bundle whose check returns `conflict` without registering
+     it passed the unheld test 2 of 2). With the hold, the banner can only come from the
+     check; the held save is then let through.
    - Click run again. The notice *"This flow moved on while you were editing. Review the
      changes to run it."* appears.
    - No `POST /api/v2/workflows` was sent and no `PATCH` succeeded. The server still holds
-     `their text`. A refused `PATCH` (`409`) may appear: the pre-run check is three
-     requests, and the edit's 5 s autosave debounce keeps running while they are in
-     flight, so a check that outlasts it lets the stale save go out and be refused.
-     Measured once in 5 runs at a host load of ~25 on 10 cores, never at ~10. That
-     refusal also logs an advisory `🚨 Backend Error: 409`, which is this path and not a
-     defect. The banner gets 30 s after `version-state`, for the same three requests.
+     `their text`. The held save, when there was one, is refused with `409` (measured
+     once in 5 runs at a host load of ~25 on 10 cores, never at ~10). That refusal also
+     logs an advisory `🚨 Backend Error: 409`, which is this path and not a defect.
 
 2. **A run on a stale canvas with no edit adopts the latest version, and only the next run
    executes it.**
