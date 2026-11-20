@@ -905,7 +905,12 @@ jobs:
           # langflow-ai/langflow#7313). With tracing off the instance writes no
           # trace at all, so its first test would fail on a precondition rather
           # than on the masking it exists to watch.
-          LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || contains(needs.detect-specs.outputs.specs, 'api/monitor') || contains(needs.detect-specs.outputs.specs, 'credential-secret-exposure') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
+          #
+          # `api-connections-saved-flow-contract` reads one for the same reason
+          # (#2298): it sweeps the trace of a run the provider rejected for the
+          # connection's planted token, and with tracing off two of its tests
+          # would fail on that precondition instead.
+          LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || contains(needs.detect-specs.outputs.specs, 'api/monitor') || contains(needs.detect-specs.outputs.specs, 'credential-secret-exposure') || contains(needs.detect-specs.outputs.specs, 'api-connections-saved-flow-contract') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
           # Let Langflow reach the sibling go-httpbin service below (#1128). Its
           # SSRF layer blocks private addresses unless pre-authorized, and the
           # API Request component's validators.url() rejects a single-label host
