@@ -184,7 +184,9 @@ key**
 
 1. Seed one Google connection.
 2. For each of the 8 locales:
-   1. Set `localStorage.languagePreference` and load `/settings/connections`.
+   1. Load `/settings/connections`: English first, with no stored preference (a fresh context
+      has none), then each other locale after writing `localStorage.languagePreference` on the
+      page's own origin.
    2. Assert `<html lang>` and, for every locale except `en`, that its chunk was fetched
       and that the heading differs from the English one.
    3. Scan the page body, the row menu and the Add dialog for raw keys.
