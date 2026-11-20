@@ -90,9 +90,14 @@ token**:
 - none of them equals what `version-state` reports afterwards;
 - the loser's `modified_at` is not the row's `updated_at` either.
 
-**How it was measured.** Raw `curl`, no Playwright:
+**How it was measured.** Raw `curl`, no Playwright, on `1.14.0.dev7`:
 - with 2 parallel writers, 10 of 10 races produced the phantom token;
 - with 6 writers, 4 to 5 of the 5 losers per round.
+
+Re-measured for #2525 on `1.14.0.dev32`: under Playwright the declared test failed as expected
+in 4 of 4 runs (the #2525 review saw 20 of 20), but raw `curl` races produced a phantom token far
+less often than on `dev7` (the review saw 1 of 23 and 1 of 6). The defect stands; how often a
+bare race shows it has dropped, so the `dev7` rates are not today's.
 
 **Impact.** The frontend stores `detail.current_version_token` as the conflict's
 `currentToken`. *Keep my version* / *Update Current Flow* sends that value as the
