@@ -1903,9 +1903,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 155 | 132 | 0 | 3 | 20 |
+| `integrations/` — Dedicated Integrations | 159 | 136 | 0 | 3 | 20 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **928** | **773 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **932** | **777 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1921,7 +1921,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 886 `test()` calls carrying the `@stable` tag, distributed across 317 spec
+> 893 `test()` calls carrying the `@stable` tag, distributed across 318 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1981,6 +1981,13 @@
 - [x] a KB connector ingest fails closed without the opt-in, before any ingestion run exists → `api-connections-resolution-non-interactive.spec.ts`
 - [x] an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a Slack app-level token is refused outside the trigger listener, interactive or not → `api-connections-resolution-non-interactive.spec.ts`
+- [x] an export keeps the handle and carries no credential, as a flow and as a project → `api-connections-saved-flow-contract.spec.ts`
+- [x] a malformed handle is nulled on export, and kept on save and on import → `api-connections-saved-flow-contract.spec.ts`
+- [x] a round trip keeps the class the manifest names, and the stored code builds as that component → `api-connections-saved-flow-contract.spec.ts`
+- [x] imported by another user, the handle binds to that user's connection, never the exporter's → `api-connections-saved-flow-contract.spec.ts`
+- [x] a run the provider rejects surfaces no token in what it records → `api-connections-saved-flow-contract.spec.ts`
+- [x] the Playground and the trace view show the provider's refusal, not the token → `api-connections-saved-flow-contract.spec.ts`
+- [x] a connection field is never a tool argument, and a handle naming another provider is refused → `api-connections-saved-flow-contract.spec.ts`
 - [x] a saved registration is listed without its secrets, used by the next consent at once, replaced with its secret kept, and removed → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] an invalid registration is refused with a message that names the problem, and never echoes what was sent → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] an ID the server environment defines stays the environment's: saved as overridden, not used, and removable without touching it → `api-connections-saved-oauth-registrations.spec.ts`
