@@ -132,6 +132,9 @@ RETRIES="${RETRIES:-}"                        # empty = the config's default (2 
 # default, which every shard runs under (run_shard exports CI=true).
 CONFIG_CI_RETRIES=2
 RECOVER_TIMEOUT_S="${RECOVER_TIMEOUT_S:-420}"
+# How long the round's database may refuse writes, with /api/v1/version answering,
+# before the shard stops itself (#2405, scripts/watch-db-writes.mjs).
+DB_WATCHDOG_THRESHOLD_S="${DB_WATCHDOG_THRESHOLD_S:-300}"
 BACKEND_START_TIMEOUT_S="${BACKEND_START_TIMEOUT_S:-300}"
 
 # The tunnel is the default and its absence is refused — see difference 3 above.
@@ -2360,7 +2363,9 @@ run_shard() {
   # would take the others down with it. Replacing it also guarantees the background
   # recorders die with the shard even on a `set -e` abort.
   : > "$pidfile"
-  trap 'while read -r p; do kill "$p" 2>/dev/null || true; done < "'"$pidfile"'"' EXIT
+  # `kill --` because the pidfile also holds a NEGATIVE id, the round's process group
+  # (#2405), which a bare `kill "$p"` would read as a signal number.
+  trap 'while read -r p; do kill -- "$p" 2>/dev/null || true; done < "'"$pidfile"'"' EXIT
 
   start_backend_for_shard "$idx" "$port" || return 1
   prepare_shard_workdir "$idx"
@@ -2448,10 +2453,41 @@ run_shard() {
 
   # ---- The round ----------------------------------------------------------
   info "shard $idx: running @stable"
+  # Its own process group (perl's setpgrp, which Linux and macOS both have), so the
+  # DB-write watchdog below can stop every Playwright process with one SIGINT. On
+  # SIGINT Playwright still writes its blob, so the shard keeps the tests it finished.
+  # The group goes into the pidfile because it no longer dies with the shard's own.
   # shellcheck disable=SC2086
-  ( PLAYWRIGHT_RETRIES="$RETRIES" \
-    TOKENS_ATTRIB="$wd/token-attrib-${idx}.jsonl" \
-    npx playwright test --grep "$STABLE_GREP" --pass-with-no-tests $files ) >> "$log" 2>&1 || status=$?
+  PLAYWRIGHT_RETRIES="$RETRIES" TOKENS_ATTRIB="$wd/token-attrib-${idx}.jsonl" perl -e 'setpgrp(0,0); exec @ARGV' npx playwright test --grep "$STABLE_GREP" --pass-with-no-tests $files >> "$log" 2>&1 &
+  local round_pid=$!
+  echo "-$round_pid" >> "$pidfile"
+
+  # The gate checked the database once, before the round. This keeps checking: when
+  # /api/v1/version answers and /api/v1/auto_login (which writes) has failed for
+  # DB_WATCHDOG_THRESHOLD_S without a break, every remaining test would fail in auth,
+  # so it stops the round instead of letting it run into the deadline (#2405). It
+  # never acts on the wedge, where the version probe fails too (#1030).
+  local db_verdict="$wd/db-watchdog.json"
+  rm -f "$db_verdict"
+  WATCHDOG_BASE_URL="$base_url" \
+  WATCHDOG_TARGET_PGID="$round_pid" \
+  WATCHDOG_OUT="$db_verdict" \
+  WATCHDOG_THRESHOLD_S="$DB_WATCHDOG_THRESHOLD_S" \
+  WATCHDOG_INTERVAL_S=30 WATCHDOG_PROBE_TIMEOUT_MS=8000 WATCHDOG_MAX_SECONDS=7200 \
+    nohup node scripts/watch-db-writes.mjs > "$RUN_DIR/logs/shard-$idx-db-watchdog.log" 2>&1 &
+  local db_watchdog_pid=$!
+  echo "$db_watchdog_pid" >> "$pidfile"
+
+  wait "$round_pid" || status=$?
+  kill "$db_watchdog_pid" 2>/dev/null || true
+  wait "$db_watchdog_pid" 2>/dev/null || true
+  if [ -s "$db_verdict" ]; then
+    cp "$db_verdict" "$RUN_DIR/logs/shard-$idx-db-watchdog.json" 2>/dev/null || true
+    if grep -Eq '"fired":[[:space:]]*true' "$db_verdict"; then
+      err "shard $idx: the DB-write watchdog stopped the round — /api/v1/version answered but /api/v1/auto_login did not take a write for ${DB_WATCHDOG_THRESHOLD_S}s (#2405). An INFRA failure: the backend's database, not the tests (see logs/shard-$idx-db-watchdog.json)."
+      [ "$status" -ne 0 ] || status=1
+    fi
+  fi
 
   # ---- Collection (what upload-artifact did) ------------------------------
   kill "$liveness_pid" 2>/dev/null || true

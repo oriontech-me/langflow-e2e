@@ -1,7 +1,8 @@
 name: "Wait for the backend to recover from the collect-models load"
 description: >-
   The post-collect-models health gate (#1011), as ONE implementation. Poll
-  Langflow's /api/v1/version between the `Collect models` sweep and the test run:
+  Langflow's /api/v1/version, then /api/v1/auto_login (which writes the database,
+  #2405), between the `Collect models` sweep and the test run:
   wait out the process-wide wedge the sweep can leave behind (#922/#927), and when
   it does not clear, fail in this step with the real cause named instead of
   letting globalSetup report an unattributed 120 s preflight timeout.
