@@ -17,7 +17,7 @@ import {
 } from "./scrub-secrets.mjs";
 
 const require = createRequire(import.meta.url);
-const { yazl } = require("playwright-core/lib/zipBundle");
+const yazl = require("yazl");
 
 const KEY = "SECRET-PROVIDER-KEY-2486-abcdef";
 const TOKEN = "SECRET-TOKEN-2486-zyxwvu";
@@ -43,7 +43,7 @@ function tmp() {
 async function deepText(buf) {
   // An independent reader, so a test does not check the scrubber with its own walk.
   const seen = [];
-  const { yauzl } = require("playwright-core/lib/zipBundle");
+  const yauzl = require("yauzl");
   async function visit(b) {
     if (b.subarray(0, 2).toString() === "PK") {
       const entries = await new Promise((res, rej) =>
@@ -187,11 +187,13 @@ test("a real Playwright trace carries the key, and the scrubbed one does not", a
   const dir = tmp();
   try {
     const ctx = await request.newContext();
-    // An APIRequestContext has no public tracing API; `_tracing` is the object the test
-    // runner itself drives, which is why `request.newContext()` lands in a test's trace.
-    // Internal, so a Playwright bump that renames it fails here, loudly.
-    const tracing = ctx._tracing;
-    assert.equal(typeof tracing?.start, "function", "APIRequestContext._tracing is gone: rewrite this fixture");
+    // `APIRequestContext.tracing` is public since the 1.65.1 bump (#2167): typed in
+    // `types.d.ts` as "Tracing recorder for requests made through this API request
+    // context". On 1.58.2 the only way in was the internal `_tracing`, which 1.65.1
+    // removed, so this fixture now uses the documented member. The check stays so a
+    // later bump that drops it fails here by name, not on `undefined.start`.
+    const tracing = ctx.tracing;
+    assert.equal(typeof tracing?.start, "function", "APIRequestContext.tracing is gone: rewrite this fixture");
     await tracing.start({ snapshots: true });
     try {
       await ctx.post("http://127.0.0.1:9/api/v1/variables/", {
