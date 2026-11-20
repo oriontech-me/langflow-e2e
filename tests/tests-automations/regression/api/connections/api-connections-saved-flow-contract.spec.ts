@@ -989,41 +989,42 @@ class SavedFlowGuardProbe(Component):
         );
       });
 
-      await test.step("in Tool Mode, no tool takes the connection as an argument", async () => {
+      await test.step("in Tool Mode, a saved template's tool_mode flag on the connection is inert", async () => {
+        // The unflagged case is `connector-tool-mode.spec.ts`'s; this is only the
+        // saved-template flag, which is stored and echoed but must not reach the
+        // tool schema (no refusal exists for it — see the spec doc).
         const drive = findCatalogComponent(catalog, DRIVE_LIST_TYPE) as Record<
           string,
           any
         >;
-        for (const flagged of [false, true]) {
-          const template = structuredClone(drive.template);
-          // A saved template can carry the flag; the tool schema must not honour it.
-          if (flagged) template.connection.tool_mode = true;
-          const res = await request.post("/api/v1/custom_component/update", {
-            headers: superHeaders,
-            data: {
-              code: template.code.value,
-              template,
-              field: "tool_mode",
-              field_value: true,
-              tool_mode: true,
-            },
-          });
-          const text = await res.text();
-          expect(res.status(), text.slice(0, 300)).toBe(200);
-          const tools = JSON.parse(text).template.tools_metadata
-            .value as Array<{ name: string; args: object }>;
-          expect(
-            tools.length,
-            "Tool Mode exposed the connector's actions",
-          ).toBeGreaterThan(0);
-          for (const tool of tools) {
-            expect(
-              Object.keys(tool.args),
-              `${tool.name} (field flagged: ${flagged})`,
-            ).not.toContain("connection");
-            // Non-vacuous: the action's own arguments are there.
-            expect(Object.keys(tool.args)).toContain("query");
-          }
+        const template = structuredClone(drive.template);
+        template.connection.tool_mode = true;
+        const res = await request.post("/api/v1/custom_component/update", {
+          headers: superHeaders,
+          data: {
+            code: template.code.value,
+            template,
+            field: "tool_mode",
+            field_value: true,
+            tool_mode: true,
+          },
+        });
+        const text = await res.text();
+        expect(res.status(), text.slice(0, 300)).toBe(200);
+        const updated = JSON.parse(text).template;
+        expect(
+          updated.connection.tool_mode,
+          "the flag was stored and echoed, so the check below is not vacuous",
+        ).toBe(true);
+        const tools = updated.tools_metadata.value as Array<{
+          name: string;
+          args: object;
+        }>;
+        expect(tools.length, "Tool Mode exposed the connector's actions").toBeGreaterThan(0);
+        for (const tool of tools) {
+          expect(Object.keys(tool.args), tool.name).not.toContain("connection");
+          // Non-vacuous: the action's own arguments are there.
+          expect(Object.keys(tool.args)).toContain("query");
         }
       });
 
