@@ -117,7 +117,10 @@ flow it created, the fork included. Waits key on this flow's responses, never on
      in-app navigation, so `openFlowById`'s writability gate does not run; the editor is
      read-only while the copy's permissions load, and a drag in that window is swallowed
      with no request (#1005). Without this wait, 3 of 5 runs timed out on the copy's
-     `PATCH` at a host load of 23–33 on 10 cores.
+     `PATCH` at a host load of 23–33 on 10 cores. With it, 20 of 22 runs passed; the 2
+     failures came in one 6-worker, fully parallel batch, beyond the daily's 2 workers, and
+     left no trace, so the wait is not proven to be the whole cause. This test is the only
+     one in the spec without `@stable` (see *Tags*).
    - Edit the copy and wait for its autosave (`200`). That save comes after the
      debounce, so any save still queued for the original would already have been sent.
      None was: no `PATCH` reached the original.
