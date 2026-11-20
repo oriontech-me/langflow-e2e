@@ -466,16 +466,10 @@ test.describe("Triggers — the operator API", () => {
         expect(await getTrigger(request, ownerHeaders(), id)).toMatchObject({ state: "pending", reason: "config_invalid" });
       });
 
-      // DECLARED FAILING from here on: LE-3454 (#2464). The server lists `resume`
-      // as allowed on a config_invalid row although `enable` refuses it (above),
-      // against capabilities.py's own rule that an allowed action is one the route
-      // accepts: `_decide()` blocks resume by reason on needs_reconnect, never on
-      // pending. Everything above runs undeclared, so a broken setup or a changed
-      // refusal still reddens the test. The day the fix ships this step passes,
-      // Playwright reports "expected to fail, but passed", and that is the signal
-      // to delete this line.
-      test.fail(true, "LE-3454: resume is listed as allowed on a config_invalid trigger that enable refuses");
-
+      // LE-3454 (#2464), fixed upstream by langflow-ai/langflow#16450 (first in
+      // 1.14.0.dev32): a config_invalid row no longer lists `resume` as allowed,
+      // so the action list agrees with the refusal above. Declared failing until
+      // #2525; now asserted, so a regression to the old listing fails the test.
       await test.step("config_invalid: resume is blocked with the reason enable refuses it for", async () => {
         const row = await getTrigger(request, ownerHeaders(), (invalid as TriggerRead).id);
         expect(row.allowed_actions, "an action enable refuses is not listed as allowed").not.toContain("resume");
