@@ -23,15 +23,20 @@ Seven tests:
    twice, as a flow (`POST /api/v1/flows/download/`) and as its project's zip
    (`GET /api/v1/projects/download/{project_id}`). Both exports carry the handle string, and the raw text
    of both contains neither of the connection's two planted sentinels (access and refresh token, the
-   batch-1 technique, #1967).
+   batch-1 technique, #1967). The sentinel sweep is a **contract guard**: a flow never stores the token,
+   so today nothing can put it in an export, and no mutation of this suite can make the sweep fail
+   without changing the product. It is there to catch the day an export starts embedding credentials.
 2. **A malformed handle is nulled on export, not on save or import.** Three malformed values
    (`google/a/b`, `Google/Bad Name`, `nohandle`) sit beside a well-formed control in one flow. Save and
    read-back keep all four; the export nulls the three malformed ones and keeps the control; uploading an
    envelope that carries a malformed handle keeps it.
 3. **The round trip keys on the class.** The manifest's `component_ref` for `microsoft.outlook.send` is
    the class name `OutlookSendComponent`, while the catalog entry's `name` is `OutlookSendMail`. A flow
-   with that node is exported, deleted and re-imported. The imported node resolves to the same catalog
-   entry: same type key, same `component_class_name`, same `code_hash`, same code. The handle survives.
+   with that node is exported, deleted and re-imported. The imported node keeps the catalog's type key,
+   `component_class_name`, `code_hash`, code and handle. Those checks only read back what the upload
+   stored, so the imported node is then **built**: the server instantiates the class, reaches its
+   connection input and stops at `connection-unresolved` (no row has that handle), before the send could
+   run. That build is what shows the node resolves to the catalog entry.
 4. **Imported by another user, the handle binds to that user's connection.** The superuser exports a flow
    bound to its own `google/<name>` connection, which holds the scope the action needs. A throwaway user
    imports it and builds it:
@@ -79,15 +84,23 @@ Seven tests:
   (`tools_metadata`) is built from the component's own inputs, so `connection` never becomes a tool
   argument. Test 7 asserts the property that matters (no tool argument), not a refusal that does not
   exist.
-- **Item 4 overlaps `api-connections-resolution-entry-points`.** That file already sweeps every response,
-  event stream and recorded message of eleven entry points for sentinel tokens, but every one of its runs
-  stops before a provider (the probe, a principal refusal, or `scope-missing`). The new surface here is a
-  run the **provider** rejected, and the trace, which that file does not read. Nothing is duplicated:
-  this file runs one entry point (the Playground build) and reads what the failure left behind.
-- **Re-importing on the same instance needs the original gone.** An export keeps the flow id, and
-  `POST /api/v1/flows/upload/` refuses an id that already exists for the same user (`422`, "Flow(s) with
-  the following IDs already exist"). Another user's upload gets a new id. Tests 2 and 3 delete the source
-  flow before re-importing it; test 4's importer is another user.
+- **Overlap with four existing specs, and what is new here.**
+  - `api-connections-resolution-entry-points` sweeps every response, event stream and recorded message of
+    eleven entry points for sentinels, but each of its runs stops before a provider (the probe, a
+    principal refusal or `scope-missing`).
+  - `api-connections-health` (its expired-credential test) and `core-functionality/integrations/connector-run-errors`
+    (its expired-credential test) run a connector to `auth-expired` too, but from a credential whose
+    `expires_at` is in the past, which Langflow refuses before calling Google.
+  - `core-functionality/integrations/connector-tool-mode` asserts that a connector in Tool Mode never takes
+    `connection` as a tool argument. Test 7 keeps only the case it does not cover: a saved template that
+    flags the field `tool_mode: true`.
+
+  What this file adds: a run whose token Google itself rejected (the provider is actually reached), the
+  sweep of the monitor surfaces and the trace that run leaves behind, and the export/import contract.
+- **Re-importing on the same instance means deleting the original first.** An export keeps the flow id,
+  and `POST /api/v1/flows/upload/` **upserts** an id its user already owns (measured: `201`, same id). That
+  is an update, not an import. Tests 2 and 3 delete the source flow first so the upload is a create;
+  another user's upload gets a new id, so test 4's importer needs nothing.
 
 ### Recorded, not asserted
 
@@ -107,11 +120,14 @@ None. The disagreements above are premises of the issue, not product defects.
   user, inside the 30/minute per-user bucket (#2295).
 - **Logins:** one, for the throwaway user, created inside test 4 only so a run spends one login however
   the tests spread across workers.
-- **Egress:** test 5 and test 6 need `www.googleapis.com` to answer a fake token with `401`. Every lane has
-  egress; without it the run stops at a transport error and both tests fail naming the code they got.
+- **Egress:** tests 5 and 6 need `www.googleapis.com` to answer a fake token with `401`. The GitHub
+  runners have egress. Egress from the QA VM to `www.googleapis.com` was **not verified** (the VM was
+  unreachable while this was built); see *Tags* for what a missing route does.
 - **Tracing:** tests 5 and 6 need tracing on (`LANGFLOW_DEACTIVATE_TRACING=false`). The VM daily runs with
-  tracing on, and the PR lane turns it on when this spec is selected. With tracing off, the trace list is
-  empty and both tests fail saying so, rather than sweeping nothing.
+  tracing on (`run-e2e.sh` defaults it to `false`), and the PR lane turns it on when this spec is
+  selected. The local starters default tracing **off**, so a contributor running this spec locally needs
+  `LANGFLOW_DEACTIVATE_TRACING=false` on the instance. With tracing off, the trace list is empty and both
+  tests fail saying so, rather than sweeping nothing.
 - Every name is unique per run, every flow lives in a project of its own or is deleted by id, and no list
   length is read.
 
@@ -122,7 +138,18 @@ None. The disagreements above are premises of the issue, not product defects.
 `@api` `@integrations` `@stable`, plus `@playground` `@observability` on test 6.
 
 `@stable`: no provider key and no model. Tests 1–4 and 7 need nothing outside the instance. Tests 5 and 6
-need egress to Google and tracing on, which every lane provides.
+need tracing on and egress to Google (see *Budget and parallel safety* for which lanes provide them).
+
+**Residual risk of tests 5 and 6: they depend on Google being up.** When Google answers a 5xx, the route
+to it fails, or it rate-limits, the run's typed code is `provider-unavailable`, `network-error` or
+`rate-limited` instead of `auth-expired`. The tests still **fail** then, never skip (#1010/#1012), but
+through `providerOutageMessage()` (`tests/helpers/integrations/provider-outage.ts`): the message starts
+with `[provider-outage]`, which the `provider-outage` entry of
+`scripts/lib/infra-signature-patterns.json` matches, so the daily's unreviewed `@stable` auto-removal
+treats the failure as infra and keeps the tag (the #1128 lesson). What it does not cover: an outage that
+Langflow maps to some other code (for example a Google error page read as `invalid-request`), which
+fails as an ordinary, attributable diff. A lane with no route to Google at all would fail tests 5 and 6
+on every run, as infra, until the route exists.
 
 ---
 
@@ -151,6 +178,7 @@ sentinel is derived.
    download.
 4. The imported node has the catalog's type key, `component_class_name`, `code_hash` and code, and the
    handle.
+5. Build the imported flow: `connection-unresolved`, naming the handle, before the send could run.
 
 **Test 4.**
 1. Plant a superuser `google` connection holding `drive.file`, with sentinels.
@@ -163,7 +191,7 @@ sentinel is derived.
 
 **Test 5.**
 1. Plant a superuser `google` connection holding `drive.file`, with sentinels; save a Drive flow bound to it.
-2. Build it: `auth-expired`.
+2. Build it: `auth-expired`. An outage code fails naming the provider outage (see *Tags*).
 3. The connection now reads `status: expired`.
 4. Sweep the build stream, the monitor messages, builds and transactions of the flow (each polled until it
    has recorded the run: the vertex build is written after the stream ends), the trace list and the trace
@@ -172,7 +200,9 @@ sentinel is derived.
 **Test 6.**
 1. Plant the same kind of connection; save a Chat Input → Drive flow bound to it.
 2. Open the flow, open the Playground, send a message.
-3. The error card appears; expanded, it shows the `auth-expired` text. The page HTML carries no sentinel.
+3. The error card appears. The run's code, read from its trace, is `auth-expired` (an outage code fails
+   naming the outage, see *Tags*). Expanded, the card shows the `auth-expired` text. The page HTML carries
+   no sentinel.
 4. Close the Playground, open *Traces*, open the run: the span tree lists the Drive span; its detail shows
    `auth-expired`. The page HTML carries no sentinel.
 
@@ -180,8 +210,9 @@ sentinel is derived.
 1. Validate a component whose connection input sets `tool_mode=True`: `400` with the tool-call message.
 2. Validate one whose connection input defaults to `slack/<x>` on provider `google`: `400` with the
    provider message.
-3. Switch the Drive connector to Tool Mode through `POST /api/v1/custom_component/update`, once as is and
-   once with `tool_mode: true` on its connection field: no tool's arguments include `connection`.
+3. Switch the Drive connector to Tool Mode through `POST /api/v1/custom_component/update` with
+   `tool_mode: true` on its connection field: the flag is echoed back, and no tool's arguments include
+   `connection` (the unflagged case is `connector-tool-mode`'s).
 4. Save a Drive flow with `slack/<x>`: kept on save and on export. Build it: the provider message, and no
    resolution code (`connection-unresolved`, `scope-missing`, `auth-expired`).
 
@@ -200,7 +231,8 @@ All seven tests pass three consecutive times at `--retries=0` with default worke
   `expired`;
 - `connection` is never a tool argument, and a foreign-provider handle is refused at validation and run.
 
-Each test also has a force-fail mutation executed against it.
+Each test except test 1's sentinel sweep (a contract guard, see above) has a force-fail mutation
+executed against it, and so do test 3's build and the outage message of tests 5 and 6.
 
 ---
 
@@ -213,6 +245,8 @@ Each test also has a force-fail mutation executed against it.
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_build_flows_download_response`, the flow export.
 - `src/backend/base/langflow/api/v1/flows.py` — create, read, upload and download routes.
 - `src/backend/base/langflow/api/v1/projects.py` — the project download and upload routes.
+- `src/backend/base/langflow/api/v1/projects_files.py` — where the project download strips secrets
+  (`strip_flow_secrets`), and so nulls a malformed handle.
 - `src/backend/base/langflow/services/connection/service.py` — the database resolver: per owner, by
   handle.
 - `src/lfx/src/lfx/integrations/models.py` — `ConnectionRef`: the handle's grammar.
@@ -230,4 +264,5 @@ Each test also has a force-fail mutation executed against it.
   recorded surfaces swept in test 5.
 - `tests/helpers/flows/build-catalog-flow.ts`, `tests/helpers/flows/create-project-via-api.ts`,
   `tests/helpers/integrations/create-connection.ts`, `tests/helpers/integrations/connection-probe.ts`
-  (`DRIVE_LIST_TYPE`), `tests/helpers/auth/throwaway-user.ts` and `tests/pages/PlaygroundPage.ts`.
+  (`DRIVE_LIST_TYPE`), `tests/helpers/integrations/provider-outage.ts` (the outage message),
+  `tests/helpers/auth/throwaway-user.ts` and `tests/pages/PlaygroundPage.ts`.
