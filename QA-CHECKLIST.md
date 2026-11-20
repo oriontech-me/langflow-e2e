@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-19
+> **Last updated:** 2026-11-20
 
 ---
 
@@ -1899,9 +1899,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 143 | 122 | 0 | 3 | 18 |
+| `integrations/` — Dedicated Integrations | 155 | 132 | 0 | 3 | 20 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **916** | **763 (83%)** | **91 (10%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **928** | **773 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1917,7 +1917,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 876 `test()` calls carrying the `@stable` tag, distributed across 316 spec
+> 886 `test()` calls carrying the `@stable` tag, distributed across 317 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2136,6 +2136,16 @@
 - [x] an owner's resume, pause and replay each write one audit row naming the trigger → `api-triggers-audit.spec.ts`
 - [x] an operator's bulk pause and resume write admin rows only for the triggers it selected → `api-triggers-audit.spec.ts`
 - [x] the audit log answers only a superuser and is left out of the OpenAPI schema → `api-triggers-audit.spec.ts`
+- [x] creates, reads, lists, updates and deletes a trigger on the owner's own flow → `api-triggers-lifecycle.spec.ts`
+- [x] enable arms and disable pauses, idempotently, from every state but dead → `api-triggers-lifecycle.spec.ts`
+- [x] pins a trigger to a version of its own flow, and to nothing else → `api-triggers-lifecycle.spec.ts`
+- [x] refuses through the API the kinds that only a component on the canvas creates → `api-triggers-lifecycle.spec.ts`
+- [x] a flow save creates the trigger unarmed, never arms or disarms it, and pauses it when its node is removed → `api-triggers-lifecycle.spec.ts`
+- [x] refuses out-of-range and server-owned fields on create and on update → `api-triggers-lifecycle.spec.ts`
+- [x] only the flow's owner can see or act on its triggers → `api-triggers-lifecycle.spec.ts`
+- [x] lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch → `api-triggers-lifecycle.spec.ts`
+- [x] lead: enable arms a webhook whose payload_schema is malformed, and erases the error → `api-triggers-lifecycle.spec.ts`
+- [x] lead: a stored payload_schema is not enforced on delivery → `api-triggers-lifecycle.spec.ts`
 - [x] a single-flow write that carries a second trigger is refused, and changes nothing → `api-triggers-one-per-flow.spec.ts`
 - [x] an import that carries one bad flow creates none of the flows in it → `api-triggers-one-per-flow.spec.ts`
 - [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
