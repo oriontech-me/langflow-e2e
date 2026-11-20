@@ -404,8 +404,9 @@ test.describe("Connections — the saved-flow contract", () => {
             exported,
             "DriveList-two-slashes",
           ).node.template.connection.value = "google/a/b";
-          // An export keeps the flow id, and the upload refuses an id its user
-          // already has (422) — so the source goes first.
+          // An export keeps the flow id, and the upload UPSERTS an id its user
+          // already owns (201, same id — an update, not an import). Deleting the
+          // source first makes the upload a create, i.e. a real import.
           await deleteFlow(request, sourceId, { headers: superHeaders });
           sourceDeleted = true;
           const imported = await uploadFlow(
