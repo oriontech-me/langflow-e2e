@@ -1,6 +1,7 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect } from "@playwright/test";
 import { deleteProject } from "./delete-project";
+import { revokeProjectMintedKeys } from "./revoke-project-minted-keys";
 
 /**
  * Creates a project (folder) via `POST /api/v1/projects/` and returns its id plus
@@ -22,15 +23,16 @@ import { deleteProject } from "./delete-project";
  * `DELETE /api/v1/projects/{id}` returns under write contention (#965). A bare
  * `request.delete` here would silently leak a project per failed teardown.
  *
- * **Teardown also sweeps the API key Langflow mints on its own.** Creating a
- * project *with* `auth_settings` makes the backend issue a key named
- * `MCP Project <project name> - default`, and `DELETE /api/v1/projects/{id}`
- * answers `204` while leaving that key behind — measured on `1.12.0.dev18`, in
- * both directions (a project created without `auth_settings` mints no key, so the
- * trigger is the auth settings, not project creation). Without this sweep every
- * run of every spec using a restricted project leaves one orphan key on the shared
- * account, forever. The sweep matches on the generated project name, which is
- * unique per call, so it cannot touch another spec's key.
+ * **Teardown also revokes the API key Langflow mints on its own.** Creating a
+ * project makes the backend issue a key named `MCP Project <project name> -
+ * default`, and `DELETE /api/v1/projects/{id}` answers `204` while leaving that
+ * key behind. On `1.12.0.dev18` only a project created WITH `auth_settings`
+ * minted one; on `1.14.0.dev32` every project does, unless the superuser skips
+ * auth under `AUTO_LOGIN` (#2512). Without the
+ * revocation every run of every caller leaves one orphan key on the shared
+ * account, forever. `revokeProjectMintedKeys` matches the exact key name for the
+ * generated project name, which is unique per call, so it cannot touch another
+ * spec's key.
  */
 
 export interface CreatedProject {
@@ -166,37 +168,9 @@ export async function createProjectViaApi(
     deleteProject: async (reqOverride?: APIRequestContext) => {
       const req = reqOverride ?? request;
       await deleteProject(req, projectId, { headers });
-      // After the project, never before: the sweep is cleanup, and a failure here
-      // must not prevent the project itself from being deleted.
-      await sweepProjectApiKeys(req, headers, name);
+      // After the project, never before: the revocation is cleanup, and a failure
+      // here must not prevent the project itself from being deleted.
+      await revokeProjectMintedKeys(req, headers, [name]);
     },
   };
-}
-
-/**
- * Deletes the API keys Langflow auto-created for a project, identified by the
- * project's (unique) name. Best-effort by design — this is teardown for a defect,
- * so it warns rather than throwing and never masks the caller's own failure.
- */
-async function sweepProjectApiKeys(
-  request: APIRequestContext,
-  headers: Record<string, string>,
-  projectName: string,
-): Promise<void> {
-  try {
-    const res = await request.get("/api/v1/api_key/", { headers });
-    if (!res.ok()) return;
-    const body = await res.json();
-    const keys: Array<{ id: string; name: string }> = body?.api_keys ?? [];
-    for (const key of keys.filter((k) => k?.name?.includes(projectName))) {
-      const del = await request.delete(`/api/v1/api_key/${key.id}`, { headers });
-      if (!del.ok() && del.status() !== 404) {
-        console.warn(
-          `⚠️ Could not delete the project's auto-created API key "${key.name}": ${del.status()}`,
-        );
-      }
-    }
-  } catch (e) {
-    console.warn(`⚠️ API key sweep failed for project "${projectName}": ${e}`);
-  }
 }

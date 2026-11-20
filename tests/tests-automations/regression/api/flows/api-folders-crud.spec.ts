@@ -2,6 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { revokeProjectMintedKeys } from "../../../../helpers/flows/revoke-project-minted-keys";
 
 // Folders use the /api/v1/projects/ endpoint (legacy alias kept for compatibility).
 // The alias itself — seven 307 redirects — is asserted by
@@ -17,6 +18,9 @@ test.describe("Folder (Projects) CRUD via API", () => {
   // afterEach always runs. Targeted delete only (never a global wipe), which
   // under the suite's parallelism would nuke concurrent workers' data.
   const createdFolderIds: string[] = [];
+  // Creation-time names, for the API key Langflow mints per project and does
+  // not revoke when the project is deleted (#2512).
+  const createdFolderNames: string[] = [];
   const createdFlowIds: string[] = [];
 
   test.afterEach(async ({ request }) => {
@@ -38,8 +42,16 @@ test.describe("Folder (Projects) CRUD via API", () => {
         console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
       });
     }
+    // After the projects: a key is revoked only once no project carries its
+    // name, which covers the folder the DELETE test removed in its own body.
+    await revokeProjectMintedKeys(
+      request,
+      { Authorization: authToken },
+      createdFolderNames,
+    );
     createdFlowIds.length = 0;
     createdFolderIds.length = 0;
+    createdFolderNames.length = 0;
   });
 
   test(
@@ -59,6 +71,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
 
       const folder = await createRes.json();
       createdFolderIds.push(folder.id);
+      createdFolderNames.push(folder.name);
       expect(folder).toHaveProperty("id");
       expect(typeof folder.id).toBe("string");
       expect(folder.name).toBe(folderName);
@@ -78,8 +91,9 @@ test.describe("Folder (Projects) CRUD via API", () => {
         data: { name: folderName },
       });
       expect(createRes.status()).toBe(201);
-      const { id } = await createRes.json();
+      const { id, name } = await createRes.json();
       createdFolderIds.push(id);
+      createdFolderNames.push(name);
 
       const listRes = await request.get("/api/v1/projects/", {
         headers: { Authorization: authToken },
@@ -121,8 +135,9 @@ test.describe("Folder (Projects) CRUD via API", () => {
         data: { name: folderName },
       });
       expect(createRes.status()).toBe(201);
-      const { id } = await createRes.json();
+      const { id, name } = await createRes.json();
       createdFolderIds.push(id);
+      createdFolderNames.push(name);
 
       const deleteRes = await request.delete(`/api/v1/projects/${id}`, {
         headers: { Authorization: authToken },
@@ -170,6 +185,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       expect(folder1Res.status()).toBe(201);
       const folder1 = await folder1Res.json();
       createdFolderIds.push(folder1.id);
+      createdFolderNames.push(folder1.name);
 
       const folder2Res = await request.post("/api/v1/projects/", {
         headers: { Authorization: authToken },
@@ -178,6 +194,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       expect(folder2Res.status()).toBe(201);
       const folder2 = await folder2Res.json();
       createdFolderIds.push(folder2.id);
+      createdFolderNames.push(folder2.name);
 
       // Create a flow in folder 1
       const flowRes = await request.post("/api/v1/flows/", {

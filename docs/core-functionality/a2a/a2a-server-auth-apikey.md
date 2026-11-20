@@ -206,16 +206,20 @@ creates is deleted by id in `finally`.
 - **Discovery still lists the flow under a restricted project** — the catalog is
   owner-scoped and unaffected by `auth_type`. Not asserted here (it belongs to
   `a2a-server-discovery`), recorded so a future reader does not assume otherwise.
-- **Creating a project *with* `auth_settings` makes Langflow mint an API key of
-  its own**, named `MCP Project <project name> - default` — and
-  `DELETE /api/v1/projects/{id}` answers `204` while **leaving that key behind**.
-  Measured in both directions on `1.12.0.dev18`: a project created *without*
-  `auth_settings` mints no key at all, so the trigger is the auth settings rather
-  than project creation. This is not a property of the spec but of the product;
-  it is caught here because the first run of this test left one orphan key on the
-  shared account, and the daily would have added one per day forever.
-  `createProjectViaApi`'s teardown therefore sweeps keys matching the project's
-  (unique) generated name.
+- **Creating a project makes Langflow mint an API key of its own**, named
+  `MCP Project <project name> - default` — and `DELETE /api/v1/projects/{id}`
+  answers `204` while **leaving that key behind**. On `1.12.0.dev18` only a
+  project created *with* `auth_settings` minted one (a project created without
+  them minted none, measured in both directions). On `1.14.0.dev32` every project
+  does: the default MCP auth is `apikey` unless the superuser skips auth under
+  `AUTO_LOGIN`, so the trigger is now creating a project at all (#2512). This is
+  not a property of the spec but of the product; it was caught here because the
+  first run of this test left one orphan key on the shared account. The suite
+  revokes these keys in teardown with `revokeProjectMintedKeys`
+  (`tests/helpers/flows/revoke-project-minted-keys.ts`), which `deleteProject` and
+  `createProjectViaApi` both call. The key keeps the name the project was
+  CREATED with when the project is renamed, so a caller that renames, or that
+  deletes the project in its own body, revokes by the creation-time name.
 
   **What the orphan actually is, measured rather than inferred:** the key is
   scoped to the **user**, not to the project — `MCP Project <name>` is a label,
@@ -228,8 +232,9 @@ creates is deleted by id in `finally`.
   (`sk-sCiKY****…`). Nobody holds it. What accumulates is an active, never-expiring
   credential per restricted project ever created, belonging to no project and
   known to no one. **Candidate product defect — deleting a project should revoke
-  the key its creation minted — low severity, no user-facing impact today. Not
-  filed; recorded here.**
+  the key its creation minted — low severity, no user-facing impact today.**
+  Since `1.14.0.dev32` it applies to every project, not only restricted ones
+  (#2512). Not filed upstream.
 
 ---
 

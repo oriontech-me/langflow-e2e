@@ -1,4 +1,5 @@
 import type { APIRequestContext } from "@playwright/test";
+import { revokeProjectMintedKeys } from "./revoke-project-minted-keys";
 
 /**
  * Deletes a project (folder) via the Langflow REST API and surfaces a failed
@@ -27,6 +28,17 @@ import type { APIRequestContext } from "@playwright/test";
  *  - a 5xx is retried on a short backoff (the lock clears in milliseconds once
  *    the competing writer commits) before throwing.
  *
+ * **It also revokes the API key Langflow minted for the project (#2512).**
+ * Creating a project issues an account key named `MCP Project <name> -
+ * default` (on `1.14.0.dev32`, unless the superuser skips auth under
+ * `AUTO_LOGIN`), and the `204` of the delete leaves it active. The name is read from
+ * the project list BEFORE the delete (the list, not `GET /projects/{id}`, so a
+ * project the test already deleted costs no 404), and the key is revoked only
+ * after a delete this call performed. That reads the CURRENT name, which is the
+ * key's name unless the test renamed the project; a caller that renames, or that
+ * deletes the project in its own body, passes the creation-time name to
+ * `revokeProjectMintedKeys` itself. Revocation never throws.
+ *
  * Pass `page.request` (browser-context auth is reused automatically) or a
  * standalone `request` with an explicit Authorization header via
  * `options.headers`.
@@ -50,10 +62,18 @@ export async function deleteProject(
   const MAX_ATTEMPTS = 3;
   const BACKOFF_MS = 250;
 
+  const headers = (options?.headers ?? {}) as Record<string, string>;
+  const name = await currentProjectName(request, id, headers);
+
   let last: { status(): number; text(): Promise<string> } | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const res = await request.delete(url, options);
-    if (isDone(res)) return;
+    if (isDone(res)) {
+      if (name !== undefined) {
+        await revokeProjectMintedKeys(request, headers, [name]);
+      }
+      return;
+    }
     last = res;
     if (res.status() < 500) {
       throw new Error(
@@ -73,4 +93,28 @@ export async function deleteProject(
   throw new Error(
     `Project cleanup failed after ${MAX_ATTEMPTS} attempts: ${last?.status()} — ${await last?.text()}`,
   );
+}
+
+/**
+ * The project's name as the project list reports it, or `undefined` when the
+ * project is not listed (already deleted) or the list cannot be read. Never
+ * throws: the name only serves the key revocation, which is best-effort.
+ */
+async function currentProjectName(
+  request: APIRequestContext,
+  id: string,
+  headers: Record<string, string>,
+): Promise<string | undefined> {
+  try {
+    const res = await request.get("/api/v1/projects/", { headers });
+    if (!res.ok()) return undefined;
+    const rows: unknown = await res.json();
+    if (!Array.isArray(rows)) return undefined;
+    const row = rows.find((r) => (r as { id?: unknown })?.id === id) as
+      | { name?: unknown }
+      | undefined;
+    return typeof row?.name === "string" ? row.name : undefined;
+  } catch {
+    return undefined;
+  }
 }
