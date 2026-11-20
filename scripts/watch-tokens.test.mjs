@@ -1440,6 +1440,18 @@ test("pr-validation still enables tracing for the observability specs themselves
   assert.equal(evaluateWorkflowValue(value, context), "false");
 });
 
+// The saved-flow contract spec sweeps a trace too (#2298), so selecting it alone,
+// on an LLM-free PR, must still boot with tracing on.
+test("pr-validation enables tracing for the saved-flow contract spec", () => {
+  const value = stripComments(prValidation()).match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
+  const context = {
+    "needs.detect-specs.outputs.needs_models": "false",
+    "needs.detect-specs.outputs.specs":
+      "tests/tests-automations/regression/api/connections/api-connections-saved-flow-contract.spec.ts",
+  };
+  assert.equal(evaluateWorkflowValue(value, context), "false");
+});
+
 // The cheap path #1300 traded for, pinned so it cannot be lost silently: an
 // LLM-free PR still boots without tracing. The canary class is the documented
 // exception — decideProviderCoverage() sets needs_models=true for a canary run

@@ -8,6 +8,7 @@ import {
 } from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { revokeProjectMintedKeys } from "../../../../helpers/flows/revoke-project-minted-keys";
 import {
   openProjectOptions,
   projectOptionsButton,
@@ -39,6 +40,11 @@ import { MainPage } from "../../../../pages/MainPage";
 // of them stray "Basic Prompting" copies, before this was added).
 const createdFlowIds = new Set<string>();
 const createdProjectIds = new Set<string>();
+// The creation-time names of the same projects, for the API key Langflow mints
+// per project and does not revoke when the project is deleted (#2512). Kept
+// apart from the ids because test 1 deletes its folder in its own `finally`
+// and never enters the id set, while its key is left behind all the same.
+const createdProjectNames = new Set<string>();
 
 /**
  * Records every flow the PAGE creates, so teardown deletes exactly those.
@@ -69,9 +75,17 @@ function trackCreatedFlows(page: Page): void {
 test.afterEach(async ({ page, request }, testInfo) => {
   const flowIds = [...createdFlowIds];
   const projectIds = [...createdProjectIds];
+  const projectNames = [...createdProjectNames];
   createdFlowIds.clear();
   createdProjectIds.clear();
-  if (flowIds.length === 0 && projectIds.length === 0) return;
+  createdProjectNames.clear();
+  if (
+    flowIds.length === 0 &&
+    projectIds.length === 0 &&
+    projectNames.length === 0
+  ) {
+    return;
+  }
 
   // Playwright's own `screenshot: only-on-failure` fires while the page fixture
   // tears down, which is AFTER this hook — so the navigation below would hand
@@ -109,7 +123,17 @@ test.afterEach(async ({ page, request }, testInfo) => {
   // the teardown adds no backend traffic of its own.
   await page.goto("about:blank").catch(() => {});
 
-  const authToken = await getAuthToken(request);
+  // Caught: `getAuthToken` throws once its retry budget is spent (a backend
+  // wedged at teardown, #1077), and a throw here is a hook error that fails a
+  // green test. Reached now also when a test recorded only a project name
+  // (#2512), so the guard is no longer theoretical for test 1.
+  let authToken: string;
+  try {
+    authToken = await getAuthToken(request);
+  } catch (error) {
+    console.warn(`⚠️ cleanup skipped, no auth token (#1077): ${error}`);
+    return;
+  }
   const headers = { Authorization: authToken };
   for (const id of flowIds) {
     // Not swallowed silently: a failed cleanup is reported, never hidden — but it
@@ -131,6 +155,8 @@ test.afterEach(async ({ page, request }, testInfo) => {
       console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
     });
   }
+  // After the projects: a key is revoked only once no project carries its name.
+  await revokeProjectMintedKeys(request, headers, projectNames);
 });
 
 /**
@@ -185,6 +211,7 @@ test(
     });
     expect(folderRes.status()).toBe(201);
     const { id: folderId } = await folderRes.json();
+    createdProjectNames.add(folderName);
 
     try {
       await awaitBootstrapTest(page, { skipModal: true });
@@ -251,6 +278,7 @@ test(
     // guessing with `getByText("New Project").last()` — see the helper's note.
     const alphaCreated = await createProjectThroughSidebar(page);
     createdProjectIds.add(alphaCreated.id);
+    createdProjectNames.add(alphaCreated.name);
     const alphaProject = await renameProjectThroughSidebar(
       page,
       alphaCreated,
@@ -259,6 +287,7 @@ test(
 
     const betaCreated = await createProjectThroughSidebar(page);
     createdProjectIds.add(betaCreated.id);
+    createdProjectNames.add(betaCreated.name);
     const betaProject = await renameProjectThroughSidebar(
       page,
       betaCreated,
@@ -333,6 +362,7 @@ test(
     // Create the first folder
     const oneCreated = await createProjectThroughSidebar(page);
     createdProjectIds.add(oneCreated.id);
+    createdProjectNames.add(oneCreated.name);
     const oneProject = await renameProjectThroughSidebar(page, oneCreated, one);
 
     // Delete it
@@ -353,6 +383,7 @@ test(
     // test: no stale-cache collision between a deletion and the next creation.
     const twoCreated = await createProjectThroughSidebar(page);
     createdProjectIds.add(twoCreated.id);
+    createdProjectNames.add(twoCreated.name);
     const twoProject = await renameProjectThroughSidebar(page, twoCreated, two);
 
     const folderTwo = projectSidebarEntry(page, twoProject);
@@ -423,7 +454,8 @@ test(
       data: { name: `del-all-folder-${Date.now()}`, description: "Delete-all" },
     });
     expect(folderRes.status()).toBe(201);
-    const { id: folderId } = await folderRes.json();
+    const { id: folderId, name: delAllName } = await folderRes.json();
+    createdProjectNames.add(delAllName);
 
     const flowRes = await request.post("/api/v1/flows/", {
       headers: { Authorization: authToken },

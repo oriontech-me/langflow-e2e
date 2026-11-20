@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { revokeProjectMintedKeys } from "../../../../helpers/flows/revoke-project-minted-keys";
 
 // Six of the eight /api/v1/projects operations as a contract.
 // Spec doc: docs/api/projects/api-projects-crud.md
@@ -22,6 +23,12 @@ test.describe("Projects API — CRUD", () => {
 
   const createdFlowIds: string[] = [];
   const createdProjectIds: string[] = [];
+  // Creation-time names, for the API key Langflow mints per project and does
+  // not revoke on delete (#2512). Kept apart from the ids on purpose: the
+  // DELETE test empties the id list once its own DELETE succeeds, and its
+  // project's key is left behind all the same. A rename does not rename the
+  // key, so the name recorded is the one the create response returned.
+  const createdProjectNames: string[] = [];
 
   // Names are kept SHORT on purpose, and the reason is a filed product defect.
   // Creating a project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
@@ -53,8 +60,10 @@ test.describe("Projects API — CRUD", () => {
         console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
       });
     }
+    await revokeProjectMintedKeys(request, headers, createdProjectNames);
     createdFlowIds.length = 0;
     createdProjectIds.length = 0;
+    createdProjectNames.length = 0;
   });
 
   async function createProject(
@@ -70,6 +79,7 @@ test.describe("Projects API — CRUD", () => {
     expect(res.status(), await res.text()).toBe(201);
     const body = await res.json();
     createdProjectIds.push(body.id);
+    createdProjectNames.push(body.name);
     return body;
   }
 
