@@ -3,6 +3,17 @@ import { expect, test, type PageWithErrorHooks } from "../../../../fixtures/fixt
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import {
+  closeOutputDialog,
+  field,
+  modelPairs,
+  onlyNode,
+  outputDialog,
+  ranField,
+  readNodeOutput,
+  readTemplate,
+  type FlowData,
+} from "../../../../helpers/flows/template-run";
 import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 import { isRunRequest } from "../../../../helpers/flows/watch-run-model-binding";
 import {
@@ -23,7 +34,8 @@ import { PlaygroundPage } from "../../../../pages/PlaygroundPage";
 // test fills (#2045, row E4 of docs/core-functionality/templates/templates-coverage-scope.md).
 // Instantiation through the gallery is S1's (templates-instantiate.spec.ts), which proves
 // the created flow equals the `basic_examples` entry this spec reads — so the flow is
-// created from that entry through the API, id-addressed and private to the test.
+// created from that entry through the API, id-addressed and private to the test. The
+// helpers the family shares are in helpers/flows/template-run.ts (#2467).
 // Spec doc: docs/core-functionality/templates/templates-run-knowledge.md
 
 /** The #2043 embedding: the only provider this file needs, with the Agent's model. */
@@ -45,20 +57,6 @@ const KNOWLEDGE_RETRIEVAL: TemplateUnderTest = { name: "Knowledge Retrieval", ha
 const DOCUMENT_QA: TemplateUnderTest = { name: "Document Q&A", hasAgent: true };
 const VECTOR_STORE_RAG: TemplateUnderTest = { name: "Vector Store RAG", hasAgent: true };
 
-type TemplateField = { value?: unknown; options?: unknown[] } | undefined;
-
-interface FlowNode {
-  id: string;
-  type?: string;
-  data?: { type?: string; node?: { template?: Record<string, TemplateField> } };
-}
-
-interface FlowData {
-  nodes: FlowNode[];
-  edges: unknown[];
-  [key: string]: unknown;
-}
-
 /**
  * A per-test token only this test's ingestion can put in a reply: a stale message or
  * a knowledge base left over from another run cannot contain it.
@@ -74,105 +72,6 @@ function sentinelDocument(nonce: string): string {
     `The Kestrel access codename is ${nonce}.\n` +
     "Kestrel ships quarterly.\n"
   );
-}
-
-/** The template as the image registers it, deep-copied so the pins never leak. */
-async function readTemplate(
-  request: APIRequestContext,
-  name: string,
-  headers: Record<string, string>,
-): Promise<{ data: FlowData; description: string }> {
-  const url = "/api/v1/flows/basic_examples/";
-  const res = await request.get(url, { headers });
-  if (res.status() !== 200) {
-    throw new Error(`GET ${url} failed: ${res.status()} — ${(await res.text()).slice(0, 200)}`);
-  }
-  const listing = (await res.json()) as Array<{
-    name?: string;
-    description?: string;
-    data?: FlowData;
-  }>;
-  const entry = listing.find((f) => f.name === name);
-  if (!entry?.data) {
-    throw new Error(
-      `Template "${name}" is not in ${url} (registered: ` +
-        `${listing.map((f) => f.name).join(", ")}). templates-registration.spec.ts ` +
-        `names a missing template; this spec cannot run one that is not there.`,
-    );
-  }
-  return {
-    data: JSON.parse(JSON.stringify(entry.data)) as FlowData,
-    description: entry.description ?? "",
-  };
-}
-
-/**
- * The one component node of `type` in the template. Exactly one, because every pin and
- * every locator below is keyed on it — a template that gained a second one must be
- * re-read by a human, not pinned at random.
- */
-function onlyNode(data: FlowData, type: string, template: string): FlowNode {
-  const matches = data.nodes.filter((n) => n.type === "genericNode" && n.data?.type === type);
-  if (matches.length !== 1) {
-    throw new Error(
-      `Template "${template}" has ${matches.length} "${type}" component(s); this spec ` +
-        `expects exactly one. The template changed upstream — re-read it before pinning.`,
-    );
-  }
-  return matches[0];
-}
-
-function field(node: FlowNode, name: string, template: string): NonNullable<TemplateField> {
-  const f = node.data?.node?.template?.[name];
-  if (!f) {
-    throw new Error(
-      `Template "${template}": node ${node.id} (${node.data?.type}) has no ` +
-        `template.${name} field — the pin would silently leave it unset.`,
-    );
-  }
-  return f;
-}
-
-/**
- * The value a node field carried in the run, read off the object the run builds from:
- * the request's live-canvas `data` (which takes priority over the saved flow, #1372),
- * or — when the request carried none — the saved flow itself.
- */
-async function ranFieldValue(
-  runBody: unknown,
-  savedFlow: () => Promise<FlowData>,
-  nodeId: string,
-  fieldName: string,
-): Promise<unknown> {
-  const live = (runBody as { data?: { nodes?: unknown } } | null)?.data?.nodes;
-  const nodes = Array.isArray(live) ? (live as FlowNode[]) : (await savedFlow()).nodes;
-  return nodes.find((n) => n?.id === nodeId)?.data?.node?.template?.[fieldName]?.value;
-}
-
-/** `name / provider` for each entry of a unified model selector value. */
-function modelPairs(value: unknown): string[] {
-  const entries = Array.isArray(value) ? value : value ? [value] : [];
-  return entries.map((e) =>
-    e !== null && typeof e === "object"
-      ? `${(e as { name?: unknown }).name} / ${(e as { provider?: unknown }).provider}`
-      : String(e),
-  );
-}
-
-/** The output-inspection dialog (it is the only dialog carrying the copy button). */
-function outputDialog(page: Page) {
-  return page.getByRole("dialog").filter({ has: page.getByTestId("copy-output-button") });
-}
-
-/**
- * Closes it through its own button and proves it closed. Escape does not close it
- * while focus is inside the results grid (measured on 1.13.0.dev25), and a dialog left
- * open intercepts every later click on the canvas.
- */
-async function closeOutputDialog(page: Page): Promise<void> {
-  const dialog = outputDialog(page);
-  await dialog.getByTestId("btn-close-modal").click();
-  await expect(dialog).toBeHidden({ timeout: 5000 });
 }
 
 test.describe("core-functionality/templates — knowledge-base templates run (§11.5)", () => {
@@ -354,12 +253,12 @@ test.describe("core-functionality/templates — knowledge-base templates run (§
         return ((await res.json()) as { data: FlowData }).data;
       };
       expect(
-        await ranFieldValue(runBody, savedFlow, knowledgeId, "knowledge_base"),
+        (await ranField(runBody, savedFlow, knowledgeId, "knowledge_base"))?.value,
         "knowledge base the run used",
       ).toBe(dirName);
       if (template.hasAgent) {
         expect(
-          modelPairs(await ranFieldValue(runBody, savedFlow, agentId, "model")),
+          modelPairs((await ranField(runBody, savedFlow, agentId, "model"))?.value),
           "model the Agent ran",
         ).toEqual([`${model} / OpenAI`]);
       }
@@ -411,15 +310,11 @@ test.describe("core-functionality/templates — knowledge-base templates run (§
         await expect(inspect, "the Prompt node has no output to display").toBeEnabled({
           timeout: 15000,
         });
-        await inspect.click();
         // Langflow's formatting of {context} and {question}, not model output: the
         // model-free proof that retrieval fed the answer path.
-        const prompt = outputDialog(page).locator("textarea");
-        await expect(prompt).toBeVisible({ timeout: 15000 });
-        const text = await prompt.inputValue();
+        const text = await readNodeOutput(page, promptId, "output-inspection-prompt-prompt");
         expect(text).toContain(nonce);
         expect(text).toContain(QUESTION);
-        await closeOutputDialog(page);
       });
     }
 
