@@ -6,13 +6,14 @@
  *
  * A Playwright `APIRequestContext` error is two parts: a one-line cause, then a
  * `Call log:` block listing the request, and that block prints every request header
- * with its value. Measured on @playwright/test 1.58.2, a GET to a closed port with
- * `api-key` and `Authorization` headers throws:
+ * with its value. Measured on @playwright/test 1.58.2, and identical apart from the
+ * version on 1.65.1 (#2167), a GET to a closed port with `api-key` and
+ * `Authorization` headers throws:
  *
  *   apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:9
  *   Call log:
  *     - → GET http://127.0.0.1:9/models
- *     - user-agent: Playwright/1.58.2 (…)
+ *     - user-agent: Playwright/1.65.1 (…)
  *     - api-key: <value, in full>
  *     - Authorization: Bearer <value, in full>
  *
