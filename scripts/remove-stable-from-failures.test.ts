@@ -629,6 +629,11 @@ test("classifyInfraError covers the transport signatures and rejects product one
     ["Error: socket hang up", "connection-dropped"],
     ["Error: read ECONNRESET", "connection-dropped"],
     ["Error: getaddrinfo EAI_AGAIN localhost", "host-unresolvable"],
+    // Written only by tests/helpers/integrations/provider-outage.ts (#2298).
+    [
+      "Error: [provider-outage] google answered network-error — the provider was unavailable",
+      "provider-outage",
+    ],
   ];
   for (const [error, id] of infra) {
     assert.equal(classifyInfraError(error)?.id, id, error);
@@ -639,6 +644,8 @@ test("classifyInfraError covers the transport signatures and rejects product one
     "TimeoutError: page.waitForSelector: Timeout 30000ms exceeded.",
     "Error: expect(locator).toBeVisible() failed",
     "Error: Playground must show a 'Called tool' indicator",
+    // The diff an outage left WITHOUT the marker: deliberately not exempt.
+    'Error: expect(received).toEqual(expected)\n- ["auth-expired"]\n+ ["network-error"]',
     "",
     null,
     undefined,
