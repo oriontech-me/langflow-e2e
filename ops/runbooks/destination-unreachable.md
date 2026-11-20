@@ -130,9 +130,11 @@ Two things must be true, and the alarm tells them apart:
   missing: stay in temporary mode until it is installed.
 
 **Do not run the block below until #2518 is merged and the VM mints its own token.**
-An installation token pasted into `/root/.e2e-secrets` passes both checks, because it
-is valid when they run, and is refused within the hour: the next daily would then die
-in its credential preflight with temporary mode already gone (#2519).
+An installation token pasted in by hand, wherever git and the API read it, passes both
+checks, because it is valid when they run, and is refused within the hour: the next
+daily would then die in its credential preflight with temporary mode already gone
+(#2519). The API check shows it: such a token comes back `EXPIRING`, with an expiry an
+hour away.
 
 When both hold, undo step 2 before the next daily. On the VM, as root:
 
@@ -178,9 +180,9 @@ the git check fails here while the daily's credential is wired somewhere this sh
 does not see, the block errs on the safe side and keeps temporary mode. The API check
 reads the token as the daily does today, `GITHUB_TOKEN` or `GH_TOKEN` from
 `/root/.e2e-secrets`. That only proves a token works at the moment it runs; with the
-App, the token is minted from its key, and #2518 decides how this check reads it. The
-saved
-`/root/e2e-qa.origin.before`, left by outages before #2490, is removed on the way.
+App, the token is minted from its key, and #2518 decides how this check reads it.
+The saved `/root/e2e-qa.origin.before`, left by outages before #2490, is removed on
+the way.
 
 Do not restore `/root/e2e-qa.origin.before` if it is there: it holds the SSH URL the
 destination no longer accepts.
