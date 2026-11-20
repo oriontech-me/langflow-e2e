@@ -221,8 +221,10 @@ sentinel is derived.
 1. Plant the same kind of connection; save a Chat Input → Drive flow bound to it.
 2. Open the flow, open the Playground, send a message.
 3. The error card appears. The exact sequence of codes the trace's spans recorded is
-   `["auth-expired"]` (read from the spans, not de-duplicated from the whole body, so a second code from a
-   crashed retry would show; a `rate-limited` answer is re-sent twice, see *Tags*). Expanded, the card
+   `["auth-expired"]`, read from the spans and asserted exactly. `integration_action` logs one code per
+   action and a reactive refresh runs inside that action, so the sequence has length 1 and any extra or
+   different code fails it. A `rate-limited` answer is re-sent twice (see *Tags*), and a run that needed
+   a retry leaves a `rate-limit-retry` annotation in the report. Expanded, the card
    shows the `auth-expired` text. The page HTML carries no sentinel.
 4. Close the Playground, open *Traces*, open the run: the span tree lists the Drive span; its detail shows
    `auth-expired`. The page HTML carries no sentinel.

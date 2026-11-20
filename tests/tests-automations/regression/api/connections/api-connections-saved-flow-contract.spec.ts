@@ -759,6 +759,19 @@ test.describe("Connections — the saved-flow contract", () => {
     );
   }
 
+  /**
+   * A run that passed only after re-trying a rate-limit leaves a note in the
+   * report, so a rate-limit that keeps recurring and recovering stays visible.
+   */
+  function noteRateLimitRetries(attempts: number): void {
+    if (attempts > 1) {
+      test.info().annotations.push({
+        type: "rate-limit-retry",
+        description: `Google answered rate-limited; the run took ${attempts} attempts`,
+      });
+    }
+  }
+
   type TraceSpan = {
     name: string;
     outputs?: { logs?: Array<{ message?: { error_code?: string } }> };
@@ -767,9 +780,11 @@ test.describe("Connections — the saved-flow contract", () => {
 
   /**
    * The `error_code` of every integration action the newest trace's SPANS
-   * recorded, in order. Read from the spans and not from the whole body, because
-   * the root repeats its child's output: de-duplicating the body would let a
-   * second, different code (a crashed retry) hide behind the first.
+   * recorded, in order. Measured on 1.14.0.dev32: `integration_action` logs one
+   * code per action in its `finally`, a reactive refresh runs inside that same
+   * action (so a crashed refresh replaces the code rather than adding one), and
+   * the spans are a flat list. The expected sequence therefore has length 1, and
+   * asserting it exactly fails on any extra or different code.
    */
   async function newestTraceCodes(
     request: APIRequestContext,
@@ -842,6 +857,7 @@ test.describe("Connections — the saved-flow contract", () => {
           "provider",
         );
 
+        let buildAttempts = 1;
         await test.step("the build stops at the provider: auth-expired", async () => {
           // `scope-missing` or `connection-unresolved` would mean the run never
           // reached Google. Only a rate-limit is re-tried (see RATE_LIMIT_BACKOFF_MS).
@@ -857,6 +873,8 @@ test.describe("Connections — the saved-flow contract", () => {
             if (!onlyRateLimited(errors.map((e) => e.code)) || backoff === undefined) break;
             await new Promise((resolve) => setTimeout(resolve, backoff));
           }
+          buildAttempts = attempts;
+          noteRateLimitRetries(attempts);
           const codes = errors.map((e) => e.code);
           expect(codes, verdictMessage(codes, attempts, stream)).toEqual([
             "auth-expired",
@@ -900,7 +918,9 @@ test.describe("Connections — the saved-flow contract", () => {
 
         await test.step("the trace records the failure and carries no token", async () => {
           const { codes, detail } = await newestTraceCodes(request, flowId!, 1);
-          expect(codes, verdictMessage(codes, 1, detail)).toEqual(["auth-expired"]);
+          expect(codes, verdictMessage(codes, buildAttempts, detail)).toEqual([
+            "auth-expired",
+          ]);
           const list = await request.get(
             `/api/v1/monitor/traces?flow_id=${flowId}`,
             { headers: superHeaders },
@@ -987,6 +1007,7 @@ test.describe("Connections — the saved-flow contract", () => {
             if (!onlyRateLimited(verdict.codes) || backoff === undefined) break;
             await page.waitForTimeout(backoff);
           }
+          noteRateLimitRetries(attempts);
           expect(
             verdict.codes,
             verdictMessage(verdict.codes, attempts, verdict.detail),
