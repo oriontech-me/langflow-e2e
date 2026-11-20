@@ -191,8 +191,12 @@ test.describe("Connections — the saved-flow contract", () => {
   /** Every `error` event of a build stream: its message text and its typed code. */
   function errorEvents(
     stream: string,
-  ): Array<{ text: string; code: string | null }> {
-    const out: Array<{ text: string; code: string | null }> = [];
+  ): Array<{ text: string; code: string | null; component: string | null }> {
+    const out: Array<{
+      text: string;
+      code: string | null;
+      component: string | null;
+    }> = [];
     for (const line of stream.split("\n")) {
       if (!line.trim()) continue;
       const event = JSON.parse(line) as { event: string; data: any };
@@ -202,6 +206,9 @@ test.describe("Connections — the saved-flow contract", () => {
       out.push({
         text: String(message.text ?? "").trim(),
         code: content.code ?? null,
+        // The display name of the component that raised it, taken from the code
+        // the server EXECUTED (not from the stored node's metadata).
+        component: content.component ?? null,
       });
     }
     return out;
@@ -439,7 +446,7 @@ test.describe("Connections — the saved-flow contract", () => {
   );
 
   test(
-    "a round trip keys on the component class the manifest names, not on the component name",
+    "a round trip keeps the class the manifest names, and the stored code builds as that component",
     { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
@@ -519,17 +526,23 @@ test.describe("Connections — the saved-flow contract", () => {
         ).toBe(true);
         expect(node.node.template.connection.value, "the handle").toBe(handle);
 
-        // The checks above read back what the upload stored. The build is what
-        // shows the imported node resolves to the catalog entry: the server
-        // instantiates the class, reaches its connection input, and stops at
-        // resolution (no row has this handle) before the send could run.
-        await test.step("the imported node builds as the class and stops at resolution", async () => {
+        // The checks above read back what the upload stored. The build runs the
+        // STORED code — measured, the server keys on neither the type key nor
+        // `component_class_name`: Outlook *Search*'s code under this node's
+        // metadata builds too, and reports itself as "Outlook: Search Mail". So
+        // what is asserted is that the code that ran is the Send component: its
+        // error names "Outlook: Send Mail", and it stopped at resolution (no row
+        // has this handle) before the send could run.
+        await test.step("the stored code builds as the Send component and stops at resolution", async () => {
           const stream = await build(request, superHeaders, imported.id);
           const errors = errorEvents(stream);
           expect(
-            errors.map((e) => e.code),
+            errors.map((e) => [e.component, e.code]),
             stream.slice(0, 600),
-          ).toEqual(["connection-unresolved"]);
+          ).toEqual([[entry.display_name, "connection-unresolved"]]);
+          expect(entry.display_name, "the catalog's Send display name").toBe(
+            "Outlook: Send Mail",
+          );
           expect(errors[0].text).toContain(
             `Connection '${handle}' could not be resolved`,
           );
