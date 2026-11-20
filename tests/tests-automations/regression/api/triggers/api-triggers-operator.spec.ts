@@ -44,6 +44,9 @@ test.describe("Triggers — the operator API", () => {
   // 1.14.0.dev16. Measured on 1.14.0.dev14: 27 keys, so tests 1 and 3 fail there
   // while 2, 4 and 5 pass. The floor is the contract asserted, not the route.
   const OPERATOR_SINCE = "1.14.0.dev16";
+  // LE-3454 (a config_invalid row listing `resume` as allowed) is fixed by
+  // upstream #16450, first in this build. Test 3 asserts either side of it.
+  const LE_3454_FIXED_IN = "1.14.0.dev32";
   const NOT_FOUND = { detail: "Trigger not found" };
   // A kind with a `.` that no installed bundle serves. Measured: an operator can
   // pause it like any armed trigger, `enable` refuses it with the sentence below,
@@ -309,7 +312,7 @@ test.describe("Triggers — the operator API", () => {
 
   test(
     "computes each trigger's actions on the server, by state and by kind",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -469,12 +472,23 @@ test.describe("Triggers — the operator API", () => {
       // LE-3454 (#2464), fixed upstream by langflow-ai/langflow#16450 (first in
       // 1.14.0.dev32): a config_invalid row no longer lists `resume` as allowed,
       // so the action list agrees with the refusal above. Declared failing until
-      // #2525; now asserted, so a regression to the old listing fails the test.
-      await test.step("config_invalid: resume is blocked with the reason enable refuses it for", async () => {
-        const row = await getTrigger(request, ownerHeaders(), (invalid as TriggerRead).id);
-        expect(row.allowed_actions, "an action enable refuses is not listed as allowed").not.toContain("resume");
-        expect(row.blocked_actions.resume, "resume is blocked by the row's own reason").toBe("config_invalid");
-      });
+      // #2525. The fix is newer than this file's floor (OPERATOR_SINCE), so the
+      // step is gated by build like #16322 above: from dev32 the corrected listing
+      // is asserted; before it the old listing is asserted, so neither side skips
+      // and a build that moves either way turns the test red.
+      if (await servedVersionAtLeast(request, LE_3454_FIXED_IN)) {
+        await test.step("config_invalid: resume is blocked with the reason enable refuses it for", async () => {
+          const row = await getTrigger(request, ownerHeaders(), (invalid as TriggerRead).id);
+          expect(row.allowed_actions, "an action enable refuses is not listed as allowed").not.toContain("resume");
+          expect(row.blocked_actions.resume, "resume is blocked by the row's own reason").toBe("config_invalid");
+        });
+      } else {
+        await test.step(`config_invalid: before ${LE_3454_FIXED_IN}, resume is still listed as allowed (LE-3454)`, async () => {
+          const row = await getTrigger(request, ownerHeaders(), (invalid as TriggerRead).id);
+          expect(row.allowed_actions, "the pre-#16450 listing (LE-3454)").toContain("resume");
+          expect(row.blocked_actions.resume, "the pre-#16450 listing does not block resume").toBeUndefined();
+        });
+      }
     },
   );
 

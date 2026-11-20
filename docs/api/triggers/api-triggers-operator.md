@@ -157,7 +157,9 @@ and a lookup that labels the Playground sessions a trigger started. The contract
 
 `@stable`: no provider key, no model, no network egress, and every write is scoped to this run — rows by
 id, the bulk by `trigger_ids` or by a provider name unique to the run, the second user created and
-deleted per worker. `@stable` enters in this PR. The operator routes ship in `1.14.0.dev1` (upstream #15786), but the
+deleted per worker. `@stable` enters in this PR. Test 3's `@stable` was auto-removed by the
+2026-11-19 VM daily (`9ffa25ce0`) when its LE-3454 declaration passed unexpectedly; #2525 restored it
+with the declaration, after the fix measured in step 6. The operator routes ship in `1.14.0.dev1` (upstream #15786), but the
 `TriggerRead` this file pins — 28 keys, `last_error_code` among them — is upstream #16132's, first in
 `1.14.0.dev16`. Measured on `1.14.0.dev14`: 27 keys (no `last_error_code`), so tests 1 and 3 fail there
 while 2, 4 and 5 pass. The floor is therefore `1.14.0.dev16`, the contract asserted rather than the
@@ -219,6 +221,11 @@ triggers with it.
    accepts, and the step was declared failing. Upstream fixed it in langflow-ai/langflow#16450
    (*block resume while the trigger config is invalid*, first in `1.14.0.dev32`), the declaration then
    failed as *"expected to fail, but passed"*, and #2525 made the step a plain assertion.
+   The fix is newer than this file's `1.14.0.dev16` floor, so the step is gated by build, like
+   #16322's `schedule_type` in step 4: from `1.14.0.dev32` it asserts the corrected listing above;
+   before it, it asserts the old one (`resume` in `allowed_actions`, no `blocked_actions.resume`).
+   Neither side skips. Measured for #2525: `1.14.0.dev31` takes the old branch and passes,
+   `1.14.0.dev32` takes the new one and passes.
 
 ### 4. Bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused
 
@@ -251,8 +258,9 @@ triggers with it.
 
 ## Validation criterion *(required)*
 
-Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev29`, and once at
-`--workers=2` together with `api/triggers/`, with:
+Tests 1–5 pass three consecutive times at `--retries=0` against `1.14.0.dev32` (re-measured for #2525;
+originally `1.14.0.dev29` at `--workers=1`), and once at `--workers=2` together with `api/triggers/`,
+with:
 
 - the exact 28-key set and the action table, row by row;
 - every refusal asserted by its status and its exact detail, or its `type` and `loc`;
@@ -265,8 +273,8 @@ Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1
   `POST /api/v1/triggers/bulk/pause`, `POST /api/v1/triggers/bulk/resume`,
   `GET /api/v1/triggers/sessions`, `POST /api/v1/flows/`, `POST /api/v1/connections`.
 
-Test 3 passes only when all six steps pass. Step 6 failing means the server lists `resume` as
-allowed on a `config_invalid` row again, which is LE-3454 regressing.
+Test 3 passes only when all six steps pass. On `1.14.0.dev32` or later, step 6 failing means the
+server lists `resume` as allowed on a `config_invalid` row again, which is LE-3454 regressing.
 
 The file drives only the `request` fixture, so the fixture's HTTP-error monitor sees none of the
 deliberate `403`s, `404`s, `409`s and `422`s. After the run the instance holds no flow, user or trigger left by
@@ -277,7 +285,8 @@ this file.
 ## External dependencies *(required)*
 
 - A running Langflow **1.14** instance (`1.14.0.dev16` or later) at `PLAYWRIGHT_BASE_URL`, auto-login or
-  superuser.
+  superuser. Test 3's step 6 asserts LE-3454's fix from `1.14.0.dev32` (upstream #16450) and the old
+  listing before it.
 - `src/backend/base/langflow/api/v1/triggers.py` — list, `scope=all`, sessions and the bulk routes.
 - `src/backend/base/langflow/api/v1/triggers_helpers.py` — `list_visible_triggers`, `list_all_triggers`,
   `present` and the per-flow caller probe.
