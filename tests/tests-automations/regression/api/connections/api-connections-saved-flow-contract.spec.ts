@@ -446,6 +446,7 @@ test.describe("Connections — the saved-flow contract", () => {
         "GET /api/v1/integrations",
         "POST /api/v1/flows/download/",
         "POST /api/v1/flows/upload/",
+        "POST /api/v1/build/{flow_id}/flow",
       ]);
       const res = await request.get("/api/v1/integrations", {
         headers: superHeaders,
@@ -479,7 +480,8 @@ test.describe("Connections — the saved-flow contract", () => {
       );
 
       const handle = `microsoft/saved_flow_${run}`;
-      // Never run: Outlook *Send* writes, and no connection exists for this handle.
+      // Built once below, with no connection for this handle: Outlook *Send* writes,
+      // so the build must stop at resolution, before the action could send anything.
       const sourceId = await saveFlow(
         request,
         {
@@ -516,6 +518,22 @@ test.describe("Connections — the saved-flow contract", () => {
           "the code is the catalog's",
         ).toBe(true);
         expect(node.node.template.connection.value, "the handle").toBe(handle);
+
+        // The checks above read back what the upload stored. The build is what
+        // shows the imported node resolves to the catalog entry: the server
+        // instantiates the class, reaches its connection input, and stops at
+        // resolution (no row has this handle) before the send could run.
+        await test.step("the imported node builds as the class and stops at resolution", async () => {
+          const stream = await build(request, superHeaders, imported.id);
+          const errors = errorEvents(stream);
+          expect(
+            errors.map((e) => e.code),
+            stream.slice(0, 600),
+          ).toEqual(["connection-unresolved"]);
+          expect(errors[0].text).toContain(
+            `Connection '${handle}' could not be resolved`,
+          );
+        });
       } finally {
         if (importedId)
           await deleteFlow(request, importedId, { headers: superHeaders });
