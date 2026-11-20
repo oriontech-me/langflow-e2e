@@ -1886,7 +1886,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 106 | 96 | 4 | 4 | 2 |
+| `api/flows/` — REST API | 106 | 99 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1898,7 +1898,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 45 | 0 | 0 | 1 |
 | `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
-| `flow-functionality/` | 57 | 34 | 20 | 2 | 1 |
+| `flow-functionality/` | 57 | 52 | 1 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1911,7 +1911,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 162 | 139 | 0 | 3 | 20 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **935** | **780 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **935** | **801 (86%)** | **69 (7%)** | **18 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1927,7 +1927,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 897 `test()` calls carrying the `@stable` tag, distributed across 319 spec
+> 923 `test()` calls carrying the `@stable` tag, distributed across 324 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2096,6 +2096,13 @@
 - [x] GET /api/v1/version response has correct content-type → `api-version.spec.ts`
 - [x] GET /api/v1/version responds within 5 seconds → `api-version.spec.ts`
 - [x] POST /api/v1/version returns 405 Method Not Allowed → `api-version.spec.ts`
+- [x] a stale If-Match is refused with a structured 409 and nothing is written → `flow-version-precondition.spec.ts`
+- [x] a current If-Match saves the graph and rotates the version token → `flow-version-precondition.spec.ts`
+- [x] a malformed If-Match is refused with 400; quoted and weak forms are accepted → `flow-version-precondition.spec.ts`
+- [x] the precondition is optional: a PATCH without If-Match still saves → `flow-version-precondition.spec.ts`
+- [x] concurrent writers with the same token: exactly one wins, the rest get 409, none 5xx → `flow-version-precondition.spec.ts`
+- [x] concurrent losers are told the real current token → `flow-version-precondition.spec.ts`
+- [x] fork copies inertly; overwrite is guarded and archives the replaced graph → `flow-version-precondition.spec.ts`
 - [x] execution order follows data dependency, and a consumer receives its producers' output → `graph-execution-contract.spec.ts`
 - [x] a component failure is contained: independent branches still build, the failed node is flagged → `graph-execution-contract.spec.ts`
 - [x] a branch stopped by Component.stop() never builds and is reported inactive → `graph-execution-contract.spec.ts`
@@ -2744,6 +2751,27 @@
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
+#### flow-functionality/multi-edit/
+- [x] Update Current Flow writes the viewer's work and keeps the replaced version → `multi-edit-conflict-exits.spec.ts`
+- [x] Load Latest asks first, archives the viewer's canvas, and that archive restores → `multi-edit-conflict-exits.spec.ts`
+- [x] a second save while choosing is not overwritten → `multi-edit-conflict-exits.spec.ts`
+- [x] Cancel changes nothing → `multi-edit-conflict-exits.spec.ts`
+- [x] a failed archive discards nothing → `multi-edit-conflict-exits.spec.ts`
+- [x] a refused save raises the banner and the dialog lists every kind of incoming change → `multi-edit-conflict-review.spec.ts`
+- [x] a flow only the viewer edits never shows the banner across autosaves and version history → `multi-edit-conflict-review.spec.ts`
+- [x] browsing version history is not an edit: a newer version is adopted on run, without a banner → `multi-edit-conflict-review.spec.ts`
+- [x] reloading with no change on the server shows no banner → `multi-edit-conflict-review.spec.ts`
+- [x] a component changed on both sides blocks Update until a version is chosen, and Keep my version saves mine → `multi-edit-field-conflict.spec.ts`
+- [x] Keep the other person's version saves theirs whole, even past what the dialog shows → `multi-edit-field-conflict.spec.ts`
+- [x] two conflicts resolved opposite ways, plus an uncontested change, save exactly what was chosen → `multi-edit-field-conflict.spec.ts`
+- [x] a run on a stale canvas with an unsaved edit is blocked, and no run request is sent → `multi-edit-run-and-draft.spec.ts`
+- [x] a run on a stale canvas with no edit adopts the latest version, and only the next run executes it → `multi-edit-run-and-draft.spec.ts`
+- [x] Restore brings unsaved work back after a reload, and the conflict stands again → `multi-edit-run-and-draft.spec.ts`
+- [x] Discard drops the draft, writes nothing, and the offer does not come back → `multi-edit-run-and-draft.spec.ts`
+- [x] a draft keeps no local copy of a secret, and the restored field is empty → `multi-edit-run-and-draft.spec.ts`
+- [x] an alphanumeric API key is not kept in the draft either → `multi-edit-run-and-draft.spec.ts`
+- [x] a flow too large to keep a local copy warns, and stores no draft → `multi-edit-run-and-draft.spec.ts`
+
 #### i18n/
 - [x] changing the display language re-renders the interface → `language-selection.spec.ts`
 - [x] the selected language survives a reload and a second tab of the same session → `language-selection.spec.ts`
@@ -2894,7 +2922,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 4 | 2 |
+| `api/flows/` — REST API | 1 | 2 |
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
@@ -2915,7 +2943,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 20 | 1 |
+| `flow-functionality/` | 1 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 1 |
 | `ui-ux/` — Settings | 0 | 0 |
