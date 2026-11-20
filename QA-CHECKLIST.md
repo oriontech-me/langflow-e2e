@@ -1909,9 +1909,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 159 | 136 | 0 | 3 | 20 |
+| `integrations/` — Dedicated Integrations | 162 | 139 | 0 | 3 | 20 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **932** | **777 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **935** | **780 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1927,7 +1927,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 893 `test()` calls carrying the `@stable` tag, distributed across 318 spec
+> 897 `test()` calls carrying the `@stable` tag, distributed across 319 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2380,6 +2380,10 @@
 - [x] a token the provider refuses is shown verbatim, kept for correction, and stores nothing → `connection-token-providers.spec.ts`
 - [x] GitHub requires a future expiry, sent as UTC, and Allow background runs reaches the request → `connection-token-providers.spec.ts`
 - [x] Reconnect on a pending token connection sends the token to that row and leaves it pending when refused → `connection-token-providers.spec.ts`
+- [x] the Connections page, its row menu and the Add dialog carry no WCAG A/AA violation beyond the declared baseline → `connections-a11y-i18n.spec.ts`
+- [x] the node-level connection picker carries no WCAG A/AA violation beyond the declared baseline → `connections-a11y-i18n.spec.ts`
+- [x] every shipped catalog renders the Connections page, its row menu and the Add dialog in its language, with no raw key → `connections-a11y-i18n.spec.ts`
+- [x] connector components carry each catalog's own name, and which catalogs translate any of them holds → `connections-a11y-i18n.spec.ts`
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
 - [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
