@@ -28,11 +28,5 @@
     "why": "the backend host could not be resolved",
     "pattern": "\\bEAI_AGAIN\\b|\\bENOTFOUND\\b|net::ERR_NAME_NOT_RESOLVED",
     "flags": ""
-  },
-  {
-    "id": "provider-outage",
-    "why": "an external provider the spec calls on purpose was unavailable, unreachable or rate-limiting, as its typed integration error said (written only by tests/helpers/integrations/provider-outage.ts)",
-    "pattern": "\\[provider-outage\\]",
-    "flags": ""
   }
 ]

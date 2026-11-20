@@ -79,16 +79,6 @@ const CASES = [
   { label: "ECONNRESET", error: "Error: read ECONNRESET", expected: "connection-dropped" },
   { label: "DNS", error: "Error: getaddrinfo EAI_AGAIN langflow", expected: "host-unresolvable" },
   {
-    label: "provider-outage marker (tests/helpers/integrations/provider-outage.ts, #2298)",
-    error: "Error: [provider-outage] google answered rate-limited — the provider was unavailable",
-    expected: "provider-outage",
-  },
-  {
-    label: "an outage code without the marker is not exempt — only the helper may claim it",
-    error: 'Error: expect(received).toEqual(expected)\n- ["auth-expired"]\n+ ["provider-unavailable"]',
-    expected: null,
-  },
-  {
     label: "ANSI-wrapped with a real ESC still classifies",
     error: ESC + "[31mTimeoutError: apiRequestContext.get: Timeout 20000ms exceeded." + ESC + "[39m",
     expected: "api-request-timeout",
