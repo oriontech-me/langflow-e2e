@@ -47,7 +47,7 @@ test.afterEach(async ({ page, request }) => {
   // logs as a backend error — see the run on this spec's own PR).
   //
   // Unconditional, including on failure: with `@playwright/test` 1.58.2 (the
-  // pinned version) the `only-on-failure` screenshot is captured BEFORE the
+  // version measured; not re-measured since the #2167 bump) the `only-on-failure` screenshot is captured BEFORE the
   // afterEach hooks run, not during the page-fixture teardown — measured on
   // #1105, where a `goto` here still left `test-failed-1.png` showing the
   // canvas. Gating the navigation on the test having passed would therefore

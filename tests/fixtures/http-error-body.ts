@@ -40,7 +40,11 @@
  * data found for resource with given identifier` rather than resolving to `""`
  * — across 200 / 204 / 400 / 404 / 500, with an explicit `content-length: 0`,
  * and with a gzip of the empty string. So the branch the fixture used to swallow
- * in silence was not exotic: it was what every bodyless response did. On
+ * in silence was not exotic: it was what every bodyless response did — every
+ * one the PAGE never read itself. On 1.58.2 a page that read the body
+ * (`fetch(u).then(r => r.text())`) made the same bodyless 400 resolve to `""`
+ * (measured in #2167's review), so a spec whose frontend reads its responses
+ * may already have printed `<empty body>` there. On
  * Playwright 1.65.1 (Chromium 159, #2167) all of those RESOLVE to `""` and print
  * as `<empty body>`. What still rejects, on both versions, is a body that never
  * arrived — headers sent, the connection dropped mid-body (same `No data found`

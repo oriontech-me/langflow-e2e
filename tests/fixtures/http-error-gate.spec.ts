@@ -97,7 +97,10 @@ const OTHER_PATH = "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc";
  * body, so `response.text()` on a bodyless response REJECTED with `response.text:
  * Protocol error (Network.getResponseBody): No data found for resource with given
  * identifier` — at 200 / 204 / 400 / 404 / 500, with an explicit `content-length:
- * 0`, and for a gzip of the empty string. That made the branch the fixture used
+ * 0`, and for a gzip of the empty string — as long as the page itself never read
+ * the body, which is how `fetchFromPage` asks (a page that ran
+ * `fetch(u).then(r => r.text())` got `""` on 1.58.2 too, measured in #2167's
+ * review). That made the branch the fixture used
  * to swallow in silence the commonest one there was, and a bodyless 400 was this
  * file's probe for it. On 1.65.1 (Chromium 159) every one of those RESOLVES to
  * `""`: a bodyless error is now reported as `<empty body>`, which is what it is.
@@ -462,8 +465,8 @@ test.describe("fixture declared-known-defect hatch", () => {
       // `No data found for resource with given identifier` (see
       // TRUNCATED_BODY_PATH). This pins the current outcome, so a browser that
       // goes back to discarding empty bodies shows up here as a named failure
-      // instead of silently moving every bodyless 4xx/5xx in the log from
-      // `<empty body>` to `<could not be read: …>`.
+      // instead of silently moving every bodyless 4xx/5xx the page did not read
+      // itself from `<empty body>` to `<could not be read: …>` in the log.
       const hooked = page as PageWithErrorHooks;
 
       const log = await withCapturedLog(async () => {
