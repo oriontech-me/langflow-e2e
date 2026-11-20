@@ -212,11 +212,15 @@ function replaceText(text, secrets, counts) {
   return out;
 }
 
-// yauzl and yazl are our own exact-pinned devDependencies, at the versions Playwright
-// bundles (yauzl 3.4.0, yazl 3.3.1 in 1.65.1). Until #2167 they came from
-// `playwright-core/lib/zipBundle`, an internal path: 1.65.1 dropped it from the
-// package's `exports` map and the require threw ERR_PACKAGE_PATH_NOT_EXPORTED, which
-// would have failed every scrub, and every report upload behind one.
+// yauzl and yazl are our own exact-pinned devDependencies. They started at the
+// versions Playwright 1.65.1 bundles (yauzl 3.4.0, yazl 3.3.1); Dependabot bumps them
+// on their own from here, so read package.json for the current pins. Until #2167
+// they came from `playwright-core/lib/zipBundle`, an internal path: 1.65.1 dropped it
+// from the package's `exports` map and the require threw
+// ERR_PACKAGE_PATH_NOT_EXPORTED, which would have failed every scrub, and every
+// report upload behind one. 1.65.1 still exposes both through the exported
+// `playwright-core/lib/utilsBundle`, but owning the packages keeps the scrub off
+// Playwright's internals entirely.
 function readZip(buf) {
   const yauzl = require("yauzl");
   return new Promise((resolve, reject) => {
