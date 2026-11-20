@@ -145,7 +145,7 @@ test.describe("Multi-edit safety — conflict banner and review dialog", () => {
 
   test(
     "a refused save raises the banner and the dialog lists every kind of incoming change",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       (page as PageWithErrorHooks).expectKnownHttpError({
@@ -240,7 +240,7 @@ test.describe("Multi-edit safety — conflict banner and review dialog", () => {
 
   test(
     "a flow only the viewer edits never shows the banner across autosaves and version history",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const { flowId } = await setup(request);
       await openFlowById(page, flowId);
@@ -268,7 +268,7 @@ test.describe("Multi-edit safety — conflict banner and review dialog", () => {
 
   test(
     "browsing version history is not an edit: a newer version is adopted on run, without a banner",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       const me = await (await request.get("/api/v1/users/whoami", { headers: ctx.headers })).json();
@@ -310,7 +310,7 @@ test.describe("Multi-edit safety — conflict banner and review dialog", () => {
 
   test(
     "reloading with no change on the server shows no banner",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const { flowId } = await setup(request);
       await openFlowById(page, flowId);

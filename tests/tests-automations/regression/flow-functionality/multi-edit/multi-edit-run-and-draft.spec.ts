@@ -108,13 +108,16 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
     expect(saved.status(), "the other session's save must succeed").toBe(200);
   }
 
-  function declareRefusedAutosave(page: Page, ctx: Ctx) {
+  function declareRefusedAutosave(
+    page: Page,
+    ctx: Ctx,
+    reason = "#2345: the viewer's autosave is refused because another session saved first — " +
+      "the conflict whose draft this spec exists to check",
+  ) {
     (page as PageWithErrorHooks).expectKnownHttpError({
       pathname: `/api/v1/flows/${ctx.flowId}`,
       status: 409,
-      reason:
-        "#2345: the viewer's autosave is refused because another session saved first — " +
-        "the conflict whose draft this spec exists to check",
+      reason,
     });
   }
 
@@ -206,7 +209,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a run on a stale canvas with an unsaved edit is blocked, and no run request is sent",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       await openFlowById(page, ctx.flowId);
@@ -217,13 +220,49 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
       });
 
       await test.step("an edit followed at once by Run raises the conflict instead of running", async () => {
+        // The edit's 5 s autosave debounce keeps running while the pre-run check is in
+        // flight, and nothing cancels it, so a slow check lets the stale save go out. Its
+        // 409 raises the same banner through the save path, which would let this step
+        // pass with the pre-run check broken. So any save of this flow is held until the
+        // banner is up: the banner can then only come from the check, and the held save
+        // is let through afterwards to be refused as upstream designs it.
+        let releaseSaves: () => void = () => {};
+        const bannerUp = new Promise<void>((resolve) => {
+          releaseSaves = resolve;
+        });
+        await page.route(
+          (url) => url.pathname === `/api/v1/flows/${ctx.flowId}`,
+          async (route) => {
+            if (route.request().method() !== "PATCH") return route.fallback();
+            // Declared only when a save was actually held, so the fast path (no save
+            // sent at all) declares nothing, and a held save the server accepted
+            // leaves the declaration unfired, which fails the test.
+            declareRefusedAutosave(
+              page,
+              ctx,
+              "#2469: the stale autosave the edit queued before Run outlasted the pre-run " +
+                "check, was held until the check raised the conflict, and is refused by design",
+            );
+            await bannerUp;
+            await route.continue();
+          },
+        );
+
         const checked = page.waitForResponse(
           (r) => new URL(r.url()).pathname === `/api/v1/flows/${ctx.flowId}/version-state`,
         );
         await chatInput(page).fill(MY_TEXT);
         await runButton(page).click();
         expect((await checked).status()).toBe(200);
-        await expect(conflictBanner(page)).toBeVisible();
+        // Upstream checkFlowVersion raises the banner after TWO requests, version-state
+        // and then a read of the flow for the diff (attachTheirFlow comes after it).
+        // Only the first is awaited above, so the banner gets the second's budget,
+        // measured past the 5 s default on a loaded host.
+        try {
+          await expect(conflictBanner(page)).toBeVisible({ timeout: 30_000 });
+        } finally {
+          releaseSaves();
+        }
       });
 
       await test.step("Run while the conflict stands is refused with a notice", async () => {
@@ -237,7 +276,14 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
           await chatInput(page).blur();
         });
         expect(writes.runs, `run requests: ${writes.runs}`).toEqual([]);
-        expect(writes.patches, `PATCH statuses: ${writes.patches}`).toEqual([]);
+        // No save may SUCCEED. A refused one may be sent: the save held in the step
+        // above, when the check outlasted the debounce, goes out and is refused with
+        // 409 (measured once in 5 runs at a host load of ~25 on 10 cores). The server
+        // value below is what proves nothing was written.
+        expect(
+          writes.patches.filter((status) => status < 400),
+          `PATCH statuses: ${writes.patches}`,
+        ).toEqual([]);
         expect(await serverValue(request, ctx, CI, "input_value")).toBe(THEIR_TEXT);
       });
     },
@@ -245,7 +291,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a run on a stale canvas with no edit adopts the latest version, and only the next run executes it",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       await openFlowById(page, ctx.flowId);
@@ -294,7 +340,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "Restore brings unsaved work back after a reload, and the conflict stands again",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       declareRefusedAutosave(page, ctx);
@@ -331,7 +377,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "Discard drops the draft, writes nothing, and the offer does not come back",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       declareRefusedAutosave(page, ctx);
@@ -395,7 +441,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a draft keeps no local copy of a secret, and the restored field is empty",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await secretIsNotKept(page, request, `sk-e2e-secret-${randomHex(12)}`);
       expect(await serverValue(request, ctx, SA, "api_key"), "the server never received the key").toBe("");
@@ -405,7 +451,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
   test(
     "an alphanumeric API key is not kept in the draft either",
     {
-      tag: ["@workspace", "@database", "@playground"],
+      tag: ["@stable", "@workspace", "@database", "@playground"],
       annotation: {
         type: "known defect",
         description:
@@ -422,7 +468,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a flow too large to keep a local copy warns, and stores no draft",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request, { text: "x".repeat(TOO_LARGE) });
       declareRefusedAutosave(page, ctx);

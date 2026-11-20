@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev14`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
 
 Owning issue: #2345 (Wave 11 — Multi-edit, instance migration & integrations; tracker #2356).
 Upstream feature: multi-edit safety, `langflow-ai/langflow#14903`, follow-up `#15824`.
@@ -37,7 +37,7 @@ written, and measured again on `1.14.0.dev14`:
 
 | Behaviour | Measured |
 |---|---|
-| **Run with an unsaved edit** (edit, then Run before the 5 s autosave) | The run reads `GET {id}/version-state`, then the flow. It raises the conflict: the banner *"A newer version of this flow is available"* appears. The viewer sends no `PATCH` and no `POST /api/v2/workflows`. |
+| **Run with an unsaved edit** (edit, then Run before the 5 s autosave) | The run reads `GET {id}/version-state`, then the flow. It raises the conflict: the banner *"A newer version of this flow is available"* appears. The viewer sends no `POST /api/v2/workflows`, and no `PATCH` succeeds (see test 1 for the refused one a slow check lets through). |
 | **Run while a conflict stands** | The notice *"This flow moved on while you were editing. Review the changes to run it."*. No request reaches `/api/v2/workflows`. |
 | **Run with no edit** | `version-state`, then the flow is re-read and adopted. The notice reads *"langflow updated this flow. The canvas now shows the latest version — run again to execute it."*. The field shows the other session's value, and no `POST /api/v2/workflows` is sent. The **next** Run sends `POST /api/v2/workflows` → `200`, and the stored User message carries the other session's text. |
 | **The draft** | Written to `localStorage` under `lf_draft_<userId>_<flowId>` as soon as the conflict is registered, whichever way it was found. |
@@ -92,10 +92,13 @@ That is the signal to remove `test.fail()` and close the reference.
 
 ## Tags *(required)*
 
-`@workspace` `@database` `@playground`
+`@stable` `@workspace` `@database` `@playground`
 
-**No `@stable` yet.** It is a new UI spec with a 5 s autosave debounce in its critical path.
-It waits for team validation before promotion.
+**`@stable` since #2469.** Measured for #2469 on `1.14.0.dev32` under the daily's shard settings (2 workers, file-level parallelism, `--retries=0`): 33 of 35 across 5 repeats at a host load of 25–28 on
+10 cores, both failures in test 1 and both load races in the test, now fixed (see test 1).
+After the fix: 35 of 35 across 5 repeats, 14 of 14 in a combined run of the five specs, and
+no failure of this spec in 3 batches of 6 workers fully parallel. The `test.fail()` test
+failed as declared every time.
 
 ---
 
@@ -111,11 +114,25 @@ on time.
    - Open the flow. Another session saves.
    - Type `my text` into Chat Input, then click Chat Output's run button at once, before
      the 5 s autosave.
-   - `version-state` is read and the conflict banner appears.
+   - `version-state` is read and the conflict banner appears. Upstream's pre-run check
+     raises it after two requests, `version-state` and then a read of the flow for the
+     diff, so the banner gets 30 s after `version-state`.
+   - Any `PATCH` of this flow is **held** until the banner is visible. The edit's 5 s
+     autosave debounce keeps running while the check is in flight, and nothing cancels
+     it, so a slow check lets the stale save go out. Its `409` raises the same banner
+     through the save path, so without the hold the step would pass with the pre-run
+     check broken (measured: a bundle whose check returns `conflict` without registering
+     it passed the unheld test 2 of 2). With the hold, the banner can only come from the
+     check; the held save is then let through.
    - Click run again. The notice *"This flow moved on while you were editing. Review the
      changes to run it."* appears.
-   - No `POST /api/v2/workflows` and no `PATCH` were sent. The server still holds
-     `their text`.
+   - No `POST /api/v2/workflows` was sent and no `PATCH` succeeded. The server still holds
+     `their text`. The held save, when there was one, is refused with `409` (measured
+     once in 5 runs at a host load of ~25 on 10 cores, never at ~10). The test declares
+     that `409` as a known one (`expectKnownHttpError`) only when it actually held a save,
+     so it prints `📌 Known backend defect`, never `🚨 Backend Error`. With no held save
+     nothing is declared; a held save the server accepted would leave the declaration
+     unfired, which fails the test.
 
 2. **A run on a stale canvas with no edit adopts the latest version, and only the next run
    executes it.**

@@ -117,7 +117,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "a stale If-Match is refused with a structured 409 and nothing is written",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -172,7 +172,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "a current If-Match saves the graph and rotates the version token",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -199,7 +199,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "a malformed If-Match is refused with 400; quoted and weak forms are accepted",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -239,7 +239,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "the precondition is optional: a PATCH without If-Match still saves",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -261,7 +261,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "concurrent writers with the same token: exactly one wins, the rest get 409, none 5xx",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -296,7 +296,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "concurrent losers are told the real current token",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       // Known product defect, measured 10/10 with two writers on 1.14.0.dev7: a
       // concurrent loser's 409 names a token the row never held, and the UI sends it
@@ -325,7 +325,7 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
 
   test(
     "fork copies inertly; overwrite is guarded and archives the replaced graph",
-    { tag: ["@api", "@workspace", "@database"] },
+    { tag: ["@stable", "@api", "@workspace", "@database"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",

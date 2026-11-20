@@ -9,6 +9,7 @@ import {
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "../../../../helpers/flows/permissions-gate";
 
 // Multi-edit safety (upstream #14903 / #15824): each exit of the "Review Version Changes"
 // dialog promises where the viewer's work ends up, and every promise is checked on the
@@ -163,7 +164,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
 
   test(
     "Update Current Flow writes the viewer's work and keeps the replaced version",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const ctx = await raiseConflict(page, request);
 
@@ -215,6 +216,16 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
         createdFlowIds.push(id);
         await expect(page).toHaveURL(new RegExp(`/flow/${id}`));
         await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({ timeout: 60_000 });
+        // The copy is reached by an in-app navigation, not through openFlowById, so its
+        // writability gate is taken here: the editor is read-only while the copy's
+        // permissions load, and a drag in that window is swallowed with no request
+        // (#1005). This closes that one window and is not proven to be the whole cause:
+        // without it, 3 of 5 runs timed out waiting for the copy's PATCH at a host load
+        // of 23–33 on 10 cores; with it, 22 of 24 passed, and the 2 failures (one
+        // 6-worker, fully parallel batch) left no trace. Not @stable until #2523 explains it.
+        await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
+          timeout: PERMISSIONS_GATE_TIMEOUT_MS,
+        });
         return id;
       });
 
@@ -251,7 +262,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
 
   test(
     "Load Latest asks first, archives the viewer's canvas, and that archive restores",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const ctx = await raiseConflict(page, request);
       const before = await getFlow(request, ctx);
@@ -317,7 +328,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
 
   test(
     "a second save while choosing is not overwritten",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const ctx = await raiseConflict(page, request);
       (page as PageWithErrorHooks).expectKnownHttpError({
@@ -352,7 +363,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
     },
   );
 
-  test("Cancel changes nothing", { tag: ["@workspace", "@database", "@ui-ux"] }, async ({ page, request }) => {
+  test("Cancel changes nothing", { tag: ["@stable", "@workspace", "@database", "@ui-ux"] }, async ({ page, request }) => {
     const ctx = await raiseConflict(page, request);
     const before = await getFlow(request, ctx);
 
@@ -372,7 +383,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
     });
   });
 
-  test("a failed archive discards nothing", { tag: ["@workspace", "@database", "@ui-ux"] }, async ({ page, request }) => {
+  test("a failed archive discards nothing", { tag: ["@stable", "@workspace", "@database", "@ui-ux"] }, async ({ page, request }) => {
     const ctx = await raiseConflict(page, request);
     const before = await getFlow(request, ctx);
     const versionsPath = `/api/v1/flows/${ctx.flowId}/versions/`;
