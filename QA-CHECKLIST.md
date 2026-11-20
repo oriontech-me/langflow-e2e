@@ -1802,6 +1802,12 @@
 - [ ] A `needs_reconnect` trigger enables while its `resume` reads blocked — measured, not asserted (the converse of LE-3454; whether a blocked action must be refused is a product call)
 - [ ] The `403` for a caller who can read a flow but not write it, and a collaborator creating a trigger on someone else's flow — unreachable in OSS, where only the owner can read a flow (`@enterprise` `@authz` lane)
 
+#### 24.21 Accessibility and locale coverage of the Connections surfaces (#2304)
+
+- [x] An axe scan (WCAG 2.0/2.1/2.2 A and AA, `axe-core` 4.13.0) of B1 (the page body, with a seeded connection), the row menu, the Add dialog (default provider and *Google Workspace*) and the B5 connection field and picker popover, each scoped to its surface and taken once animations finish, against a per-surface baseline verified both ways (#1084): an undeclared violation fails, and so does a declared one that stopped firing. Clean on `1.14.0.dev32`, so the baseline is empty; a scan taken mid-animation reads 12 `color-contrast` violations on the dialog, and the rest of the node (Tool Mode, the other fields' option buttons) is generic node chrome, left out → core-functionality/integrations/connections-a11y-i18n.spec.ts
+- [x] All 8 shipped catalogs (`en`, `de`, `es`, `fr`, `ja`, `ko`, `pt`, `zh-Hans`) render the page body, the row menu and the Add dialog with no raw `connections.`/`settings.`/`common.`/`loading.` key, as text or in `aria-label`/`placeholder`/`title`/`alt`; the switch is proved per locale (`<html lang>`, the catalog chunk fetched, the heading off English) → core-functionality/integrations/connections-a11y-i18n.spec.ts
+- [x] Connector components take their names from the backend catalog, which honours `Accept-Language`, and the sidebar shows the catalog's own name (under `pt`, *Gmail: Enviar e-mail*). Every connector name in every catalog is non-empty and not a raw key; whether a catalog translates any connector is declared and verified both ways (22 of 86 in six locales, none in `ko`); the untranslated set is recorded per run, not asserted → core-functionality/integrations/connections-a11y-i18n.spec.ts
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
