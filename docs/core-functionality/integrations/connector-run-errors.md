@@ -2,12 +2,13 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connector-run-errors.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev7`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
 
 Owning issue: #2355 (Dedicated Integrations, Wave 11). It covers upstream langflow#15773 (integration codes and hints
 kept in workflow errors) and #15753 (no canvas handle on a `connection_ref` field), both merged into `release-1.13.0`
 on 2026-10-14/15. It also covers the page half of #15763. The API half of #2355 is in
-`docs/api/connections/api-connections-health.md`.
+`docs/api/connections/api-connections-health.md`. Tests 4 and 5 are #2501's canvas half: one of the nine providers
+added in 1.14, whose API half is `docs/api/connections/api-connections-action-runs.md`.
 
 ---
 
@@ -66,6 +67,21 @@ Drive *List Files* node:
 - **The control:** the same click-to-connect onto `query` draws **1** edge. The saved flow's only edge targets
   `fieldName: query`, so the mechanism works and the absence above is the field's, not the gesture's.
 
+### 4. A provider other than Google: Jira's two failures on the canvas (#2501)
+
+Until #2501 every run on the canvas was a Google node. Measured on `1.14.0.dev32`, a Jira *Read Issue* node
+(`ext:jira:JiraReadIssueComponent@official`, run button `button_run_jira: read issue`) renders its failures through
+the same path, on both surfaces:
+
+- **Its connection cannot be resolved.** With `issue: DEMO-123` and a handle no row carries, the canvas shows
+  `[connection-unresolved] Connection 'jira/<handle>' could not be resolved. Configure the connection for this execution
+  environment.` and the hint line *"Configure the connection for this execution environment."*. The `RUN_ERROR` event and
+  `page.flowErrorReport()` read as in test 1.
+- **Its input is refused before the connection is looked up.** With `issue: demo-123` and the same unbound handle,
+  the canvas shows `[invalid-request] Use a Jira issue key such as DEMO-123.` and the hint *"Check the action's inputs
+  and try again."*. This is the first `invalid-request` the suite asserts on the canvas. The API spec doc § 2 has why
+  the input is checked first.
+
 ---
 
 ## Tags *(required)*
@@ -110,11 +126,29 @@ connection Expired on its page.**
 4. Click-to-connect onto `query`: 1 edge. After the autosave, the saved flow has one edge, and its target handle's
    `fieldName` is `query`.
 
+**Test 4 — a Jira action that cannot resolve its connection shows the integration's code and hint on the canvas.**
+1. Save a Jira *Read Issue* flow with `issue: DEMO-123`, bound to a handle no connection carries. Allow the deliberate
+   flow error.
+2. Open the flow and press the node's run button (`button_run_jira: read issue`).
+3. The run's `RUN_ERROR` event carries `code: connection-unresolved` and the message naming `jira/<handle>`.
+4. Both surfaces show `[connection-unresolved] Connection 'jira/<handle>' could not be resolved. …` and the hint line.
+5. `page.flowErrorReport()` counts the run as one failure naming that message. Nothing is unevaluated.
+
+**Test 5 — a Jira action whose input is malformed shows invalid-request and its hint on the canvas, before any
+connection is looked up.**
+1. Save a Jira *Read Issue* flow with `issue: demo-123`, bound to a handle no connection carries. Allow the deliberate
+   flow error.
+2. Open the flow and run the node.
+3. The `RUN_ERROR` event carries `code: invalid-request` and *"Use a Jira issue key such as DEMO-123."*, the hint
+   after a blank line.
+4. Both surfaces show `[invalid-request] Use a Jira issue key such as DEMO-123.` and *"Check the action's inputs and
+   try again."*. Nothing mentions the connection.
+
 ---
 
 ## Validation criterion *(required)*
 
-All three tests pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev7`. Every assertion is on
+All five tests pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev32`. Every assertion is on
 an exact code, message or count, and each absence (no handle, no edge, no token) sits next to a control that shows
 the same check can see a presence. No flow or connection with this spec's names is left after the run.
 
@@ -124,8 +158,8 @@ Each test also has a force-fail mutation executed against it.
 
 ## External dependencies *(required)*
 
-- A running Langflow **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login (the superuser), with the Google bundle
-  installed (the nightly ships it).
+- A running Langflow **1.14** instance at `PLAYWRIGHT_BASE_URL`, auto-login (the superuser), with the Google and
+  Jira bundles installed (the nightly ships both; Jira from `1.14.0.dev23`) and #2498's fake Jira site.
 - No provider key, no OAuth registration, no network egress.
 - `src/lfx/src/lfx/workflow/agui_translator.py` — the `RUN_ERROR` message and `code`.
 - `src/lfx/src/lfx/schema/message.py` — `ErrorMessage` keeping the integration error's `code` and `solution`.
@@ -134,3 +168,5 @@ Each test also has a force-fail mutation executed against it.
   returning `false` for a `connection_ref` field.
 - `src/backend/base/langflow/services/connection/service.py` — the run-time expiry the page shows.
 - `src/lfx/src/lfx/integrations/errors.py` — the codes, messages and hints.
+- `src/bundles/jira/src/lfx_jira/schema.py` — `issue_key`, the copy test 5 asserts.
+- `src/bundles/jira/src/lfx_jira/base.py` — the connection resolved inside `perform()`, after the input is checked.

@@ -1775,7 +1775,15 @@
 - [x] Continue starts consent with `e2e-<provider>` and the ticked scopes (an unticked optional scope reaches neither the start nor the provider); the authorization URL is Atlassian's (`audience`, `prompt=consent`) or the configured site's with PKCE `S256` (Salesforce `prompt=login consent`); a denied consent (Jira, Salesforce) or a cancelled wait (Confluence, ServiceNow) deletes the new row → core-functionality/integrations/connection-oauth-site-bound.spec.ts
 - [ ] A consent that completes at a real Atlassian, Salesforce or ServiceNow tenant — a callback carrying a `code` reaches the provider's real token host (measured: `oauth-failed` for a fake client), so no spec sends one
 
-#### 24.19 The trigger lifecycle (#2303)
+#### 24.19 The nine 1.14 providers' actions at run time (#2501)
+
+- [x] One action of each of GitHub, GitLab, Jira, Salesforce, ServiceNow, Discord, Telegram and WhatsApp, run through `POST /api/v2/workflows` with a handle no row carries, and again bound to a `pending` row, fails with `connection-unresolved` naming `<provider>/<handle>`, identically for both; the row stays `pending` → api/connections/api-connections-action-runs.spec.ts
+- [x] Input validation runs before the connection is resolved: a malformed input with an unbound handle is refused with `invalid-request` and the bundle's exact copy (GitHub, GitLab, Jira, Confluence, Salesforce, Discord, Telegram); WhatsApp's malformed recipient is a plain error with no `code`; ServiceNow resolves first, so its malformed record id reads `connection-unresolved` → api/connections/api-connections-action-runs.spec.ts
+- [x] Confluence: with no `LANGFLOW_CONFLUENCE_SPACE_IDS` on the lane, every action stops at *"Configure one to 100 approved Confluence space IDs as a comma-separated server setting."* before its connection is looked up → api/connections/api-connections-action-runs.spec.ts
+- [x] On the canvas, a Jira node shows `[connection-unresolved] Connection 'jira/<handle>' …` for an unbound handle and `[invalid-request] Use a Jira issue key such as DEMO-123.` for a malformed key, each with its hint, in the notice and the node's build panel → core-functionality/integrations/connector-run-errors.spec.ts
+- [ ] A **ready** connection's action for any of the nine — a planted credential is refused for all nine (`422`), so it needs a live account; ServiceNow's own validation copy and WhatsApp's and ServiceNow's server settings are only reachable past resolution
+
+#### 24.20 The trigger lifecycle (#2303)
 
 - [x] `POST /api/v1/triggers` answers `201` with the 28 `TriggerRead` keys and the defaults (`pending`, `flow` binding, `per_event`, `concurrency_limit` 1, `max_attempts` 5), owned by the flow's owner; `GET`, the list by `flow_id`, `PATCH` and `DELETE` (`204`, then `404` on read and on a second delete); an explicit `null` is refused on the six required fields (*"This field cannot be null."*) and clears `connection_id`, `deployment_id` and `flow_version_id` once set; a `schedule` created through the API validates its cron on create and on `PATCH` (`422` *"Invalid cron expression: …"*) → api/triggers/api-triggers-lifecycle.spec.ts
 - [x] `enable` arms and `disable` pauses, both idempotent; `pending`, `expired` and `error` all enable; a `dead` trigger refuses both (`409`, *"Trigger in state 'dead' cannot be enabled."* as an object, *"A dead trigger cannot be disabled."* as a string) and stays `dead` → api/triggers/api-triggers-lifecycle.spec.ts
@@ -1891,9 +1899,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 138 | 118 | 0 | 3 | 17 |
+| `integrations/` — Dedicated Integrations | 143 | 122 | 0 | 3 | 18 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **911** | **759 (83%)** | **91 (10%)** | **17 (2%)** | **44 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **916** | **763 (83%)** | **91 (10%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1909,7 +1917,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 870 `test()` calls carrying the `@stable` tag, distributed across 315 spec
+> 876 `test()` calls carrying the `@stable` tag, distributed across 316 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1921,6 +1929,10 @@
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
 
 #### api/connections/
+- [x] <subject.name>: an unbound handle and a pending row both fail the run with connection-unresolved, naming the handle → `api-connections-action-runs.spec.ts`
+- [x] <subject.name>: a malformed <malformed.field> is refused before the connection is looked up, with the bundle's own copy → `api-connections-action-runs.spec.ts`
+- [x] WhatsApp: a malformed recipient is refused before the connection is looked up, as a plain error with no integration code → `api-connections-action-runs.spec.ts`
+- [x] Confluence: an unconfigured approved-space setting stops the action before its connection is looked up → `api-connections-action-runs.spec.ts`
 - [x] a run refused for an expired credential marks the connection expired and unhealthy, with no health check, while a run refused for a missing scope leaves its connection as it was → `api-connections-health.spec.ts`
 - [x] a pasted Slack token is checked with Slack before it is saved, and an app-level token breaking its rules is refused locally, each with its reason → `api-connections-health.spec.ts`
 - [x] checking an app-level token does not report it healthy → `api-connections-health.spec.ts`
@@ -2362,6 +2374,8 @@
 - [x] a connector that cannot resolve its connection shows the integration's code and hint, on the canvas and in the run stream → `connector-run-errors.spec.ts`
 - [x] a run refused for an expired credential says so with its code and hint, leaks no token, and leaves the connection Expired on its page → `connector-run-errors.spec.ts`
 - [x] a connection field has no canvas handle, so no edge can reach it → `connector-run-errors.spec.ts`
+- [x] a Jira action that cannot resolve its connection shows the integration's code and hint on the canvas → `connector-run-errors.spec.ts`
+- [x] a Jira action whose input is malformed shows invalid-request and its hint on the canvas, before any connection is looked up → `connector-run-errors.spec.ts`
 - [x] every dedicated integration action offers Tool Mode → `connector-tool-mode.spec.ts`
 - [x] an action in Tool Mode is one tool whose arguments exclude the connection → `connector-tool-mode.spec.ts`
 - [x] an action with a pagination output becomes two tools → `connector-tool-mode.spec.ts`
