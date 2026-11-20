@@ -30,13 +30,17 @@ Seven tests:
    (`google/a/b`, `Google/Bad Name`, `nohandle`) sit beside a well-formed control in one flow. Save and
    read-back keep all four; the export nulls the three malformed ones and keeps the control; uploading an
    envelope that carries a malformed handle keeps it.
-3. **The round trip keys on the class.** The manifest's `component_ref` for `microsoft.outlook.send` is
-   the class name `OutlookSendComponent`, while the catalog entry's `name` is `OutlookSendMail`. A flow
-   with that node is exported, deleted and re-imported. The imported node keeps the catalog's type key,
-   `component_class_name`, `code_hash`, code and handle. Those checks only read back what the upload
-   stored, so the imported node is then **built**: the server instantiates the class, reaches its
-   connection input and stops at `connection-unresolved` (no row has that handle), before the send could
-   run. That build is what shows the node resolves to the catalog entry.
+3. **The round trip keeps the class the manifest names, and the stored code builds as that component.**
+   The manifest's `component_ref` for `microsoft.outlook.send` is the class name `OutlookSendComponent`,
+   while the catalog entry's `name` is `OutlookSendMail`. A flow with that node is exported, deleted and
+   re-imported. The imported node keeps the catalog's type key, `component_class_name`, `code_hash`, code
+   and handle. Those checks only read back what the upload stored, so the imported node is then
+   **built**: the error the build raises comes from "Outlook: Send Mail", the catalog entry's display
+   name, and stops at `connection-unresolved` (no row has that handle) before the send could run.
+   Measured: **the server keys on neither the type key nor `component_class_name`**. It executes the
+   stored code. With Outlook *Search*'s code under the same node and `component_class_name: BogusClass`,
+   the build also stops at `connection-unresolved`, but as "Outlook: Search Mail", which is what turns
+   this test red.
 4. **Imported by another user, the handle binds to that user's connection.** The superuser exports a flow
    bound to its own `google/<name>` connection, which holds the scope the action needs. A throwaway user
    imports it and builds it:
@@ -140,16 +144,30 @@ None. The disagreements above are premises of the issue, not product defects.
 `@stable`: no provider key and no model. Tests 1–4 and 7 need nothing outside the instance. Tests 5 and 6
 need tracing on and egress to Google (see *Budget and parallel safety* for which lanes provide them).
 
-**Residual risk of tests 5 and 6: they depend on Google being up.** When Google answers a 5xx, the route
-to it fails, or it rate-limits, the run's typed code is `provider-unavailable`, `network-error` or
-`rate-limited` instead of `auth-expired`. The tests still **fail** then, never skip (#1010/#1012), but
-through `providerOutageMessage()` (`tests/helpers/integrations/provider-outage.ts`): the message starts
-with `[provider-outage]`, which the `provider-outage` entry of
-`scripts/lib/infra-signature-patterns.json` matches, so the daily's unreviewed `@stable` auto-removal
-treats the failure as infra and keeps the tag (the #1128 lesson). What it does not cover: an outage that
-Langflow maps to some other code (for example a Google error page read as `invalid-request`), which
-fails as an ordinary, attributable diff. A lane with no route to Google at all would fail tests 5 and 6
-on every run, as infra, until the route exists.
+**Residual risk of tests 5 and 6: they depend on Google being up, and an outage is attributable.**
+When Google rate-limits, answers a 5xx, or cannot be reached, the run's typed code is `rate-limited`,
+`provider-unavailable` or `network-error` instead of `auth-expired`.
+
+- A `rate-limited` answer is re-tried twice, with a 3 s and an 8 s backoff. It is the provider's own,
+  explicit signal (a `429`, or a `403` with a rate-limit reason).
+- `network-error` and `provider-unavailable` are never re-tried and never exempted. Measured on
+  `1.14.0.dev32` (review of #2298), `provider-unavailable` is Langflow's catch-all: `IntegrationError.code` defaults to
+  it, `normalize_integration_error()` falls back to it, and the action telemetry wraps every provider
+  call in `except Exception`, so a `TypeError` or `KeyError` in the very code this spec tests comes back
+  as `provider-unavailable`. `network-error` also covers Langflow's own TLS and proxy handling.
+  Classifying either as infra would exempt real regressions, which is the line #1589 and #1763 draw
+  and why `scripts/lib/infra-signature-patterns.json` stays transport-level only.
+- Whatever is still wrong after that fails with a plain message carrying the codes, the attempts and
+  the first 600 characters of the evidence, with the hint *"If every code is rate-limited or
+  network-error, check that Google is reachable from this lane before triaging this as a regression."*
+
+So **a sustained Google outage on the VM daily can strip `@stable` from tests 5 and 6**: the failure is
+attributable, and the daily's auto-removal acts on it without review. To restore the tag, confirm from
+the failure message that every code was `rate-limited` or `network-error` (or `provider-unavailable`
+with Google's status page reporting an incident that day), confirm Google answers from the VM again,
+re-run this spec there, and put `@stable` back on the two tests in a PR citing that run, as for any
+other auto-removal (`CONTRIBUTING.md`, *Tag @stable — validated tests*). A lane with no route to
+Google at all fails both tests on every run until the route exists.
 
 ---
 
@@ -178,7 +196,8 @@ sentinel is derived.
    download.
 4. The imported node has the catalog's type key, `component_class_name`, `code_hash` and code, and the
    handle.
-5. Build the imported flow: `connection-unresolved`, naming the handle, before the send could run.
+5. Build the imported flow: one error, from "Outlook: Send Mail", `connection-unresolved`, naming the
+   handle, before the send could run.
 
 **Test 4.**
 1. Plant a superuser `google` connection holding `drive.file`, with sentinels.
@@ -191,7 +210,8 @@ sentinel is derived.
 
 **Test 5.**
 1. Plant a superuser `google` connection holding `drive.file`, with sentinels; save a Drive flow bound to it.
-2. Build it: `auth-expired`. An outage code fails naming the provider outage (see *Tags*).
+2. Build it: `auth-expired`. A `rate-limited` answer is re-tried twice; anything else wrong fails with
+   its codes and evidence (see *Tags*).
 3. The connection now reads `status: expired`.
 4. Sweep the build stream, the monitor messages, builds and transactions of the flow (each polled until it
    has recorded the run: the vertex build is written after the stream ends), the trace list and the trace
@@ -200,9 +220,10 @@ sentinel is derived.
 **Test 6.**
 1. Plant the same kind of connection; save a Chat Input → Drive flow bound to it.
 2. Open the flow, open the Playground, send a message.
-3. The error card appears. The run's code, read from its trace, is `auth-expired` (an outage code fails
-   naming the outage, see *Tags*). Expanded, the card shows the `auth-expired` text. The page HTML carries
-   no sentinel.
+3. The error card appears. The exact sequence of codes the trace's spans recorded is
+   `["auth-expired"]` (read from the spans, not de-duplicated from the whole body, so a second code from a
+   crashed retry would show; a `rate-limited` answer is re-sent twice, see *Tags*). Expanded, the card
+   shows the `auth-expired` text. The page HTML carries no sentinel.
 4. Close the Playground, open *Traces*, open the run: the span tree lists the Drive span; its detail shows
    `auth-expired`. The page HTML carries no sentinel.
 
@@ -225,14 +246,16 @@ All seven tests pass three consecutive times at `--retries=0` with default worke
 
 - no export, import response, build stream, monitor record, trace or page carries any planted sentinel;
 - the handle survives export and import, and a malformed one is nulled on export only;
-- the imported Outlook node resolves to the catalog entry the manifest's `component_ref` names;
+- the imported Outlook node keeps the class the manifest's `component_ref` names, and its stored code
+  builds as the Send component;
 - the imported flow resolves the importer's connection and never the exporter's;
 - the provider-rejected run reads `auth-expired` everywhere it is recorded, and flips the connection to
   `expired`;
 - `connection` is never a tool argument, and a foreign-provider handle is refused at validation and run.
 
 Each test except test 1's sentinel sweep (a contract guard, see above) has a force-fail mutation
-executed against it, and so do test 3's build and the outage message of tests 5 and 6.
+executed against it, and so do test 3's build (Search's code swapped in), the rate-limit re-try of
+test 5, and test 6's exact code sequence.
 
 ---
 
@@ -264,5 +287,4 @@ executed against it, and so do test 3's build and the outage message of tests 5 
   recorded surfaces swept in test 5.
 - `tests/helpers/flows/build-catalog-flow.ts`, `tests/helpers/flows/create-project-via-api.ts`,
   `tests/helpers/integrations/create-connection.ts`, `tests/helpers/integrations/connection-probe.ts`
-  (`DRIVE_LIST_TYPE`), `tests/helpers/integrations/provider-outage.ts` (the outage message),
-  `tests/helpers/auth/throwaway-user.ts` and `tests/pages/PlaygroundPage.ts`.
+  (`DRIVE_LIST_TYPE`), `tests/helpers/auth/throwaway-user.ts` and `tests/pages/PlaygroundPage.ts`.
