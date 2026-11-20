@@ -161,7 +161,7 @@ test.describe("Multi-edit safety — a component changed on both sides", () => {
 
   test(
     "a component changed on both sides blocks Update until a version is chosen, and Keep my version saves mine",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const { ctx, dialog } = await raiseConflict(page, request, { [ONE]: "their one" }, { [ONE]: "my one" });
       const row = conflictRow(dialog, ONE);
@@ -198,7 +198,7 @@ test.describe("Multi-edit safety — a component changed on both sides", () => {
 
   test(
     "Keep the other person's version saves theirs whole, even past what the dialog shows",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const { ctx, dialog } = await raiseConflict(page, request, { [TWO]: LONG_VALUE }, { [TWO]: "my two" });
       const row = conflictRow(dialog, TWO);
@@ -225,7 +225,7 @@ test.describe("Multi-edit safety — a component changed on both sides", () => {
 
   test(
     "two conflicts resolved opposite ways, plus an uncontested change, save exactly what was chosen",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const { ctx, dialog } = await raiseConflict(
         page,

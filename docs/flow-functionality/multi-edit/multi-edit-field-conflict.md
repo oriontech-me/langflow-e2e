@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/flow-functionality/multi-edit/multi-edit-field-conflict.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev10`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
 
 Owning issue: #2344 (Wave 11 — Multi-edit, instance migration & integrations; tracker #2356).
 Upstream feature: multi-edit safety, `langflow-ai/langflow#14903`, follow-up `#15824`.
@@ -62,10 +62,10 @@ written:
 
 ## Tags *(required)*
 
-`@workspace` `@database` `@ui-ux`
+`@stable` `@workspace` `@database` `@ui-ux`
 
-**No `@stable` yet.** It is a new UI spec with a 5 s autosave debounce in its critical path.
-It waits for team validation before promotion.
+**`@stable` since #2469.** Measured for #2469 on `1.14.0.dev32` under the daily's shard settings (2 workers, file-level parallelism, `--retries=0`): 15 of 15 across 5 repeats at a host load of 26–38 on
+10 cores, plus 6 of 6 in a combined run of the five multi-edit specs.
 
 ---
 

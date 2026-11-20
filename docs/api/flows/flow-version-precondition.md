@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/flows/flow-version-precondition.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev7`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
 
 Owning issue: #2341 (Wave 11 — Multi-edit, instance migration & integrations; tracker #2356).
 Upstream feature: multi-edit safety, `langflow-ai/langflow#14903`, follow-up `#15824`.
@@ -125,11 +125,11 @@ guarantee that holds is not hidden behind the one that does not:
 
 ## Tags *(required)*
 
-`@api` `@workspace` `@database`
+`@stable` `@api` `@workspace` `@database`
 
-**No `@stable` yet.** The spec is LLM-free, fast and a candidate for promotion
-once the team has validated it (issue #2341, *Target*). Until then it carries
-no `@stable` and is tracked by #2341.
+**`@stable` since #2469.** Measured for #2469 on `1.14.0.dev32` under the daily's shard settings (2 workers, file-level parallelism, `--retries=0`): 35 of 35 across 5 repeats at a host load of 21–25 on
+10 cores, plus 14 of 14 in a combined run of the five multi-edit specs. The `test.fail()`
+test failed as declared every time; it turns red the day upstream fixes the phantom token.
 
 ---
 

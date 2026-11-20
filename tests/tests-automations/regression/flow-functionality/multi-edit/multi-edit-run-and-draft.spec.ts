@@ -206,7 +206,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a run on a stale canvas with an unsaved edit is blocked, and no run request is sent",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       await openFlowById(page, ctx.flowId);
@@ -257,7 +257,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a run on a stale canvas with no edit adopts the latest version, and only the next run executes it",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       await openFlowById(page, ctx.flowId);
@@ -306,7 +306,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "Restore brings unsaved work back after a reload, and the conflict stands again",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       declareRefusedAutosave(page, ctx);
@@ -343,7 +343,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "Discard drops the draft, writes nothing, and the offer does not come back",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request);
       declareRefusedAutosave(page, ctx);
@@ -407,7 +407,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a draft keeps no local copy of a secret, and the restored field is empty",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await secretIsNotKept(page, request, `sk-e2e-secret-${randomHex(12)}`);
       expect(await serverValue(request, ctx, SA, "api_key"), "the server never received the key").toBe("");
@@ -417,7 +417,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
   test(
     "an alphanumeric API key is not kept in the draft either",
     {
-      tag: ["@workspace", "@database", "@playground"],
+      tag: ["@stable", "@workspace", "@database", "@playground"],
       annotation: {
         type: "known defect",
         description:
@@ -434,7 +434,7 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
 
   test(
     "a flow too large to keep a local copy warns, and stores no draft",
-    { tag: ["@workspace", "@database", "@playground"] },
+    { tag: ["@stable", "@workspace", "@database", "@playground"] },
     async ({ page, request }) => {
       const ctx = await setup(request, { text: "x".repeat(TOO_LARGE) });
       declareRefusedAutosave(page, ctx);

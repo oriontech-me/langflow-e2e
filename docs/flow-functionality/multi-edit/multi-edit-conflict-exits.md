@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev7`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
 
 Owning issue: #2343 (Wave 11 — Multi-edit, instance migration & integrations; tracker #2356).
 Upstream feature: multi-edit safety, `langflow-ai/langflow#14903`, follow-up `#15824`. How the
@@ -75,11 +75,14 @@ written:
 
 ## Tags *(required)*
 
-`@workspace` `@database` `@ui-ux`
+`@stable` `@workspace` `@database` `@ui-ux` (on every test but one)
 
-**No `@stable` yet.** It is a new UI spec with a 5 s debounce in its critical path. The
-archive-failure test also waits out the frontend's retries (about 7 s). It waits for
-team validation before promotion.
+**`@stable` since #2469, except *Duplicate Flow puts the viewer's work in a new flow and
+leaves the original alone*.** Measured for #2469 on `1.14.0.dev32` under the daily's shard settings (2 workers, file-level parallelism, `--retries=0`), the other five passed 25 of 25 across 5 repeats at a
+host load of 23–33 on 10 cores. The Duplicate test failed 3 of 5 there, timing out on the
+copy's `PATCH`. The writability wait added for it (test 2) did not settle it: 22 of 24
+afterwards, with 2 failures in one 6-worker, fully parallel batch that left no trace. It
+stays out until that cause is found, owned by an open issue that names this file.
 
 ---
 
@@ -117,7 +120,7 @@ flow it created, the fork included. Waits key on this flow's responses, never on
      in-app navigation, so `openFlowById`'s writability gate does not run; the editor is
      read-only while the copy's permissions load, and a drag in that window is swallowed
      with no request (#1005). Without this wait, 3 of 5 runs timed out on the copy's
-     `PATCH` at a host load of 23–33 on 10 cores. With it, 20 of 22 runs passed; the 2
+     `PATCH` at a host load of 23–33 on 10 cores. With it, 22 of 24 runs passed; the 2
      failures came in one 6-worker, fully parallel batch, beyond the daily's 2 workers, and
      left no trace, so the wait is not proven to be the whole cause. This test is the only
      one in the spec without `@stable` (see *Tags*).
