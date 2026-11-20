@@ -108,13 +108,16 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
     expect(saved.status(), "the other session's save must succeed").toBe(200);
   }
 
-  function declareRefusedAutosave(page: Page, ctx: Ctx) {
+  function declareRefusedAutosave(
+    page: Page,
+    ctx: Ctx,
+    reason = "#2345: the viewer's autosave is refused because another session saved first — " +
+      "the conflict whose draft this spec exists to check",
+  ) {
     (page as PageWithErrorHooks).expectKnownHttpError({
       pathname: `/api/v1/flows/${ctx.flowId}`,
       status: 409,
-      reason:
-        "#2345: the viewer's autosave is refused because another session saved first — " +
-        "the conflict whose draft this spec exists to check",
+      reason,
     });
   }
 
@@ -231,6 +234,15 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
           (url) => url.pathname === `/api/v1/flows/${ctx.flowId}`,
           async (route) => {
             if (route.request().method() !== "PATCH") return route.fallback();
+            // Declared only when a save was actually held, so the fast path (no save
+            // sent at all) declares nothing, and a held save the server accepted
+            // leaves the declaration unfired, which fails the test.
+            declareRefusedAutosave(
+              page,
+              ctx,
+              "#2469: the stale autosave the edit queued before Run outlasted the pre-run " +
+                "check, was held until the check raised the conflict, and is refused by design",
+            );
             await bannerUp;
             await route.continue();
           },

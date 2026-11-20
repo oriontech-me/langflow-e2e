@@ -128,8 +128,11 @@ on time.
      changes to run it."* appears.
    - No `POST /api/v2/workflows` was sent and no `PATCH` succeeded. The server still holds
      `their text`. The held save, when there was one, is refused with `409` (measured
-     once in 5 runs at a host load of ~25 on 10 cores, never at ~10). That refusal also
-     logs an advisory `🚨 Backend Error: 409`, which is this path and not a defect.
+     once in 5 runs at a host load of ~25 on 10 cores, never at ~10). The test declares
+     that `409` as a known one (`expectKnownHttpError`) only when it actually held a save,
+     so it prints `📌 Known backend defect`, never `🚨 Backend Error`. With no held save
+     nothing is declared; a held save the server accepted would leave the declaration
+     unfired, which fails the test.
 
 2. **A run on a stale canvas with no edit adopts the latest version, and only the next run
    executes it.**
