@@ -25,7 +25,6 @@ import {
   type CreatedConnection,
   createConnectionViaApi,
 } from "../../../../helpers/integrations/create-connection";
-import { providerOutageMessage } from "../../../../helpers/integrations/provider-outage";
 import { PlaygroundPage } from "../../../../pages/PlaygroundPage";
 
 // The saved-flow contract of Dedicated Integrations (#2298).
@@ -716,19 +715,93 @@ test.describe("Connections — the saved-flow contract", () => {
     return traces;
   }
 
-  /** The typed integration codes the run's trace recorded (`error_code` in its logs). */
-  async function traceErrorCodes(
+  /**
+   * Google rate-limiting is the one answer re-tried, twice, with a short backoff:
+   * it is the provider's own, explicit signal (`429`, or `403` with a rate-limit
+   * reason). `network-error` is NOT re-tried — it also covers Langflow's own TLS
+   * and proxy handling — and `provider-unavailable` never is: it is Langflow's
+   * catch-all, so a crash in the very code this spec tests would read as one.
+   */
+  const RATE_LIMIT_BACKOFF_MS = [3_000, 8_000];
+
+  function onlyRateLimited(codes: Array<string | null>): boolean {
+    return codes.length > 0 && codes.every((code) => code === "rate-limited");
+  }
+
+  /**
+   * The failure text when the provider's verdict is not the expected one. Plain
+   * and attributable on purpose — no infra exemption covers it (#1589, #1763) —
+   * but it keeps the evidence and says where to look first.
+   */
+  function verdictMessage(
+    codes: Array<string | null>,
+    attempts: number,
+    evidence: string,
+  ): string {
+    return (
+      `expected the provider's verdict ["auth-expired"], got ${JSON.stringify(codes)} ` +
+      `after ${attempts} attempt(s). If every code is rate-limited or network-error, check ` +
+      `that Google is reachable from this lane before triaging this as a regression.\n` +
+      evidence.slice(0, 600)
+    );
+  }
+
+  type TraceSpan = {
+    name: string;
+    outputs?: { logs?: Array<{ message?: { error_code?: string } }> };
+    children?: TraceSpan[];
+  };
+
+  /**
+   * The `error_code` of every integration action the newest trace's SPANS
+   * recorded, in order. Read from the spans and not from the whole body, because
+   * the root repeats its child's output: de-duplicating the body would let a
+   * second, different code (a crashed retry) hide behind the first.
+   */
+  async function newestTraceCodes(
     request: APIRequestContext,
     flowId: string,
-  ): Promise<string[]> {
-    const traces = await tracesOf(request, flowId);
-    const res = await request.get(`/api/v1/monitor/traces/${traces[0].id}`, {
-      headers: superHeaders,
-    });
-    expect(res.status()).toBe(200);
-    // The root span repeats its child's output, so the codes are de-duplicated.
-    const text = await res.text();
-    return [...new Set([...text.matchAll(/"error_code":"([a-z-]+)"/g)].map((m) => m[1]))];
+    runs: number,
+  ): Promise<{ codes: string[]; detail: string }> {
+    let traces: Array<{ id: string; startTime: string }> = [];
+    await expect
+      .poll(
+        async () => {
+          traces = (await tracesOf(request, flowId)) as typeof traces;
+          return traces.length;
+        },
+        { message: `a trace was recorded for each of the ${runs} run(s)`, timeout: 15_000 },
+      )
+      .toBeGreaterThanOrEqual(runs);
+    const newest = [...traces].sort((a, b) => b.startTime.localeCompare(a.startTime))[0];
+    let codes: string[] = [];
+    let detail = "";
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(`/api/v1/monitor/traces/${newest.id}`, {
+            headers: superHeaders,
+          });
+          expect(res.status()).toBe(200);
+          detail = await res.text();
+          const walk = (spans: TraceSpan[]): string[] =>
+            spans.flatMap((span) => [
+              ...(span.outputs?.logs ?? []).flatMap((log) =>
+                log.message?.error_code ? [log.message.error_code] : [],
+              ),
+              ...walk(span.children ?? []),
+            ]);
+          codes = walk((JSON.parse(detail) as { spans: TraceSpan[] }).spans ?? []);
+          return codes.length;
+        },
+        {
+          message:
+            "the trace exists but none of its spans has recorded an error_code yet",
+          timeout: 15_000,
+        },
+      )
+      .toBeGreaterThan(0);
+    return { codes, detail };
   }
 
   test(
@@ -757,17 +830,24 @@ test.describe("Connections — the saved-flow contract", () => {
         );
 
         await test.step("the build stops at the provider: auth-expired", async () => {
-          const stream = await build(request, superHeaders, flowId!);
-          expectNoSentinel(stream, [sentinels], "the build stream");
-          const errors = errorEvents(stream);
-          // `scope-missing` or `connection-unresolved` here would mean the run never
-          // reached Google. An outage code (Google down, no egress, rate-limited)
-          // still fails, but names the outage so it classifies as infra (#1128).
+          // `scope-missing` or `connection-unresolved` would mean the run never
+          // reached Google. Only a rate-limit is re-tried (see RATE_LIMIT_BACKOFF_MS).
+          let stream = "";
+          let errors: ReturnType<typeof errorEvents> = [];
+          let attempts = 0;
+          for (;;) {
+            attempts += 1;
+            stream = await build(request, superHeaders, flowId!);
+            expectNoSentinel(stream, [sentinels], `build attempt ${attempts}`);
+            errors = errorEvents(stream);
+            const backoff = RATE_LIMIT_BACKOFF_MS[attempts - 1];
+            if (!onlyRateLimited(errors.map((e) => e.code)) || backoff === undefined) break;
+            await new Promise((resolve) => setTimeout(resolve, backoff));
+          }
           const codes = errors.map((e) => e.code);
-          expect(
-            codes,
-            providerOutageMessage("google", codes) ?? stream.slice(0, 600),
-          ).toEqual(["auth-expired"]);
+          expect(codes, verdictMessage(codes, attempts, stream)).toEqual([
+            "auth-expired",
+          ]);
           expect(errors[0].text).toBe(AUTH_EXPIRED_TEXT);
         });
 
@@ -806,22 +886,22 @@ test.describe("Connections — the saved-flow contract", () => {
         }
 
         await test.step("the trace records the failure and carries no token", async () => {
-          const traces = await tracesOf(request, flowId!);
+          const { codes, detail } = await newestTraceCodes(request, flowId!, 1);
+          expect(codes, verdictMessage(codes, 1, detail)).toEqual(["auth-expired"]);
           const list = await request.get(
             `/api/v1/monitor/traces?flow_id=${flowId}`,
             { headers: superHeaders },
           );
           expectNoSentinel(await list.text(), [sentinels], "the trace list");
-          const res = await request.get(
-            `/api/v1/monitor/traces/${traces[0].id}`,
-            { headers: superHeaders },
-          );
-          const text = await res.text();
-          expect(res.status(), text.slice(0, 300)).toBe(200);
-          expectNoSentinel(text, [sentinels], "the trace detail");
-          expect(text, "the trace recorded the provider's verdict").toContain(
-            '"error_code":"auth-expired"',
-          );
+          // Every trace, not only the newest: a re-tried rate-limit leaves one per attempt.
+          for (const trace of await tracesOf(request, flowId!)) {
+            const res = await request.get(`/api/v1/monitor/traces/${trace.id}`, {
+              headers: superHeaders,
+            });
+            const text = await res.text();
+            expect(res.status(), text.slice(0, 300)).toBe(200);
+            expectNoSentinel(text, [sentinels], `trace ${trace.id}`);
+          }
         });
       } finally {
         if (flowId)
@@ -879,17 +959,26 @@ test.describe("Connections — the saved-flow contract", () => {
           const playground = new PlaygroundPage(page);
           await playground.waitForLoad();
           await playground.open();
-          await playground.sendMessage("list my files");
-          const card = page.getByTestId("error-card").first();
-          await expect(card).toBeVisible({ timeout: RUN_TIMEOUT_MS });
-          // The run's typed code, read where it was recorded, so an outage fails
-          // naming the outage rather than as a text mismatch on the card (#1128).
-          const codes = await traceErrorCodes(request, flowId!);
+          // The run's typed code is read from its trace before the card's text is
+          // judged, so a wrong verdict fails with the codes as evidence rather than
+          // as a text mismatch. Only a rate-limit is re-tried (RATE_LIMIT_BACKOFF_MS).
+          const cards = page.getByTestId("error-card");
+          let verdict = { codes: [] as string[], detail: "" };
+          let attempts = 0;
+          for (;;) {
+            attempts += 1;
+            await playground.sendMessage("list my files");
+            await expect(cards).toHaveCount(attempts, { timeout: RUN_TIMEOUT_MS });
+            verdict = await newestTraceCodes(request, flowId!, attempts);
+            const backoff = RATE_LIMIT_BACKOFF_MS[attempts - 1];
+            if (!onlyRateLimited(verdict.codes) || backoff === undefined) break;
+            await page.waitForTimeout(backoff);
+          }
           expect(
-            codes,
-            providerOutageMessage("google", codes) ??
-              "the run recorded the provider's verdict",
+            verdict.codes,
+            verdictMessage(verdict.codes, attempts, verdict.detail),
           ).toEqual(["auth-expired"]);
+          const card = cards.last();
           await card.getByRole("button").first().click();
           await expect(card).toContainText(AUTH_EXPIRED_TEXT);
           expectNoSentinel(
