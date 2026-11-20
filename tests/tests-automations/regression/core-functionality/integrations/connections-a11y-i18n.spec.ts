@@ -138,10 +138,17 @@ test.describe("Connections — accessibility and locale coverage", () => {
     expect(baselineMessage(surface, baselineVerdict(scan.violations, BASELINE[surface])), surface).toBe("");
   }
 
+  /**
+   * The locale test boots the app eight times, so a slow boot hits it eight times
+   * as often as a sibling. Measured at a host load average of ~30 on 10 cores: the
+   * page was still on its *Loading…* splash 30 s after `goto`.
+   */
+  const PAGE_BOOT_TIMEOUT_MS = 60_000;
+
   async function openPage(page: Page, name: string): Promise<void> {
     await page.goto(PAGE);
     await expect(page.getByTestId(`connection-row-${name}`), `the seeded row ${name}`).toBeVisible({
-      timeout: 30000,
+      timeout: PAGE_BOOT_TIMEOUT_MS,
     });
   }
 
