@@ -87,12 +87,36 @@ test.describe("Connections — accessibility and locale coverage", () => {
 
   const connections: CreatedConnection[] = [];
   const flowIds: string[] = [];
+  /**
+   * The name of every flow this test asked for, so a flow whose create request timed
+   * out on the client but landed on the server is still found and deleted. Measured
+   * on a loaded machine: `POST /api/v1/flows/` passed the 20 s request timeout, the
+   * test failed before it had an id, and the flow stayed behind.
+   */
+  const flowNames: string[] = [];
+  const uniqueFlowName = (label: string) => {
+    const name = `e2e-2304-${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    flowNames.push(name);
+    return name;
+  };
 
   test.afterEach(async ({ page, request }) => {
     await unmountEditorForCleanup(page);
     const headers = { Authorization: await getAuthToken(request) };
     const failures: string[] = [];
-    for (const id of flowIds.splice(0)) {
+    const names = new Set(flowNames.splice(0));
+    const ids = new Set(flowIds.splice(0));
+    if (names.size > ids.size) {
+      const res = await request.get("/api/v1/flows/?remove_example_flows=true&header_flows=true", { headers });
+      if (res.ok()) {
+        for (const flow of (await res.json()) as Array<{ id: string; name: string }>) {
+          if (names.has(flow.name)) ids.add(flow.id);
+        }
+      } else {
+        failures.push(`listing flows to find one whose create timed out: ${res.status()}`);
+      }
+    }
+    for (const id of ids) {
       await deleteFlow(request, id, { headers }).catch((error) => failures.push(`flow ${id}: ${error}`));
     }
     for (const connection of connections.splice(0)) {
@@ -121,14 +145,31 @@ test.describe("Connections — accessibility and locale coverage", () => {
     });
   }
 
+  /**
+   * The menu and the dialog open client-side, yet on a loaded machine (four workers,
+   * a second Langflow and an unrelated container sharing the VM, every test 3-4x its
+   * usual time) a click on the row's menu button was accepted and the menu never
+   * opened: the trace shows the row on screen, the click resolved, and no
+   * `role=menu` for the next 15 s. Why the click was lost was not isolated. The click
+   * is repeated until the surface opens, and never while it is already open, so a
+   * late-opening menu is not toggled shut. Whether the menu opens is
+   * connections-row-actions.spec.ts's subject, not this file's.
+   */
+  const OPEN_TIMEOUT_MS = 30_000;
+
+  async function openWithClick(page: Page, trigger: string, opened: string): Promise<void> {
+    await expect(async () => {
+      if (!(await page.locator(opened).isVisible())) await page.getByTestId(trigger).click();
+      await expect(page.locator(opened)).toBeVisible({ timeout: 3_000 });
+    }).toPass({ timeout: OPEN_TIMEOUT_MS });
+  }
+
   async function openRowMenu(page: Page, name: string): Promise<void> {
-    await page.getByTestId(`connection-menu-${name}`).click();
-    await expect(page.locator(ROW_MENU)).toBeVisible();
+    await openWithClick(page, `connection-menu-${name}`, ROW_MENU);
   }
 
   async function openAddDialog(page: Page): Promise<void> {
-    await page.getByTestId("add-connection").click();
-    await expect(page.getByTestId("connection-provider")).toBeVisible();
+    await openWithClick(page, "add-connection", '[data-testid="connection-provider"]');
   }
 
   async function closeWithEscape(page: Page, selector: string): Promise<void> {
@@ -183,7 +224,7 @@ test.describe("Connections — accessibility and locale coverage", () => {
           request,
           catalog,
           { nodes: [{ id: "gmail", type: key!, values: { connection: handle } }], edges: [] },
-          { name: `e2e-2304-picker-${Date.now().toString(36)}`, headers },
+          { name: uniqueFlowName("picker"), headers },
         );
         flowIds.push(flowId);
         await openFlowById(page, flowId);
@@ -224,10 +265,13 @@ test.describe("Connections — accessibility and locale coverage", () => {
           };
           page.on("response", onResponse);
           try {
-            // The preference is read once, at module load, so it is written first and
-            // the page is then loaded.
-            if (page.url().startsWith("about:")) await page.goto("/");
-            await page.evaluate((code) => localStorage.setItem("languagePreference", code), locale);
+            // English comes first and needs no preference: a fresh context has none,
+            // which is what makes the first load English. Every other locale is
+            // written on the page's own origin and then loaded, because the
+            // preference is read once, at module load.
+            if (locale !== "en") {
+              await page.evaluate((code) => localStorage.setItem("languagePreference", code), locale);
+            }
             await openPage(page, connection.name);
             await expect(page.locator("html")).toHaveAttribute("lang", locale);
             const heading = page.getByTestId("settings_menu_header");
@@ -274,7 +318,12 @@ test.describe("Connections — accessibility and locale coverage", () => {
         expect(refs.length, "the manifest names connector components").toBeGreaterThan(0);
 
         for (const locale of LOCALES) {
-          const res = await request.get("/api/v1/all", { headers: { ...headers, "Accept-Language": locale } });
+          // The full catalog, ~0.5 MB, eight times in a row: measured past the 20 s
+          // request default on a loaded machine, so it gets a minute.
+          const res = await request.get("/api/v1/all", {
+            headers: { ...headers, "Accept-Language": locale },
+            timeout: 60_000,
+          });
           expect(res.status(), `${locale}: GET /api/v1/all`).toBe(200);
           const byRef = new Map<string, string>();
           for (const [category, entries] of Object.entries((await res.json()) as Record<string, unknown>)) {
@@ -324,7 +373,7 @@ test.describe("Connections — accessibility and locale coverage", () => {
         const flowId = await createFlow(
           request,
           {
-            name: `e2e-2304-sidebar-${Date.now().toString(36)}`,
+            name: uniqueFlowName("sidebar"),
             data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
             is_component: false,
           },
