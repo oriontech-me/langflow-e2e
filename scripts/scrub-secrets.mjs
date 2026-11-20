@@ -4,14 +4,19 @@
 // ## Why this exists
 //
 // A Playwright report carries every credential a test handled, and nothing in
-// Playwright redacts any of them. Measured on 1.58.2:
+// Playwright redacts any of them. Measured on 1.58.2, and again on 1.65.1 (#2167):
 //
 //   - a trace records each `APIRequestContext` request with its headers and body,
 //     whether the context is the `request` fixture or `playwright.request.newContext()`;
 //   - a trace records the text of every `fill()` in the action's parameters, password
 //     inputs included;
 //   - an `APIRequestContext` error prints every request header in its call log, and the
-//     HTML report embeds error messages, annotations and stdout (#2485).
+//     HTML report embeds error messages, annotations and stdout (#2485);
+//   - on 1.65.1, unlike 1.58.2, the blob also carries each failed attempt's `error-context` markdown
+//     (the error and the test's source) as a plain-text file under `resources/`, so a
+//     value can reach a blob in plain text, not only as base64 in `report.jsonl`. It is
+//     an ordinary text entry in a zip, which the pass below already scrubs (measured:
+//     every planted value gone from the blob, the results and the merged HTML report).
 //
 // So a provider key reaches the report through request headers, through the body of a
 // variable write, through the frontend's own POST when a spec saves the key in the UI,
@@ -207,8 +212,17 @@ function replaceText(text, secrets, counts) {
   return out;
 }
 
+// yauzl and yazl are our own exact-pinned devDependencies. They started at the
+// versions Playwright 1.65.1 bundles (yauzl 3.4.0, yazl 3.3.1); Dependabot bumps them
+// on their own from here, so read package.json for the current pins. Until #2167
+// they came from `playwright-core/lib/zipBundle`, an internal path: 1.65.1 dropped it
+// from the package's `exports` map and the require threw
+// ERR_PACKAGE_PATH_NOT_EXPORTED, which would have failed every scrub, and every
+// report upload behind one. 1.65.1 still exposes both through the exported
+// `playwright-core/lib/utilsBundle`, but owning the packages keeps the scrub off
+// Playwright's internals entirely.
 function readZip(buf) {
-  const { yauzl } = require("playwright-core/lib/zipBundle");
+  const yauzl = require("yauzl");
   return new Promise((resolve, reject) => {
     yauzl.fromBuffer(buf, { lazyEntries: true }, (err, zip) => {
       if (err) return reject(err);
@@ -238,7 +252,7 @@ function readZip(buf) {
 }
 
 function writeZip(entries) {
-  const { yazl } = require("playwright-core/lib/zipBundle");
+  const yazl = require("yazl");
   return new Promise((resolve, reject) => {
     const zip = new yazl.ZipFile();
     for (const e of entries) {

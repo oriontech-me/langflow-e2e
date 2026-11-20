@@ -126,7 +126,7 @@ export function describeProviderHealthSkips(stats: PwStats): string[] {
  * payload would blank the backend-error gate. Both halves are false and the
  * measurement is the useful part: `fixtures.ts` prints the marker with
  * `console.log`, and under `--reporter=json` nothing a WORKER prints reaches
- * the process streams at all — measured on 1.58.2, `console.log` and
+ * the process streams at all — measured on 1.58.2 and 1.65.1, `console.log` and
  * `console.error` alike, from a test body and from `afterAll`, are captured
  * into the payload as `results[].stdout` / `.stderr`, with the process stderr
  * coming back 0 bytes. On a real report the stdout-only scan finds the marker
@@ -150,7 +150,7 @@ export function describeProviderHealthSkips(stats: PwStats): string[] {
  * line carries a brace today. The fix that does remove the class is to stop
  * scraping a stream at all: `PLAYWRIGHT_JSON_OUTPUT_NAME` writes the report to
  * a file and leaves stdout carrying only the line reporter Playwright then adds
- * by itself (verified on 1.58.2).
+ * by itself (verified on 1.58.2 and 1.65.1).
  */
 export function parsePwJson(reportOut: string, fullOutput: string = reportOut): PwStats | null {
   // Playwright's JSON reporter pretty-prints to stdout, so the payload

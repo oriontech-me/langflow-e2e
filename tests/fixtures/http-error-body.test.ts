@@ -229,9 +229,10 @@ test("an error whose message is NOT a string does not throw out of the fixture",
 test("both real Chromium rejection messages survive intact", () => {
   // Two different real strings, and the two halves of this change had been
   // pinning one each without saying so: `#1168` measured "No resource with
-  // given identifier found" on a run stream, while a bodyless response gives
-  // "No data found for resource with given identifier". A redirect gives a
-  // third. All three must reach the log unmangled.
+  // given identifier found" on a run stream, while a body cut off mid-transfer
+  // gives "No data found for resource with given identifier" (so did a bodyless
+  // response, until Chromium 159 started resolving those to "" — #2167). A
+  // redirect gives a third. All three must reach the log unmangled.
   for (const message of [
     "response.text: Protocol error (Network.getResponseBody): No resource with given identifier found",
     "response.text: Protocol error (Network.getResponseBody): No data found for resource with given identifier",

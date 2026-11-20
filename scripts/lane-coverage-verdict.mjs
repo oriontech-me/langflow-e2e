@@ -30,7 +30,9 @@
  * capability reason, one whose provider recovered between the sweep and the run.
  *
  * The substrate is the `skip` annotation Playwright records for
- * `test.skip(condition, description)` — measured on 1.58.2, for both the
+ * `test.skip(condition, description)` — measured on 1.58.2 and unchanged on 1.65.1
+ * (whose release note "now accept only a description" adds the bare-description
+ * form and keeps the conditional one, #2167), for both the
  * suite-level gate (`providerSkipGate`) and the in-body one the parametrized specs
  * use, and distinguishable from `fixme` (no description) and from every other skip
  * reason. `lane-coverage-verdict.test.mjs` pins that against the installed version by

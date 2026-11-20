@@ -28,8 +28,9 @@
 //
 // ## Two creation paths, because `gh` is not always there
 //
-// The daily's `merge` job runs inside `mcr.microsoft.com/playwright:v1.58.2-noble`,
-// which does NOT ship the GitHub CLI (verified in the image, not assumed). A
+// The daily's `merge` job runs inside `mcr.microsoft.com/playwright:v1.65.1-noble`,
+// which does NOT ship the GitHub CLI (verified in the v1.58.2 image, not assumed, and
+// still true of the v1.65.1 Dockerfile, which installs no `gh`). A
 // `gh`-only script would therefore have degraded to "body on disk, exit 0" on
 // every red daily — the silent loss #1012 exists to prevent. So a token, when one
 // is present, creates the issue over the REST API and `gh` is the fallback for a

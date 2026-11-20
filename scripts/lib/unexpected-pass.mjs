@@ -2,7 +2,8 @@
 // (#2009). Playwright reports it as `status: "unexpected"` — the same status as a hard
 // failure — so every consumer that split the report on status alone recorded it as
 // one, and with `error_signature: "unknown"`, because a passing attempt carries no
-// error to take a signature from. Measured on 1.58.2: a `test.fail()` whose body
+// error to take a signature from. Measured on 1.58.2 and unchanged on 1.65.1 (#2167),
+// for a bare `test.fail()` and for `test.fail(true, description)`: a body that
 // passes yields `status: "unexpected"`, `expectedStatus: "failed"` and three attempts
 // of `status: "passed"` with no `error` and an empty `errors[]`.
 //

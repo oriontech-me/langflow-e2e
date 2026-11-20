@@ -476,10 +476,12 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
         // Every branch prints, including the failure (#1432). The catch this
         // replaces swallowed the reason along with the body, so an error whose
         // body could not be READ was indistinguishable in the log from one
-        // whose body was EMPTY. That is not a rare shape: Chromium does not
-        // retain a zero-length body, so `response.text()` REJECTS on any
-        // bodyless response rather than resolving to `""` (measured — see
-        // `http-error-body.ts`). An unread body is unknown, not absent (#1012).
+        // whose body was EMPTY. It was the commonest shape on Chromium 145, which
+        // rejected `response.text()` on every bodyless response; Chromium 159
+        // resolves those to `""`, and what still rejects is a body cut off
+        // mid-transfer, a response whose page moved on, or a redirect (measured
+        // on both — see `http-error-body.ts`, #2167). An unread body is unknown,
+        // not absent (#1012).
         //
         // `Promise.resolve().then(...)` rather than `response.text().then(...)`:
         // the `catch` only sees a REJECTION, while the `try` this replaced also

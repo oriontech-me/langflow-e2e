@@ -5,10 +5,13 @@ on:
     branches: [main]
 
 # Every job pins `ubuntu-24.04`, never `ubuntu-latest` (#2318). The label moved to
-# 26.04 on 2026-10-19, where the pinned Playwright (1.58.2, #1734) refuses to install
-# chromium and `sleep` reports its errors in a form a script unit test does not
-# expect, so every PR went red on checks its diff could not reach. Moving these
-# lanes to 26.04 is a decision to take with #2167, not one the label makes.
+# 26.04 on 2026-10-19, where the Playwright then pinned (1.58.2, #1734) refused to
+# install chromium and `sleep` reports its errors in a form a script unit test does
+# not expect, so every PR went red on checks its diff could not reach. #2167 moved
+# Playwright to 1.65.1, which does support 26.04, and kept these pins anyway: the
+# `sleep` difference still stands, and moving a runner image is a change to every
+# tool these jobs call (shell, coreutils, docker, jq), to make on its own and not as
+# a side effect of a Playwright bump.
 jobs:
   typecheck:
     name: TypeScript Check

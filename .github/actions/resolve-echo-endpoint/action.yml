@@ -98,9 +98,9 @@ runs:
 
         # Read the decision with `node`, NOT `jq`. This is the only composite action
         # the containerized lane uses (`daily-stable.yml`, `in_container: true`), and
-        # `mcr.microsoft.com/playwright:v1.58.2-noble` ships no `jq` — its Dockerfile
-        # installs curl/wget/gpg/ca-certificates, nodejs and git/openssh-client, and
-        # nothing else. The four `jq` calls this replaces aborted all four shards of
+        # `mcr.microsoft.com/playwright:v1.65.1-noble` ships no `jq` — its Dockerfile
+        # installs curl/wget/gpg/ca-certificates, nodejs and git/openssh-client/zstd,
+        # and nothing else (read at v1.65.1; v1.58.2 was the same minus zstd). The four `jq` calls this replaces aborted all four shards of
         # the 2026-07-31 daily before its first test, and the failure was invisible:
         # `jq -e . >/dev/null 2>&1` sent `jq: command not found` to /dev/null, so a
         # missing binary was indistinguishable from malformed JSON. `node` needs no

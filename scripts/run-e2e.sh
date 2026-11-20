@@ -438,10 +438,13 @@ case "$USER_HOME" in
   /*) export PATH="$USER_HOME/.local/bin:$PATH" ;;
 esac
 
-# Playwright 1.58.2 does not know Ubuntu 26.04 and refuses to install browsers there.
-# Without this, any browser (re)install on these machines dies and the run ends in
-# globalSetup — see the migration's divergence list, entry 1.
-export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
+# No browser platform override by default (#2167). Playwright 1.58.2 did not know
+# Ubuntu 26.04 and refused to install browsers there, so this script forced
+# `ubuntu24.04-x64` (the migration's divergence list, entry 1). 1.65.1 lists 26.04
+# itself, so these machines now install the native build. The variable is left alone
+# rather than cleared: an operator who needs the old build back sets it, with the
+# architecture suffix (`ubuntu24.04-x64` — without `-x64` it matches no descriptor and
+# silently does nothing), in the unit's environment, and it passes through untouched.
 
 # ---------------------------------------------------------------------------
 # THE DAILY'S SERVICE ENVIRONMENT, MIRRORED

@@ -89,23 +89,37 @@ const DECLARED: KnownHttpDefect = {
 const OTHER_PATH = "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc";
 
 /**
- * The #1432 probes: a monitored 400 with NO body, and one with a body.
+ * The #1432 probes: a monitored 400 whose body is cut off mid-transfer, one with
+ * NO body, and one with a body.
  *
- * MEASURED HERE, and it is the finding rather than a detail — Chromium does not
- * keep a zero-length response body, so `response.text()` on the first one
- * **rejects** with `response.text: Protocol error (Network.getResponseBody): No
- * data found for resource with given identifier`. It does not resolve to `""`.
- * So the branch the fixture used to swallow in silence is not an exotic one: it
- * is what every bodyless response does. Not specific to `400` either — the same
- * holds at 200 / 204 / 404 / 500, with an explicit `content-length: 0`, and for
- * a gzip of the empty string.
+ * MEASURED, on both sides of the #2167 bump, and the bump is the point. On
+ * Playwright 1.58.2 (Chromium 145) Chromium did not keep a zero-length response
+ * body, so `response.text()` on a bodyless response REJECTED with `response.text:
+ * Protocol error (Network.getResponseBody): No data found for resource with given
+ * identifier` — at 200 / 204 / 400 / 404 / 500, with an explicit `content-length:
+ * 0`, and for a gzip of the empty string — as long as the page itself never read
+ * the body, which is how `fetchFromPage` asks (a page that ran
+ * `fetch(u).then(r => r.text())` got `""` on 1.58.2 too, measured in #2167's
+ * review). That made the branch the fixture used
+ * to swallow in silence the commonest one there was, and a bodyless 400 was this
+ * file's probe for it. On 1.65.1 (Chromium 159) every one of those RESOLVES to
+ * `""`: a bodyless error is now reported as `<empty body>`, which is what it is.
  *
- * (It is NOT an explanation of #1424, and an earlier draft of this comment said
- * it was. #1424 is closed — root-caused 2026-08-12, fixed by PR #1441 — and two
- * of the four `400`s it cites did carry bodies. What justifies this fix is the
- * measurement above, plus #1424's own close-out: "it is the reason this took
- * three dailies".)
+ * What still cannot be read, on both versions, is a body that never arrived: the
+ * headers go out, part of the body follows, and the connection dies — a worker
+ * killed mid-response, the wedge this suite already knows. That rejects with the
+ * same `getResponseBody` error on 1.58.2 and 1.65.1, so it is the probe for the
+ * unreadable branch now, and the bodyless 400 has a test of its own pinning the
+ * empty outcome (if Chromium ever stops keeping empty bodies again, that test is
+ * where it shows).
+ *
+ * (Neither is an explanation of #1424, and an earlier draft of this comment said
+ * the bodyless case was. #1424 is closed — root-caused 2026-08-12, fixed by PR
+ * #1441 — and two of the four `400`s it cites did carry bodies. What justified
+ * #1432 was the measurement, plus #1424's own close-out: "it is the reason this
+ * took three dailies".)
  */
+const TRUNCATED_BODY_PATH = "/api/v1/variables/truncated-body";
 const EMPTY_BODY_PATH = "/api/v1/variables/empty-body";
 const WITH_BODY_PATH = "/api/v1/variables/with-body";
 /**
@@ -131,6 +145,14 @@ let origin: string;
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
     const [path, query = ""] = (req.url ?? "").split("?");
+    if (path === TRUNCATED_BODY_PATH) {
+      // Promise 64 bytes, send a few, then drop the connection: the page still
+      // sees the 400 (the headers arrived), and the body is never complete.
+      res.writeHead(400, { "content-type": "application/json", "content-length": "64" });
+      res.write('{"detail":"cut');
+      setTimeout(() => res.socket?.destroy(), 50);
+      return;
+    }
     if (path === EMPTY_BODY_PATH) {
       res.writeHead(400, { "content-type": "application/json" });
       res.end();
@@ -378,14 +400,15 @@ test.describe("fixture declared-known-defect hatch", () => {
       // `🚨 Backend Error` line was followed by silence — indistinguishable from
       // an error whose body was empty, with the reason discarded along with it.
       //
-      // A bodyless 400 is the probe because that is what Chromium refuses to
-      // hand over (see EMPTY_BODY_PATH), so this is the real shape rather than a
-      // contrived one.
+      // The probe is a 400 whose body is cut off mid-transfer, because that is
+      // what Chromium cannot hand over on every version this suite has run (see
+      // TRUNCATED_BODY_PATH). It used to be a bodyless 400, until Chromium 159
+      // started resolving those to "" (#2167).
       const hooked = page as PageWithErrorHooks;
 
       const log = await withCapturedLog(async () => {
         await page.goto(`${origin}/`);
-        expect(await fetchFromPage(hooked, EMPTY_BODY_PATH)).toBe(400);
+        expect(await fetchFromPage(hooked, TRUNCATED_BODY_PATH)).toBe(400);
         await page.waitForTimeout(1000);
       });
 
@@ -413,9 +436,10 @@ test.describe("fixture declared-known-defect hatch", () => {
     async ({ page }) => {
       // The `<empty body>` branch, on this transport rather than a hypothetical
       // one: a bare UTF-8 BOM has length, so Chromium keeps it and `text()`
-      // resolves to `""`. That is the only way the two branches can be told
-      // apart in a real session, and without it the empty branch was reachable
-      // in the unit lane only.
+      // resolves to `""`. On Chromium 145 (Playwright 1.58.2) this was the only
+      // way to reach that branch in a real session, because a truly bodyless
+      // response could not be read at all; the next test covers that case now
+      // that it resolves too.
       const hooked = page as PageWithErrorHooks;
 
       const log = await withCapturedLog(async () => {
@@ -428,6 +452,34 @@ test.describe("fixture declared-known-defect hatch", () => {
       expect(
         log,
         "an empty body must not be reported as one that could not be read",
+      ).not.toMatch(/Response: <could not be read/);
+    },
+  );
+
+  test(
+    "a bodyless error is announced as empty, not as unreadable",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // Measured for #2167: Chromium 159 (Playwright 1.65.1) resolves `text()`
+      // on a zero-length body to `""`, where Chromium 145 rejected it with
+      // `No data found for resource with given identifier` (see
+      // TRUNCATED_BODY_PATH). This pins the current outcome, so a browser that
+      // goes back to discarding empty bodies shows up here as a named failure
+      // instead of silently moving every bodyless 4xx/5xx the page did not read
+      // itself from `<empty body>` to `<could not be read: …>` in the log.
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, EMPTY_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log, "the error itself was still reported").toContain("🚨 Backend Error");
+      expect(log).toContain("Response: <empty body>");
+      expect(
+        log,
+        "a zero-length body was reported as unreadable — the browser stopped keeping empty bodies",
       ).not.toMatch(/Response: <could not be read/);
     },
   );

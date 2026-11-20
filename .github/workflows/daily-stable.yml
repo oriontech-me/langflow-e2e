@@ -54,7 +54,7 @@ jobs:
     # Langflow service is needed: `--list` collects tests, it does not execute them.
     runs-on: ubuntu-24.04
     container:
-      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
     outputs:
       # `matrix` is the strategy.matrix.include array: one entry per shard, each
       # carrying its explicit space-separated spec-file list (issue #936).
@@ -225,7 +225,7 @@ jobs:
     # — the leg that the runners cannot complete (see issue #346). The tag MUST
     # match the pinned @playwright/test version in package.json.
     container:
-      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
 
     services:
       langflow:
@@ -440,7 +440,7 @@ jobs:
       # container: image tag above.
       - name: Verify Playwright version matches the container image
         env:
-          PLAYWRIGHT_VERSION: "1.58.2"
+          PLAYWRIGHT_VERSION: "1.65.1"
         run: |
           NPM_VERSION="$(node -p "require('@playwright/test/package.json').version")"
           if [ "$NPM_VERSION" != "$PLAYWRIGHT_VERSION" ]; then
@@ -451,7 +451,7 @@ jobs:
 
       # No "Install Playwright browsers" step: Chromium ships in the container
       # image. npm ci installs the @playwright/test runner, whose version is
-      # pinned to EXACTLY 1.58.2 in package.json to match the image tag above,
+      # pinned to EXACTLY 1.65.1 in package.json to match the image tag above,
       # so the browser revision lines up. Bump both together when upgrading.
 
       # The async Clipboard API (and other secure-context-gated browser APIs)
@@ -1094,7 +1094,7 @@ jobs:
       issues: write
       contents: write
     container:
-      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
@@ -1990,8 +1990,9 @@ jobs:
         if: always() && (steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.fail_recommended == 'true' || needs.prep.outputs.listing_verified != 'true' || needs.prep.outputs.listing_missing != '[]') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
-          # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
-          # container this job runs in (verified in the image). The script's REST
+          # `gh` is NOT in mcr.microsoft.com/playwright:v1.65.1-noble, which is the
+          # container this job runs in (verified in the v1.58.2 image, and in the
+          # v1.65.1 Dockerfile, which still installs no `gh`). The script's REST
           # path is what works here; without a token it would fall back to `gh`,
           # find none, and leave the umbrella uncreated with only a warning.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
