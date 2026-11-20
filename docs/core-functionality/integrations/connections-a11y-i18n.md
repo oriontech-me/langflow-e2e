@@ -46,8 +46,14 @@ axe's `best-practice` rules are left out. The one they add on this page is
 `page-has-heading-one`, which is about the page shell, and a scan scoped to one surface
 cannot judge a page-level rule.
 
-**Measured result: every surface is clean.** No WCAG A/AA violation on B1, the row menu,
+**Measured result: no definite violation on any surface.** No WCAG A/AA violation on B1, the row menu,
 either step of B2, the B5 field or the B5 popover. So the **known baseline is empty**.
+Only axe's definite violations are judged. Results axe cannot decide (its `incomplete`
+bucket) are recorded as an `axe-needs-review` annotation and never fail the test; on
+1.14.0.dev32 that is `color-contrast` on 1 node in B1, 2 in the Add dialog and 1 on the B5
+connection field. A real
+contrast problem axe cannot decide therefore stays green here and needs a human look.
+
 Two measurements decided how the scans are taken:
 
 - **Animations.** A scan of the Add dialog taken while it still fades in reports
@@ -125,8 +131,10 @@ and the Google actions (5). Untranslated are every Confluence, Discord, GitHub, 
 Jira, Salesforce, ServiceNow, Telegram and WhatsApp component, plus the three Google
 triggers and the three Microsoft triggers.
 
-Korean translates **none**, although `ko` translates 130 of 132 core components. That is
-recorded here as a candidate upstream ticket, not filed.
+Korean translates **none**, and that is upstream policy, not a gap:
+`src/frontend/src/locales/KO_STYLE_GUIDE.md` keeps every `display_name` (component, field and
+output names) in English. Korean translates the display name of only 2 of 132 core components;
+what it does translate is descriptions (130 of 132 core, 78 of 136 `ext:*`). No ticket.
 
 What the test asserts, and why it asserts no more:
 
@@ -207,7 +215,9 @@ key**
 ## Validation criterion *(required)*
 
 - Each scanned surface reports exactly the violations its baseline declares (none today),
-  and every scan applied at least one rule.
+  and every scan applied at least one rule. That count proves the scope was not empty, not
+  that it was the right surface; the scope is bound to the surface by its selector and by
+  waiting for the seeded row first.
 - All 8 catalogs switch the page language, and none renders a raw key on the page, the
   row menu or the Add dialog.
 - Every connector name in every catalog is non-empty and not a raw key. The per-locale

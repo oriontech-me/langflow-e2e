@@ -92,6 +92,12 @@ export interface SurfaceScan {
    * an element no WCAG rule applies to, which would otherwise read as clean.
    */
   rulesApplied: number;
+  /**
+   * Rules axe could not decide on these nodes (its `incomplete` bucket, e.g. a
+   * `color-contrast` over a gradient or partial opacity). Not judged by the
+   * baseline; returned so a caller can record them instead of dropping them.
+   */
+  needsReview: FoundViolation[];
 }
 
 /** Scans the elements matching `include` against the WCAG rule set. */
@@ -105,5 +111,10 @@ export async function scanSurface(page: Page, include: string): Promise<SurfaceS
       targets: v.nodes.map((n) => n.target.join(" ")),
     })),
     rulesApplied: result.passes.length + result.violations.length,
+    needsReview: result.incomplete.map((v) => ({
+      rule: v.id,
+      impact: v.impact ?? null,
+      targets: v.nodes.map((n) => n.target.join(" ")),
+    })),
   };
 }

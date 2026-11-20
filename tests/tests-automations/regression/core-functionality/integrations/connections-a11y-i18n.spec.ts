@@ -70,8 +70,10 @@ test.describe("Connections — accessibility and locale coverage", () => {
 
   /**
    * Whether each catalog translates ANY connector component, verified both ways.
-   * Measured on 1.14.0.dev32: 22 of the 86 in each of the six, none in Korean
-   * (which translates 130 of 132 core components). The exact untranslated set is
+   * Measured on 1.14.0.dev32: 22 of the 86 in each of the six, none in Korean.
+   * Korean is by design: upstream's `src/frontend/src/locales/KO_STYLE_GUIDE.md`
+   * keeps every `display_name` in English (it translates 2 of 132 core component
+   * names; its 130 are descriptions). The exact untranslated set is
    * recorded as an annotation instead, because it moves with every family upstream
    * translates.
    */
@@ -135,6 +137,14 @@ test.describe("Connections — accessibility and locale coverage", () => {
   async function expectBaseline(page: Page, surface: string, include: string): Promise<void> {
     const scan = await scanSurface(page, include);
     expect(scan.rulesApplied, `${surface}: the scan applied no rule, so its scope matched nothing`).toBeGreaterThan(0);
+    if (scan.needsReview.length > 0) {
+      // Undecided results are recorded, never judged: the baseline covers definite
+      // violations only (measured: color-contrast on 1 node in B1, 2 in the dialog, 1 in B5).
+      test.info().annotations.push({
+        type: "axe-needs-review",
+        description: `${surface}: ${scan.needsReview.map((r) => `${r.rule} (${r.targets.length})`).join(", ")}`,
+      });
+    }
     expect(baselineMessage(surface, baselineVerdict(scan.violations, BASELINE[surface])), surface).toBe("");
   }
 
@@ -325,7 +335,7 @@ test.describe("Connections — accessibility and locale coverage", () => {
         expect(refs.length, "the manifest names connector components").toBeGreaterThan(0);
 
         for (const locale of LOCALES) {
-          // The full catalog, ~0.5 MB, eight times in a row: measured past the 20 s
+          // The full catalog, ~4 MB decompressed, eight times in a row: measured past the 20 s
           // request default on a loaded machine, so it gets a minute.
           const res = await request.get("/api/v1/all", {
             headers: { ...headers, "Accept-Language": locale },
