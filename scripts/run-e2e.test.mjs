@@ -1285,12 +1285,19 @@ test("the tunnel is the default, and refusing it is opt-in", () => {
   assert.equal(r.stdout.trim(), "1 0");
 });
 
-test("the browser platform override carries the architecture suffix", () => {
-  // Without `-x64` the value matches no descriptor at all, and the override silently
-  // does nothing — the install then fails on Ubuntu 26.04 and the run dies in
-  // globalSetup, which reads as a product failure.
-  const r = sourced(`echo "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE"`);
-  assert.match(r.stdout.trim(), /^ubuntu\d+\.\d+-x64$/);
+test("the script forces no browser platform override, and passes an operator's through", () => {
+  // Since #2167 (Playwright 1.65.1, which lists Ubuntu 26.04) the VM installs the
+  // native build: a forced `ubuntu24.04-x64` default would keep it on the old one.
+  // The escape hatch is the operator's own value, which must reach Playwright as given
+  // — with its `-x64` suffix, without which it matches no descriptor and does nothing.
+  const run = (pre) =>
+    spawnSync(BASH, ["-c", `${pre}\nsource ${JSON.stringify(SCRIPT)}\necho "[\${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE-<unset>}]"`], {
+      encoding: "utf8",
+      cwd: REPO_ROOT,
+      env: { ...process.env, TARGET_SSH: "unused-in-sourced-tests" },
+    });
+  assert.equal(run("unset PLAYWRIGHT_HOST_PLATFORM_OVERRIDE").stdout.trim(), "[<unset>]");
+  assert.equal(run("export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64").stdout.trim(), "[ubuntu24.04-x64]");
 });
 
 test("TARGET_SSH has no default, and the run refuses without it", () => {
