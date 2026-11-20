@@ -124,14 +124,23 @@ guarantee that holds is not hidden behind the one that does not:
   present. It **turns red the day upstream fixes it**, which is the signal to
   remove the `test.fail()`. Because Playwright fails a `test.fail()` test that
   unexpectedly passes, the assertion stays falsifiable in both directions.
-  One phantom token is enough for the expected failure. Measured with `curl`, in
-  three six-writer rounds, 4, 5 and 5 of the 5 losers carried one. The assertion
-  also failed in all four Playwright runs of the original combined test.
+  One phantom token is enough for the expected failure. Measured with `curl` on
+  `1.14.0.dev7`, in three six-writer rounds, 4, 5 and 5 of the 5 losers carried
+  one. The assertion also failed in all four Playwright runs of the original
+  combined test.
 
   One case `test.fail()` cannot tell apart: a race where every loser happens to
-  report the right token. That has not been observed (0 of 10 two-writer races,
-  0 of those six-writer runs). If it appears, the test reports an unexpected
-  pass, and the response is to re-measure, not to retry.
+  report the right token. On `1.14.0.dev7` that was never observed (0 of 10
+  two-writer races, 0 of those six-writer runs). **On `1.14.0.dev32` it is the
+  common outcome of a bare race**: under raw `curl` the #2525 review saw a phantom
+  token in only 1 of 23 and 1 of 6 races. The Playwright test still reproduces the
+  defect every time (20 of 20 in the review, 4 of 4 for #2525), presumably because
+  its writers fire from one `request` context in the same tick, which keeps the
+  race tighter than separate `curl` processes; that is inferred, not measured.
+  **The risk:** if the harness ever races the way bare `curl` does (a slower host,
+  a change in how `race()` dispatches), the test sees a clean race, `test.fail()`
+  reports an unexpected pass, and the VM daily auto-removes `@stable` with the
+  defect still live. If that happens, re-measure before treating it as a fix.
 
 ---
 

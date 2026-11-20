@@ -157,9 +157,7 @@ and a lookup that labels the Playground sessions a trigger started. The contract
 
 `@stable`: no provider key, no model, no network egress, and every write is scoped to this run — rows by
 id, the bulk by `trigger_ids` or by a provider name unique to the run, the second user created and
-deleted per worker. `@stable` enters in this PR. Test 3's `@stable` was auto-removed by the
-2026-11-19 VM daily (`9ffa25ce0`) when its LE-3454 declaration passed unexpectedly; #2525 restored it
-with the declaration, after the fix measured in step 6. The operator routes ship in `1.14.0.dev1` (upstream #15786), but the
+deleted per worker. `@stable` enters in this PR. The operator routes ship in `1.14.0.dev1` (upstream #15786), but the
 `TriggerRead` this file pins — 28 keys, `last_error_code` among them — is upstream #16132's, first in
 `1.14.0.dev16`. Measured on `1.14.0.dev14`: 27 keys (no `last_error_code`), so tests 1 and 3 fail there
 while 2, 4 and 5 pass. The floor is therefore `1.14.0.dev16`, the contract asserted rather than the
