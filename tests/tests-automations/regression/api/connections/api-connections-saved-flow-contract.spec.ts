@@ -25,6 +25,7 @@ import {
   type CreatedConnection,
   createConnectionViaApi,
 } from "../../../../helpers/integrations/create-connection";
+import { providerOutageMessage } from "../../../../helpers/integrations/provider-outage";
 import { PlaygroundPage } from "../../../../pages/PlaygroundPage";
 
 // The saved-flow contract of Dedicated Integrations (#2298).
@@ -696,6 +697,21 @@ test.describe("Connections — the saved-flow contract", () => {
     return traces;
   }
 
+  /** The typed integration codes the run's trace recorded (`error_code` in its logs). */
+  async function traceErrorCodes(
+    request: APIRequestContext,
+    flowId: string,
+  ): Promise<string[]> {
+    const traces = await tracesOf(request, flowId);
+    const res = await request.get(`/api/v1/monitor/traces/${traces[0].id}`, {
+      headers: superHeaders,
+    });
+    expect(res.status()).toBe(200);
+    // The root span repeats its child's output, so the codes are de-duplicated.
+    const text = await res.text();
+    return [...new Set([...text.matchAll(/"error_code":"([a-z-]+)"/g)].map((m) => m[1]))];
+  }
+
   test(
     "a run the provider rejects surfaces no token in what it records",
     { tag: ["@stable", "@api", "@integrations"] },
@@ -726,10 +742,12 @@ test.describe("Connections — the saved-flow contract", () => {
           expectNoSentinel(stream, [sentinels], "the build stream");
           const errors = errorEvents(stream);
           // `scope-missing` or `connection-unresolved` here would mean the run never
-          // reached Google; a transport code would mean the lane has no egress.
+          // reached Google. An outage code (Google down, no egress, rate-limited)
+          // still fails, but names the outage so it classifies as infra (#1128).
+          const codes = errors.map((e) => e.code);
           expect(
-            errors.map((e) => e.code),
-            stream.slice(0, 600),
+            codes,
+            providerOutageMessage("google", codes) ?? stream.slice(0, 600),
           ).toEqual(["auth-expired"]);
           expect(errors[0].text).toBe(AUTH_EXPIRED_TEXT);
         });
@@ -845,6 +863,14 @@ test.describe("Connections — the saved-flow contract", () => {
           await playground.sendMessage("list my files");
           const card = page.getByTestId("error-card").first();
           await expect(card).toBeVisible({ timeout: RUN_TIMEOUT_MS });
+          // The run's typed code, read where it was recorded, so an outage fails
+          // naming the outage rather than as a text mismatch on the card (#1128).
+          const codes = await traceErrorCodes(request, flowId!);
+          expect(
+            codes,
+            providerOutageMessage("google", codes) ??
+              "the run recorded the provider's verdict",
+          ).toEqual(["auth-expired"]);
           await card.getByRole("button").first().click();
           await expect(card).toContainText(AUTH_EXPIRED_TEXT);
           expectNoSentinel(
