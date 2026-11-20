@@ -88,6 +88,15 @@ the upstream defect. While the defect stands, the test is expected to fail. When
 fixes it, Playwright reports the test as passing unexpectedly, which turns the run red.
 That is the signal to remove `test.fail()` and close the reference.
 
+**Owner (#2525).** Still reproduces on `1.14.0.dev32`: the declared test failed as expected,
+with the key found in the draft. `looksLikeVariableName` in
+`src/frontend/src/utils/reactflowUtils.ts` still reads `/^[A-Z][A-Z0-9_]*$/i` on
+`release-1.14.0` and on `main`. No upstream report exists — a search of `langflow-ai/langflow`
+issues finds none — so "upstream report pending" is still literally true. #2345, which the
+declaration cites, is this spec's own (closed) authoring issue, not a tracker for the defect.
+When an upstream report is filed, cite it in the `test.fail()` description and annotation,
+here, and in the QA-CHECKLIST bullet.
+
 ---
 
 ## Tags *(required)*

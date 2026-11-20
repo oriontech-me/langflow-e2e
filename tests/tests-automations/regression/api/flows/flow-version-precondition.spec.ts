@@ -301,8 +301,10 @@ test.describe("Flows API — save precondition (multi-edit safety)", () => {
       // Known product defect, measured 10/10 with two writers on 1.14.0.dev7: a
       // concurrent loser's 409 names a token the row never held, and the UI sends it
       // back as the overwrite If-Match. See "Known product defect" in the spec doc.
-      // When this starts passing, the defect is fixed: drop test.fail().
-      test.fail(true, "#2341: concurrent 409 reports a phantom current_version_token");
+      // When this starts passing, the defect is fixed: drop test.fail(). #2341 is
+      // this spec's closed authoring issue; the defect has no upstream report yet
+      // (re-checked for #2525 on 1.14.0.dev32), so the spec doc names the owner gap.
+      test.fail(true, "Known defect, no upstream report yet (#2341): concurrent 409 reports a phantom current_version_token");
       apiCoverage.declare([
         "POST /api/v1/flows/",
         "GET /api/v1/flows/{flow_id}/version-state",

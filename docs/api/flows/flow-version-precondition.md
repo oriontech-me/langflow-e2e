@@ -75,6 +75,13 @@ by `api-flows-versions.spec.ts`, so this spec only reads the one entry that
 
 This was found by test 5 on `1.14.0.dev7`. It is **not filed yet**.
 
+**Owner (#2525).** Still reproduces on `1.14.0.dev32`: the declared test failed as expected
+in each run. No upstream report exists — a search of `langflow-ai/langflow` issues finds
+none, and no Jira key is cited anywhere in this repo. #2341, which the declaration cites, is
+this spec's own (closed) authoring issue, not a tracker for the defect. So the declaration has
+no open owner until an upstream report is filed; when it is, cite that ticket in the
+`test.fail()` description, here, and in the QA-CHECKLIST bullet.
+
 **What fails.** When two or more writers race with the same token, the winner
 answers `200` and every loser answers `409` with a correct `expected_version_token`.
 The loser's `current_version_token`, however, is a UUID that **never was the row's
