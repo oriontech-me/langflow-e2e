@@ -123,11 +123,18 @@ Two things must be true, and the alarm tells them apart:
   refused"*.
 - **The VM has a credential that git over HTTPS and the API accept.** The destination
   no longer takes SSH, and since 2026-11-17 a personal token lasts at most 7 days, so a
-  token on the VM is not a fix (#2490). The credential is a GitHub App's. The third
-  message above means this part is missing: stay in temporary mode until it is
-  installed.
+  token on the VM is not a fix (#2490). The credential is a GitHub App's, and what the
+  VM holds is the App's private key, not a token: an installation token expires one
+  hour after it is minted, so the VM has to mint a fresh one before each use. That
+  minting does not exist yet (#2518). The third message above means this part is
+  missing: stay in temporary mode until it is installed.
 
-Then undo step 2 before the next daily. On the VM, as root:
+**Do not run the block below until #2518 is merged and the VM mints its own token.**
+An installation token pasted into `/root/.e2e-secrets` passes both checks, because it
+is valid when they run, and is refused within the hour: the next daily would then die
+in its credential preflight with temporary mode already gone (#2519).
+
+When both hold, undo step 2 before the next daily. On the VM, as root:
 
 ```bash
 cd /root/e2e-qa
@@ -169,8 +176,10 @@ the block again; every step is safe to repeat.
 Both checks run as root in this shell, which is not quite the daily's environment. If
 the git check fails here while the daily's credential is wired somewhere this shell
 does not see, the block errs on the safe side and keeps temporary mode. The API check
-reads the token as the daily does, `GITHUB_TOKEN` or `GH_TOKEN` from
-`/root/.e2e-secrets`, so that is where the App's token has to be. The saved
+reads the token as the daily does today, `GITHUB_TOKEN` or `GH_TOKEN` from
+`/root/.e2e-secrets`. That only proves a token works at the moment it runs; with the
+App, the token is minted from its key, and #2518 decides how this check reads it. The
+saved
 `/root/e2e-qa.origin.before`, left by outages before #2490, is removed on the way.
 
 Do not restore `/root/e2e-qa.origin.before` if it is there: it holds the SSH URL the
