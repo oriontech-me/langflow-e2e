@@ -12,12 +12,15 @@ import type { APIRequestContext } from "@playwright/test";
 import {
   bulkTriggers,
   createTrigger,
+  deleteTrigger,
   listTriggers,
   newestFirst,
+  pinTrigger,
   runProvider,
   TRIGGER_PROVIDER_MAX_LENGTH,
   TRIGGER_PROVIDER_PATTERN,
   TRIGGER_READ_KEYS,
+  updateTrigger,
 } from "./trigger-api";
 
 test("runProvider: matches the server's provider pattern and length, whatever the label", () => {
@@ -82,7 +85,15 @@ function fakeRequest(status: number, body: unknown) {
     calls.push({ method, url, options });
     return { status: () => status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) };
   };
-  return { request: { get: respond("GET"), post: respond("POST") } as unknown as APIRequestContext, calls };
+  return {
+    request: {
+      get: respond("GET"),
+      post: respond("POST"),
+      patch: respond("PATCH"),
+      delete: respond("DELETE"),
+    } as unknown as APIRequestContext,
+    calls,
+  };
 }
 
 test("createTrigger: throws with the status and the server's body on a refusal", async () => {
@@ -114,4 +125,40 @@ test("listTriggers: sends the query as params, never concatenated into the path"
 test("bulkTriggers: a 403 for a non-superuser is an error, not an empty result", async () => {
   const { request } = fakeRequest(403, { detail: "The user doesn't have enough privileges" });
   await assert.rejects(bulkTriggers(request, {}, "pause", { trigger_ids: ["t1"] }), /answered 403/);
+});
+
+test("updateTrigger: PATCHes the id with the body as given, explicit nulls included", async () => {
+  const { request, calls } = fakeRequest(200, { id: "t1" });
+  await updateTrigger(request, { Authorization: "Bearer x" }, "t1", { name: "n", flow_version_id: null });
+  assert.deepEqual(calls[0], {
+    method: "PATCH",
+    url: "/api/v1/triggers/t1",
+    options: { headers: { Authorization: "Bearer x" }, data: { name: "n", flow_version_id: null } },
+  });
+});
+
+test("updateTrigger: a 422 is an error carrying the server's entry", async () => {
+  const { request } = fakeRequest(422, { detail: [{ type: "value_error", loc: ["body", "name"] }] });
+  await assert.rejects(updateTrigger(request, {}, "t1", { name: "" }), /answered 422, expected 200.*value_error/);
+});
+
+test("deleteTrigger: resolves on a 204 with an empty body", async () => {
+  const { request, calls } = fakeRequest(204, "");
+  assert.equal(await deleteTrigger(request, {}, "t1"), undefined);
+  assert.equal(calls[0].method, "DELETE");
+  assert.equal(calls[0].url, "/api/v1/triggers/t1");
+});
+
+test("deleteTrigger: a 404 is an error, not a silent success", async () => {
+  const { request } = fakeRequest(404, { detail: "Trigger not found" });
+  await assert.rejects(deleteTrigger(request, {}, "t1"), /answered 404, expected 204/);
+});
+
+test("pinTrigger: an unpin sends flow_version_id: null, never an empty body", async () => {
+  // An empty body is a 422 on this route (the field is required), so leaving the
+  // key out to mean "unpin" would turn every unpin into a refusal.
+  const { request, calls } = fakeRequest(200, { id: "t1", flow_version_id: null });
+  await pinTrigger(request, {}, "t1", null);
+  assert.equal(calls[0].url, "/api/v1/triggers/t1/pin");
+  assert.deepEqual((calls[0].options as { data: unknown }).data, { flow_version_id: null });
 });

@@ -90,6 +90,30 @@ export interface TriggerCreate {
   config?: Record<string, unknown>;
   /** 1–20; the dispatcher dead-letters an event at this many attempts. */
   max_attempts?: number;
+  /** 1–100 events of this trigger in flight at once. */
+  concurrency_limit?: number;
+  session_policy?: "per_event" | "shared";
+  /** `deployment` is stored but not dispatched, and needs `deployment_id`. */
+  binding_target?: "flow" | "deployment";
+  deployment_id?: string;
+  /** A version of THIS trigger's flow; another flow's is a `404`. */
+  flow_version_id?: string;
+}
+
+/**
+ * `TriggerUpdate`: every field optional, and omission leaves it alone. An explicit
+ * `null` is how a nullable reference is cleared; the server refuses it on the rest.
+ */
+export interface TriggerUpdate {
+  name?: string;
+  config?: Record<string, unknown>;
+  connection_id?: string | null;
+  binding_target?: "flow" | "deployment";
+  deployment_id?: string | null;
+  flow_version_id?: string | null;
+  session_policy?: "per_event" | "shared";
+  concurrency_limit?: number;
+  max_attempts?: number;
 }
 
 export interface TriggerBulkRequest {
@@ -190,6 +214,41 @@ export async function listTriggers(
 ): Promise<TriggerRead[]> {
   const res = await request.get("/api/v1/triggers", { headers, params: query });
   return read<TriggerRead[]>(`GET /api/v1/triggers ${JSON.stringify(query)}`, res, 200);
+}
+
+/** `PATCH /api/v1/triggers/{id}` → `200` (#2303). */
+export async function updateTrigger(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  triggerId: string,
+  data: TriggerUpdate,
+): Promise<TriggerRead> {
+  const res = await request.patch(`/api/v1/triggers/${triggerId}`, { headers, data });
+  return read<TriggerRead>(`PATCH /api/v1/triggers/${triggerId} ${JSON.stringify(data)}`, res, 200);
+}
+
+/** `DELETE /api/v1/triggers/{id}` → `204` with no body (#2303). */
+export async function deleteTrigger(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  triggerId: string,
+): Promise<void> {
+  await read<undefined>(`DELETE /api/v1/triggers/${triggerId}`, await request.delete(`/api/v1/triggers/${triggerId}`, { headers }), 204);
+}
+
+/**
+ * `POST /api/v1/triggers/{id}/pin` → `200` (#2303). `null` unpins. The body is
+ * always sent: the field is required, so an empty body is a `422`, never an unpin.
+ */
+export async function pinTrigger(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  triggerId: string,
+  flowVersionId: string | null,
+): Promise<TriggerRead> {
+  const route = `/api/v1/triggers/${triggerId}/pin`;
+  const res = await request.post(route, { headers, data: { flow_version_id: flowVersionId } });
+  return read<TriggerRead>(`POST ${route} ${flowVersionId}`, res, 200);
 }
 
 /** `POST /api/v1/triggers/{id}/{enable|disable}` → `200`. */
