@@ -1650,6 +1650,10 @@
 - [x] An empty list says how to get a connection (from `1.14.0.dev23` the picker's own **Add connection** button, langflow#16332, #2413), the list stays cached until **Refresh**, and a failed list says *"Could not load connections."* once react-query's retries run out (~31 s). Both lists are mocked: the superuser lists every user's rows, so neither state is reachable on a shared instance → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] Picking a row writes its handle into the saved flow (`template.connection.value`), a reload keeps it and **Clear** writes `""`; a handle whose connection was deleted stays on the node with a *"not found"* badge → core-functionality/integrations/connector-node-picker.spec.ts
 - [x] `GET /api/v1/projects/{id}/deployment-snapshot` (the backend half of the publication preflight, B10) lists each handle the project's saved flows bind once, with the sorted union of its nodes' `required_scopes`, skips an unbound connector node and needs no existing connection; an empty project answers `422 snapshot_empty`. The issue's `schema_version: 4` is the **artifact manifest's**, built by a function no OSS route calls. Since `1.14.0.dev9` (upstream #15892, #2372) the snapshot carries its own `schema_version` plus `required_variable_declarations`; only a variable declaration raises it (to `7`), and declarations are emitted only under `LANGFLOW_DEPLOYMENT_TYPED_VARIABLES_ENABLED` (off by default, set by no lane), so the snapshot reads `1` with no declaration, asserted with the exact twelve-key body → api/connections/api-connections-surface-details.spec.ts
+- [x] A flow export — `POST /api/v1/flows/download/` and the project zip — keeps the handle and carries neither of the bound connection's two planted sentinels; a **malformed** handle (`google/a/b`, `Google/Bad Name`, `nohandle`) is nulled on export only — save, read-back and `POST /api/v1/flows/upload/` keep it as sent, refuting #2298's "nulled on import" premise (#2298) → api/connections/api-connections-saved-flow-contract.spec.ts
+- [x] A round trip keeps the class the manifest names: `microsoft.outlook.send`'s `component_ref` is `OutlookSendComponent` while the catalog entry's `name` is `OutlookSendMail`, and the re-imported node keeps the type key, `component_class_name`, `code_hash`, code and handle, and its stored code builds as "Outlook: Send Mail" to `connection-unresolved` before the send could run (the server keys on neither the type key nor the class: Search's code under the same node builds as "Outlook: Search Mail"); imported by **another user**, the handle stops at `connection-unresolved` until that user owns a same-name row, then resolves it (`scope-missing`, which the exporter's scoped row could not produce) — never the exporter's (#2298) → api/connections/api-connections-saved-flow-contract.spec.ts
+- [x] A run the **provider** rejects (a planted token with the right scope, Google answers `401`) reads `auth-expired`, flips the connection to `expired`, and leaves no sentinel in the build stream, `monitor/messages`, `monitor/builds`, `monitor/transactions`, the trace list and detail, the Playground's error card or the trace view; needs tracing on and egress to Google (#2298) → api/connections/api-connections-saved-flow-contract.spec.ts
+- [x] Field guards: a `ConnectionRefInput(tool_mode=True)` and one defaulting to another provider's handle are refused at code validation (`400`); in Tool Mode no tool takes `connection` as an argument even when the saved template flags it; a saved foreign-provider handle is kept and exported (it is well-formed) and refused at run before any resolution (#2298) → api/connections/api-connections-saved-flow-contract.spec.ts
 - [ ] Export and import preserving `ext:<provider>:<Class>@official` across a substrate change — the contract that lets MCP ⇄ SDK ⇄ REST swap without the user reopening the flow
 - [x] Cross-user isolation: another user's connection answers `404 "Connection not found"` on `PATCH`, `test`, `health`, `revoke`, `oauth/start` and `DELETE`, byte for byte what a missing id answers (ownership is not an existence oracle), the row is unchanged and absent from the other user's list; an instance row is visible to every user, but only a superuser may create, change or remove it (`403`, exact messages) → api/connections/api-connections-ownership.spec.ts
 - [x] Ownership powers: only the owner may **widen** `allow_non_interactive` (the superuser gets `403` *"Only the connection owner may allow non-interactive use."*) while anyone with write access may clear it; in OSS the superuser checks, renames, revokes and deletes another user's row and the owner sees each change; the write limit is keyed per **user** (A's 31st write answers `429` with `retry-after: 60`, B's write from the same client is accepted); deleting a user (`202`, asynchronous since langflow#15470) removes its connections → api/connections/api-connections-ownership.spec.ts
@@ -1905,9 +1909,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 155 | 132 | 0 | 3 | 20 |
+| `integrations/` — Dedicated Integrations | 159 | 136 | 0 | 3 | 20 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **928** | **773 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **932** | **777 (83%)** | **91 (10%)** | **17 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1923,7 +1927,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 886 `test()` calls carrying the `@stable` tag, distributed across 317 spec
+> 893 `test()` calls carrying the `@stable` tag, distributed across 318 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1983,6 +1987,13 @@
 - [x] a KB connector ingest fails closed without the opt-in, before any ingestion run exists → `api-connections-resolution-non-interactive.spec.ts`
 - [x] an owned connection shadows an instance connection with the same handle, and a refused one never falls back to it → `api-connections-resolution-non-interactive.spec.ts`
 - [x] a Slack app-level token is refused outside the trigger listener, interactive or not → `api-connections-resolution-non-interactive.spec.ts`
+- [x] an export keeps the handle and carries no credential, as a flow and as a project → `api-connections-saved-flow-contract.spec.ts`
+- [x] a malformed handle is nulled on export, and kept on save and on import → `api-connections-saved-flow-contract.spec.ts`
+- [x] a round trip keeps the class the manifest names, and the stored code builds as that component → `api-connections-saved-flow-contract.spec.ts`
+- [x] imported by another user, the handle binds to that user's connection, never the exporter's → `api-connections-saved-flow-contract.spec.ts`
+- [x] a run the provider rejects surfaces no token in what it records → `api-connections-saved-flow-contract.spec.ts`
+- [x] the Playground and the trace view show the provider's refusal, not the token → `api-connections-saved-flow-contract.spec.ts`
+- [x] a connection field is never a tool argument, and a handle naming another provider is refused → `api-connections-saved-flow-contract.spec.ts`
 - [x] a saved registration is listed without its secrets, used by the next consent at once, replaced with its secret kept, and removed → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] an invalid registration is refused with a message that names the problem, and never echoes what was sent → `api-connections-saved-oauth-registrations.spec.ts`
 - [x] an ID the server environment defines stays the environment's: saved as overridden, not used, and removable without touching it → `api-connections-saved-oauth-registrations.spec.ts`
