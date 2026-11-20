@@ -222,7 +222,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
         // (#1005). This closes that one window and is not proven to be the whole cause:
         // without it, 3 of 5 runs timed out waiting for the copy's PATCH at a host load
         // of 23–33 on 10 cores; with it, 22 of 24 passed, and the 2 failures (one
-        // 6-worker, fully parallel batch) left no trace. See #2469.
+        // 6-worker, fully parallel batch) left no trace. Not @stable until #2523 explains it.
         await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
           timeout: PERMISSIONS_GATE_TIMEOUT_MS,
         });

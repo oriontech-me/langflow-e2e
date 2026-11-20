@@ -82,7 +82,7 @@ leaves the original alone*.** Measured for #2469 on `1.14.0.dev32` under the dai
 host load of 23–33 on 10 cores. The Duplicate test failed 3 of 5 there, timing out on the
 copy's `PATCH`. The writability wait added for it (test 2) did not settle it: 22 of 24
 afterwards, with 2 failures in one 6-worker, fully parallel batch that left no trace. It
-stays out until that cause is found, owned by an open issue that names this file.
+stays out until that cause is found, owned by #2523.
 
 ---
 
