@@ -18,6 +18,7 @@ import { servedVersionAtLeast } from "../../../../helpers/other/served-version";
 import { deliverSignedWebhook, jsonBody } from "../../../../helpers/triggers/sign-webhook";
 
 // The trigger node's own controls: badge, Enabled, background-run consent, webhook secret (#2449).
+// Tests 5-6 put two of the nine 1.14 providers on the node: Jira (poll) and GitHub (push) (#2502).
 // Spec doc: docs/core-functionality/integrations/trigger-node-controls.md
 //
 // Each control reads or writes the trigger row flow-save reconciliation keeps for
@@ -34,6 +35,16 @@ test.describe("Triggers on the canvas — the trigger node's controls", () => {
   const WEBHOOK_NODE = "InboundWebhookTrigger-n01";
   const CALENDAR_NODE = "GoogleCalendarTrigger-n01";
   const INBOUND_ROW = "triggers_inbound webhook_draggable";
+  // The 1.14 providers' tests (#2502), measured on this build.
+  const PROVIDERS_SINCE = "1.14.0.dev34";
+  const JIRA_CREATED = "ext:jira:JiraOnIssueCreatedTriggerComponent@official";
+  const JIRA_NAME = "Jira: On Issue Created";
+  const JIRA_NODE = "JiraTrigger-n01";
+  const JIRA_SCOPES_MISSING = "The source connection is missing required scopes: offline_access, read:jira-work.";
+  const GITHUB_ISSUE = "ext:github:GitHubOnIssueTriggerComponent@official";
+  const GITHUB_NAME = "GitHub: On Issue";
+  const GITHUB_NODE = "GitHubTrigger-n01";
+  const PUSH_NEEDS_INGRESS = "Push delivery requires a supported public HTTPS ingress on this deployment.";
 
   const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const flowIds: string[] = [];
@@ -47,6 +58,7 @@ test.describe("Triggers on the canvas — the trigger node's controls", () => {
     state: string;
     reason: string | null;
     connection_id: string | null;
+    last_error?: string | null;
   }
 
   test.beforeEach(async ({ request }) => {
@@ -147,8 +159,12 @@ test.describe("Triggers on the canvas — the trigger node's controls", () => {
   }
 
   /** One list read: the list shares a 60/min read bucket with the node's own connection query. */
-  async function readConnection(request: APIRequestContext, connectionId: string): Promise<ConnectionRead> {
-    const res = await request.get("/api/v1/connections?provider=google", { headers });
+  async function readConnection(
+    request: APIRequestContext,
+    connectionId: string,
+    provider = "google",
+  ): Promise<ConnectionRead> {
+    const res = await request.get(`/api/v1/connections?provider=${provider}`, { headers });
     const text = await res.text();
     expect(res.status(), text).toBe(200);
     const row = (JSON.parse(text) as ConnectionRead[]).find((c) => c.id === connectionId);
@@ -500,6 +516,145 @@ test.describe("Triggers on the canvas — the trigger node's controls", () => {
 
         expect(await deliverSignedWebhook(request, path, first, jsonBody({ text: `old ${run}` })), "old secret").toBe(404);
         expect(await deliverSignedWebhook(request, path, second, jsonBody({ text: `new ${run}` })), "new secret").toBe(202);
+      });
+    },
+  );
+
+  /** A credential-free connection: none of the nine 1.14 providers accepts a planted one (#2501). */
+  async function pendingConnection(request: APIRequestContext, provider: string, label: string) {
+    const connection = await createConnectionViaApi(request, headers, {
+      label: `trg_${label}`,
+      providerKey: provider,
+      credentials: null,
+    });
+    connections.push(connection);
+    return connection;
+  }
+
+  test(
+    "a Jira trigger node lists only Jira connections, and shows the server's refusals one gate at a time",
+    { tag: ["@stable", "@components", "@integrations"] },
+    async ({ page, request }) => {
+      test.skip(
+        !(await servedVersionAtLeast(request, PROVIDERS_SINCE)),
+        `the 1.14 providers' trigger refusals were measured on ${PROVIDERS_SINCE}`,
+      );
+      const jira = await pendingConnection(request, "jira", "jira");
+      const github = await pendingConnection(request, "github", "jiragh");
+      const flowId = await createFlow(request, "jira", {
+        nodes: [{ id: JIRA_NODE, type: JIRA_CREATED, values: { connection: `jira/${jira.name}`, project: "DEMO" } }],
+        edges: [],
+      });
+      const trigger = await triggerOf(request, flowId);
+      expect(trigger, "a poll kind binds its pending connection at save").toMatchObject({
+        kind: "jira.issue_created",
+        state: "pending",
+        connection_id: jira.id,
+      });
+
+      await test.step("the picker offers the Jira connection and no other provider's", async () => {
+        await openFlowById(page, flowId);
+        await expect(badge(page)).toHaveAttribute("data-state", "pending", { timeout: 20_000 });
+        await expect(badge(page)).toHaveAccessibleName("Trigger state: Pending. Show details.");
+
+        await page.getByTestId("value-connection-connectionref_connection_ref_connection").click();
+        const own = page.getByTestId(`connection-option-jira/${jira.name}`);
+        await expect(own, "the Jira connection is offered, marked pending").toContainText("Pending");
+        await expect(page.getByTestId(`connection-option-github/${github.name}`)).toHaveCount(0);
+        await expect(
+          page.locator('[data-testid^="connection-option-"]:not([data-testid^="connection-option-jira/"])'),
+          "no option of another provider",
+        ).toHaveCount(0);
+        await page.keyboard.press("Escape");
+        await expect(own).toHaveCount(0);
+      });
+
+      await test.step("consent is off and blocks Enabled; turning it on writes it on the Jira connection", async () => {
+        await expect(consentSwitch(page)).toHaveAttribute("aria-checked", "false");
+        await expect(enabledSwitch(page)).toHaveAttribute("aria-disabled", "true");
+        await expect(enabledSwitch(page)).toHaveAccessibleDescription("Allow background runs first.");
+
+        const patch = page.waitForRequest((req) => isPath(req, "PATCH", `/api/v1/connections/${jira.id}`));
+        await consentSwitch(page).click();
+        await patch;
+        await expect(consentSwitch(page)).toHaveAttribute("aria-checked", "true");
+        await expect(enabledSwitch(page)).not.toHaveAttribute("aria-disabled", "true");
+        expect((await readConnection(request, jira.id, "jira")).allow_non_interactive).toBe(true);
+      });
+
+      await test.step("Enabled is refused at the next gate, the missing scopes, and nothing arms", async () => {
+        // The one deliberate 409 of this test; every response before it was monitored.
+        (page as unknown as { allowHttpErrors: () => void }).allowHttpErrors();
+        const enable = page.waitForResponse((res) => isPath(res.request(), "POST", `/api/v1/triggers/${trigger.id}/enable`));
+        await enabledSwitch(page).click();
+        const refused = await enable;
+        expect(refused.status(), await refused.text()).toBe(409);
+        await expect(errorToast(page)).toHaveText(`Couldn't resume ${JIRA_NAME}`);
+        await expect(page.locator("li", { hasText: JIRA_SCOPES_MISSING })).toBeVisible();
+        await expect(enabledSwitch(page)).toHaveAttribute("aria-checked", "false");
+        await expect(badge(page)).toHaveAttribute("data-state", "pending");
+        expect((await readTrigger(request, trigger.id)).state).toBe("pending");
+      });
+    },
+  );
+
+  test(
+    "a GitHub trigger node says at save time that push delivery needs public ingress, and a resume is refused with that reason",
+    { tag: ["@stable", "@components", "@integrations"] },
+    async ({ page, request }) => {
+      test.skip(
+        !(await servedVersionAtLeast(request, PROVIDERS_SINCE)),
+        `the 1.14 providers' trigger refusals were measured on ${PROVIDERS_SINCE}`,
+      );
+      const github = await pendingConnection(request, "github", "github");
+      const flowId = await createFlow(request, "github", {
+        nodes: [
+          {
+            id: GITHUB_NODE,
+            type: GITHUB_ISSUE,
+            values: { connection: `github/${github.name}`, repository: "octocat/hello-world" },
+          },
+        ],
+        edges: [],
+      });
+      const trigger = await triggerOf(request, flowId);
+      expect(trigger, "the save stops at the delivery gate, before the connection is bound").toMatchObject({
+        kind: "github.issue",
+        state: "pending",
+        reason: "config_invalid",
+        connection_id: null,
+        last_error: PUSH_NEEDS_INGRESS,
+      });
+
+      await test.step("the node reads Needs attention and offers no consent, since no connection is bound", async () => {
+        await openFlowById(page, flowId);
+        await expect(badge(page)).toContainText("Needs attention", { timeout: 20_000 });
+        await expect(enabledSwitch(page), "the control the consent switch sits beside").toBeVisible();
+        await expect(consentSwitch(page)).toHaveCount(0);
+      });
+
+      await test.step("the popover says the settings are invalid, why, and that the transport is push", async () => {
+        await badge(page).click();
+        await expect(popover(page)).toContainText(
+          "The trigger's settings are invalid. Fix them on the node and save the flow.",
+        );
+        await expect(page.getByTestId("trigger-last-error")).toHaveText(PUSH_NEEDS_INGRESS);
+        await expect(detail(page, "Transport")).toHaveText("Push");
+        await page.keyboard.press("Escape");
+        await expect(popover(page)).toHaveCount(0);
+      });
+
+      await test.step("Enabled is refused with the same reason, and nothing arms", async () => {
+        // The one deliberate 409 of this test; every response before it was monitored.
+        (page as unknown as { allowHttpErrors: () => void }).allowHttpErrors();
+        const enable = page.waitForResponse((res) => isPath(res.request(), "POST", `/api/v1/triggers/${trigger.id}/enable`));
+        await enabledSwitch(page).click();
+        const refused = await enable;
+        expect(refused.status(), await refused.text()).toBe(409);
+        await expect(errorToast(page)).toHaveText(`Couldn't resume ${GITHUB_NAME}`);
+        await expect(page.locator("li", { hasText: PUSH_NEEDS_INGRESS })).toBeVisible();
+        await expect(enabledSwitch(page)).toHaveAttribute("aria-checked", "false");
+        expect((await readTrigger(request, trigger.id)).state).toBe("pending");
       });
     },
   );

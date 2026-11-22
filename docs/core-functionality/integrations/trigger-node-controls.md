@@ -2,9 +2,10 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/trigger-node-controls.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev28`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev34`)
 
-Owning issue: #2449 (the 1.14 triggers and connectors batch). The node's events drawer and payload tree
+Owning issue: #2449 (the 1.14 triggers and connectors batch). Tests 5–6 are #2502's canvas half: two of the nine
+providers added in 1.14, whose API half is `docs/api/triggers/api-triggers-provider-kinds.md`. The node's events drawer and payload tree
 are the sibling file, `docs/core-functionality/integrations/trigger-events-drawer.md`, from the same issue.
 The API side of webhook ingress (signing, the uniform `404`, `test`, `replay`) is
 `docs/api/triggers/api-triggers-webhook-ingress.md`. Placement rules (one trigger per flow) are
@@ -53,6 +54,31 @@ contract under test:
    - a delivery signed with the value the dialog showed answers `202`.
 
    After *Rotate secret* in the UI, the old value is refused (`404`) and the new one accepted.
+8. **A 1.14 provider's node offers only its own provider's connections, and its refusals reach the
+   node.** Measured on a Jira *On Issue Created* node (`ext:jira:JiraOnIssueCreatedTriggerComponent@official`),
+   bound to a `pending` Jira connection while the same user also has a `pending` GitHub connection:
+   - The connection picker lists `connection-option-jira/<name>`, marked *Pending*, and **no** GitHub option.
+   - The badge reads *Pending*. *Enabled* is blocked with *"Allow background runs first."*.
+   - *Allow background runs* writes `allow_non_interactive: true` on the Jira connection. *Enabled* then
+     goes live, and a click is refused by the server (`409`). The toast reads *"Couldn't resume Jira: On
+     Issue Created"* with *"The source connection is missing required scopes: offline_access,
+     read:jira-work."*
+   - The switch stays off, and the badge and the row stay `pending`.
+9. **A push kind says at save time why it cannot arm here.** A GitHub *On Issue* node
+   (`ext:github:GitHubOnIssueTriggerComponent@official`) bound to a `pending` GitHub connection saves a row
+   whose `reason` is `config_invalid`, with no connection bound. So the node:
+   - shows no *Allow background runs* switch;
+   - reads *Needs attention* on the badge.
+
+   The popover reads:
+   - *"The trigger's settings are invalid. Fix them on the node and save the flow."*;
+   - the server's `last_error` (`trigger-last-error`), *"Push delivery requires a supported public HTTPS
+     ingress on this deployment."*;
+   - the transport *Push*.
+
+   *Enabled* is live. A click is refused, toasting *"Couldn't resume GitHub: On Issue"* with the same
+   sentence, and the row stays `pending`. The lanes have no public HTTPS ingress, so this is the refusal
+   every GitHub, GitLab and WhatsApp trigger gets on them, whatever its connection.
 
 ### Measured on `1.14.0.dev28`
 
@@ -104,6 +130,9 @@ contract under test:
   second user viewing the owner's flow, which the auto-login canvas cannot do.
 - The WhatsApp *Pause/Resume* button that replaces the switch for that provider, which needs a WhatsApp
   connection.
+- Each of the nine 1.14 providers on the canvas. Tests 5–6 take one poll kind (Jira) and one push kind (GitHub); what
+  every kind's `enable` answers is asserted through the API in `api-triggers-provider-kinds.md`. A `ready`
+  connection for any of them needs a provider account (#2503).
 - A failing pause. Every pause refusal is either a race or needs a `dead` trigger, and the switch maps a
   dead trigger to *resume*.
 
@@ -205,16 +234,54 @@ editor (`unmountEditorForCleanup`), then deletes the flows and connections by id
    secret right away. …"*) before confirming, and a new value after. A delivery signed with the old value
    → `404`; one signed with the new value → `202`.
 
+### 5. A Jira trigger node lists only Jira connections, and shows the server's refusals one gate at a time
+
+Tests 5–6 skip below `1.14.0.dev34`, the build they were measured on. Their connections are `pending` rows
+(`createConnectionViaApi` with `credentials: null`): none of the nine providers accepts a planted credential.
+
+1. Create a `pending` Jira connection and a `pending` GitHub connection. Open a flow holding one Jira *On
+   Issue Created* node bound to the Jira one (`project: DEMO`). Expect the badge to read *Pending*, and the row
+   `pending` with that connection bound.
+2. Open the node's connection picker. Expect exactly one option, `connection-option-jira/<name>`, reading
+   *Pending*, and no option for the GitHub connection. Close it.
+3. Expect `trigger-node-consent` off and `trigger-node-enabled` `aria-disabled="true"`, with *"Allow
+   background runs first."*
+4. Click *Allow background runs*. Expect `PATCH /api/v1/connections/{id}` and the connection to read
+   `allow_non_interactive: true`.
+5. Click *Enabled*. Expect:
+   - `POST …/enable` → `409`;
+   - a toast *"Couldn't resume Jira: On Issue Created"* listing *"The source connection is missing required
+     scopes: offline_access, read:jira-work."*;
+   - the switch still off, the badge still *Pending*, the row still `pending`.
+
+### 6. A GitHub trigger node says at save time that push delivery needs public ingress, and a resume is refused with that reason
+
+1. Open a flow holding one GitHub *On Issue* node bound to a `pending` GitHub connection
+   (`repository: octocat/hello-world`). Expect:
+   - the row `pending` with `reason: config_invalid`, no connection bound, and `last_error` *"Push delivery
+     requires a supported public HTTPS ingress on this deployment."*;
+   - the badge reading *Needs attention*;
+   - no `trigger-node-consent`.
+2. Open the popover. Expect the reason line *"The trigger's settings are invalid. Fix them on the node and
+   save the flow."*, `trigger-last-error` with the server's `last_error`, and the transport *Push*.
+3. Click *Enabled*. Expect:
+   - `POST …/enable` → `409`;
+   - a toast *"Couldn't resume GitHub: On Issue"* listing the same sentence;
+   - the switch off, and the row still `pending`.
+
 ---
 
 ## Validation criterion *(required)*
 
 Tests 1–4 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev28`, and once at
-`--workers=2` together with the events-drawer file, with:
+`--workers=2` together with the events-drawer file. All six pass three consecutive times against `1.14.0.dev34`
+(#2502), with:
 
 - every state the UI shows read back from the server (the row's `state`/`reason`, the connection's
   `allow_non_interactive`, the ingress `ingress_url`), never asserted from the UI alone;
 - the refusal toast driven by a real `409`, not a mocked one;
+- the absent GitHub option (test 5) beside the Jira option that the same picker does list, and the absent
+  consent switch (test 6) beside test 5's present one;
 - the secret accepted when signed with the value the dialog showed, and the rotated-out value refused;
 - zero `🚨 Backend Error`: the one deliberate `409` and the two `404` probes go through
   `page.allowHttpErrors()` (test 2) or the `request` fixture (test 4);
@@ -226,6 +293,11 @@ Tests 1–4 pass three consecutive times at `--retries=0 --workers=1` against `1
 
 - A running Langflow **1.14** instance (`1.14.0.dev26` or later) at `PLAYWRIGHT_BASE_URL`, auto-login,
   with the Google bundle installed (the nightly ships it) and trigger dispatch running (the default).
+  Tests 5–6 also need the Jira and GitHub bundles (`1.14.0.dev34` or later), #2498's fake Jira site, and no public
+  HTTPS ingress (true on every lane).
+- `src/backend/base/langflow/services/triggers/providers/github/config.py` and
+  `src/backend/base/langflow/services/triggers/providers/jira/collector.py` — the two providers' trigger
+  configuration.
 - `src/frontend/src/components/core/triggers/TriggerNodeBadge.tsx` — the badge and the details popover.
 - `src/frontend/src/components/core/triggers/TriggerNodeControls.tsx` — unsaved text, Enabled, consent.
 - `src/frontend/src/components/core/triggers/TriggerStatusSummary.tsx` — the reason line and the inline

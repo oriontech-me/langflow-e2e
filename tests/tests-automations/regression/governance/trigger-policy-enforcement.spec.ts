@@ -5,6 +5,7 @@ import { type CatalogFlowSpec, createCatalogFlow, fetchComponentCatalog } from "
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
 import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-for-cleanup";
+import { type CreatedConnection, createConnectionViaApi } from "../../../helpers/integrations/create-connection";
 import {
   buildBundleWrite,
   bundleV2Sets,
@@ -32,7 +33,8 @@ import {
 // refuses to run unless the bundle is pristine. Live rows of a denied kind are paused
 // by the policy refresh worker (every 10 s by default), not by the write, so every
 // convergence below is polled. The dispatch branch races that refresh, and test 3
-// aligns with it first: see the spec doc's "Measured" section.
+// aligns with it first: see the spec doc's "Measured" section. Test 4 applies the same
+// ceiling to the trigger kinds the nine 1.14 providers bring (#2502).
 test.describe.configure({ mode: "serial" });
 
 test.describe("governance — which trigger kinds may run", () => {
@@ -47,9 +49,12 @@ test.describe("governance — which trigger kinds may run", () => {
   const POLL = { intervals: [1_000] };
   const WEBHOOK_NODE = "InboundWebhookTrigger-p01";
   const SCHEDULE_NODE = "ScheduleTrigger-p01";
+  // The 1.14 provider kinds (#2502), measured on this build.
+  const PROVIDERS_SINCE = "1.14.0.dev34";
 
   const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const flowIds: string[] = [];
+  const connections: CreatedConnection[] = [];
   let auth = "";
   let headers: Record<string, string> = {};
   let snapshot: PolicyBundleV2Sets | undefined;
@@ -83,10 +88,14 @@ test.describe("governance — which trigger kinds may run", () => {
   test.afterEach(async ({ page, request }) => {
     await unmountEditorForCleanup(page);
     const failures: string[] = [];
+    // Flows first: deleting a flow takes its trigger rows, which reference the connection.
     for (const id of flowIds.splice(0)) {
       await deleteFlow(request, id, { headers }).catch((error) => failures.push(String(error)));
     }
-    expect(failures, "every flow this test created is deleted").toEqual([]);
+    for (const connection of connections.splice(0)) {
+      await connection.deleteConnection(request).catch((error) => failures.push(String(error)));
+    }
+    expect(failures, "every flow and connection this test created is deleted").toEqual([]);
   });
 
   test.afterAll(async ({ request }) => {
@@ -341,6 +350,101 @@ test.describe("governance — which trigger kinds may run", () => {
         expect(rows[0].details).toEqual(
           expect.objectContaining({ kind: "inbound_webhook", purpose: "dispatch", flow_id: webhook.flowId }),
         );
+      });
+    },
+  );
+
+  test(
+    "approving one Jira kind hides every other provider kind, pauses their pending triggers, and refuses enabling one with the policy's reason",
+    { tag: ["@destructive", "@api", "@integrations", "@governance"] },
+    async ({ page, request }) => {
+      test.skip(
+        !(await servedVersionAtLeast(request, PROVIDERS_SINCE)),
+        `the 1.14 provider kinds were measured on ${PROVIDERS_SINCE}`,
+      );
+      const pending = async (provider: string) => {
+        const connection = await createConnectionViaApi(request, headers, {
+          label: `trgpolicy_${provider}`,
+          providerKey: provider,
+          credentials: null,
+        });
+        connections.push(connection);
+        return connection;
+      };
+      /** One provider trigger node, bound to an owned `pending` connection, and the row its save reconciled. */
+      const providerTrigger = async (label: string, type: string, values: Record<string, unknown>) => {
+        const flowId = await createFlow(request, label, { nodes: [{ id: `ProviderTrigger-${label}`, type, values }], edges: [] });
+        const trigger = await nodeTrigger(request, flowId);
+        expect(trigger.state).toBe("pending");
+        return trigger;
+      };
+
+      // Tests 1-3 leave a ceiling behind, under which these kinds are not in the catalog to build from.
+      await setTriggerKinds(request, null);
+      const jira = await pending("jira");
+      const github = await pending("github");
+      const created = await providerTrigger("created", "ext:jira:JiraOnIssueCreatedTriggerComponent@official", {
+        connection: `jira/${jira.name}`,
+        project: "DEMO",
+      });
+      const updated = await providerTrigger("updated", "ext:jira:JiraOnIssueUpdatedTriggerComponent@official", {
+        connection: `jira/${jira.name}`,
+        project: "DEMO",
+      });
+      const githubIssue = await providerTrigger("github", "ext:github:GitHubOnIssueTriggerComponent@official", {
+        connection: `github/${github.name}`,
+        repository: "octocat/hello-world",
+      });
+      const paletteFlow = await createFlow(request, "jira palette", { nodes: [{ id: "ChatOutput-p04", type: "ChatOutput" }], edges: [] });
+
+      await test.step("approving one Jira kind leaves exactly it and Schedule in the catalog", async () => {
+        await setTriggerKinds(request, ["jira.issue_created", "schedule"]);
+        const res = await request.get("/api/v1/all", { headers });
+        expect(res.status()).toBe(200);
+        const all = (await res.json()) as Record<string, Record<string, { metadata?: { trigger_kind?: string } }>>;
+        const kinds = Object.entries(all)
+          .flatMap(([category, components]) =>
+            Object.values(components ?? {}).map((component) => [category, component?.metadata?.trigger_kind] as const),
+          )
+          .filter(([, kind]) => typeof kind === "string")
+          .map(([category, kind]) => `${kind}@${category}`)
+          .sort();
+        expect(kinds).toEqual(["jira.issue_created@jira", "schedule@triggers"]);
+      });
+
+      await test.step("the sidebar finds the approved Jira kind and not its sibling", async () => {
+        await openFlowById(page, paletteFlow);
+        await searchSidebar(page, "jira");
+        await expect(page.getByTestId("jira_jira: on issue created_draggable")).toBeVisible({ timeout: 20_000 });
+        await expect(page.getByTestId("jira_jira: on issue updated_draggable")).toHaveCount(0);
+        await expect(page.getByTestId("jira_jira: on issue status changed_draggable")).toHaveCount(0);
+      });
+
+      await test.step("the refresh pauses the denied kinds' pending rows and leaves the approved one", async () => {
+        await expectPausedByPolicy(request, updated.id);
+        await expectPausedByPolicy(request, githubIssue.id);
+        expect((await getTrigger(request, headers, created.id)).state, "an approved kind is left alone").toBe("pending");
+      });
+
+      await test.step("enabling a denied kind over its own connection is the policy's 403, and is audited", async () => {
+        await expectPolicyRefusal(await enableResponse(request, updated.id));
+        const rows = await policyDenials(request, updated.id);
+        expect(rows, "the refresh's pause and the refused enable each write one").toHaveLength(2);
+        for (const row of rows) {
+          expect(row.result).toBe("deny");
+          expect(row.details).toEqual(expect.objectContaining({ kind: "jira.issue_updated", purpose: "enable" }));
+        }
+      });
+
+      await test.step("control: the approved kind gets past the policy to its own first gate", async () => {
+        const res = await enableResponse(request, created.id);
+        const text = await res.text();
+        expect(res.status(), text).toBe(409);
+        expect(JSON.parse(text).detail).toEqual({
+          code: "background_runs_not_allowed",
+          message: "Turn on Allow background runs for this source connection.",
+        });
+        expect(await policyDenials(request, created.id), "the policy never refused it").toEqual([]);
       });
     },
   );

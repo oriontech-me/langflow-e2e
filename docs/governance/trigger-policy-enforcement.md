@@ -2,9 +2,10 @@
 
 **File:** `tests/tests-automations/regression/governance/trigger-policy-enforcement.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev28`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev34`)
 
-Owning issue: #2451 (the 1.14 triggers and connectors batch). The integration half of the same bundle,
+Owning issue: #2451 (the 1.14 triggers and connectors batch). Test 4 is #2502's: the policy on the trigger kinds the
+nine 1.14 providers bring (`docs/api/triggers/api-triggers-provider-kinds.md`). The integration half of the same bundle,
 read through API v2, is the sibling `docs/governance/integration-policy-v2.md`. The audit rows an owner's
 and an operator's trigger actions write are `docs/api/triggers/api-triggers-audit.md`; this file asserts
 the one audit row a policy writes, `trigger:policy_denied`. Upstream: #16333 (first tag `v1.14.0.dev23`).
@@ -33,6 +34,25 @@ approves only the kinds it names. The contract under test:
    the palette, but a trigger the policy paused stays paused until its owner resumes it.
 7. **Older writers keep the facet.** A `PUT /api/v1/policy-bundle` that leaves `approved_trigger_kinds`
    out keeps the active value.
+8. **A provider's trigger kinds obey the same ceiling, each on its own** (#2502, measured on `1.14.0.dev34`).
+   Approving `["jira.issue_created", "schedule"]` has three effects:
+   - `GET /api/v1/all` keeps exactly two trigger components, *Jira: On Issue Created* in the `jira` category and
+     *Schedule*. Every other provider kind leaves its own category, including *Jira: On Issue Updated* beside
+     the one approved.
+   - The sidebar search for *jira* finds *On Issue Created* and not *On Issue Updated*.
+   - Within one refresh, the `pending` rows of the denied kinds (`jira.issue_updated`, `github.issue`) read
+     `paused` / `policy_blocked`. The approved kind's row is left `pending`.
+
+   Enabling a denied kind whose node is bound to the owner's own `pending` connection answers the policy's
+   `403`, before any of the connection's own gates. It writes a `trigger:policy_denied` row with
+   `purpose: enable` and the kind. The approved kind, bound the same way, gets past the policy and is refused
+   at its own first gate (`409 background_runs_not_allowed`), which is the control that the `403` is the
+   policy's.
+
+   Measured, not asserted: when the handle names **no** connection, `enable` answers
+   `409 trigger_connection_not_owned` even for a denied kind. The handle is resolved under the admission lock
+   before the policy is read. That order is an implementation detail rather than a contract, so the test
+   binds real connections.
 
 ### Measured on `1.14.0.dev28`
 
@@ -80,8 +100,10 @@ approves only the kinds it names. The contract under test:
   - the callback URL needs `LANGFLOW_TRIGGER_INGRESS_ORIGIN` set to a public HTTPS origin.
 
   The polling triggers (Jira, Confluence, ServiceNow, Salesforce) and Discord's gateway need a tenant
-  too. The kinds asserted here are the two core ones, `inbound_webhook` and `schedule`, which need
-  none.
+  too, to be armed. Tests 1–3 use the two core kinds, `inbound_webhook` and `schedule`, which need
+  none. Test 4 covers what needs no tenant for the provider kinds: hiding them, pausing their `pending` rows,
+  and refusing their enable. Pausing a provider trigger that is `active`, and a dispatch refused under a
+  provider kind, both need a `ready` connection (#2503).
 - **An Enterprise narrowing hook** (`governance_blocked`, an approval or quota refusal that is not the
   kind ceiling). The OSS build registers none.
 - **A policy source that becomes unavailable**, which fails closed for a configured trigger facet. A
@@ -150,12 +172,34 @@ refresh poll the trigger row every second, up to 20 s.
 4. Expect the event to end `failed` with error `policy_blocked`, the webhook trigger to read `paused` /
    `policy_blocked`, and exactly one `trigger:policy_denied` row for it, with `purpose: dispatch`.
 
+### 4. Approving one Jira kind hides every other provider kind, pauses their pending triggers, and refuses enabling one with the policy's reason
+
+Skips below `1.14.0.dev34`, the build it was measured on. The connections are the superuser's own `pending` rows
+(`createConnectionViaApi`, `credentials: null`), deleted by id after the test.
+
+1. Reset `approved_trigger_kinds` to `null`: tests 1–3 leave a ceiling under which these kinds are not in the
+   catalog to build from. Then create three flows, each with one provider trigger node bound to a `pending`
+   connection of its provider: *Jira: On Issue Created*, *Jira: On Issue Updated* (both `project: DEMO`) and
+   *GitHub: On Issue* (`repository: octocat/hello-world`). Each saves one `pending` row.
+2. Write `approved_trigger_kinds: ["jira.issue_created", "schedule"]` (the order the server answers). Expect `GET /api/v1/all` to carry
+   exactly two components with a `trigger_kind`: `jira.issue_created` in `jira`, and `schedule` in
+   `triggers`.
+3. Open a flow holding only a Chat Output and search the sidebar for *jira*. Expect the *On Issue Created*
+   row and no *On Issue Updated* row.
+4. Wait for the refresh. Expect the *Updated* and *GitHub* rows `paused` / `policy_blocked` with the policy's
+   message, and the *Created* row still `pending`.
+5. Enable the *Updated* trigger. Expect `403` `policy_blocked`, and exactly two `trigger:policy_denied` rows for
+   it, one for the refresh's pause and one for the refused enable. Both read `deny`, `kind: jira.issue_updated`,
+   `purpose: enable`.
+6. Enable the *Created* trigger. Expect `409` `background_runs_not_allowed`, its own first gate, and no
+   policy-denied row for it.
+
 ---
 
 ## Validation criterion *(required)*
 
 Tests 1–3 pass three consecutive times at `--retries=0 --workers=1` with `PW_DESTRUCTIVE=1` against
-`1.14.0.dev28`, with:
+`1.14.0.dev28`. All four pass three consecutive times against `1.14.0.dev34` (#2502), with:
 
 - every denial asserted by the server's own answer: the `403` body, the row's `state`, `reason`,
   `last_error_code` and `last_error`, the event's `error`, and the audit row;
@@ -186,6 +230,9 @@ Tests 1–3 pass three consecutive times at `--retries=0 --workers=1` with `PW_D
 - `src/backend/base/langflow/api/v1/authz_audit.py` — the audit read.
 - `src/lfx/src/lfx/components/triggers/inbound_webhook_trigger.py` and
   `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the two core trigger components.
+- `src/backend/base/langflow/services/triggers/service.py` and
+  `src/backend/base/langflow/services/triggers/locking.py` — the order of `enable`'s gates (test 4).
+- The Jira and GitHub bundles (`1.14.0.dev34` or later) and #2498's fake Jira site, for test 4.
 - `tests/helpers/governance/policy-state.ts`, `tests/helpers/triggers/trigger-api.ts`,
   `tests/helpers/flows/build-catalog-flow.ts`, `tests/helpers/flows/open-flow-by-id.ts`,
   `tests/helpers/flows/unmount-editor-for-cleanup.ts`, `tests/helpers/flows/delete-flow.ts` and
