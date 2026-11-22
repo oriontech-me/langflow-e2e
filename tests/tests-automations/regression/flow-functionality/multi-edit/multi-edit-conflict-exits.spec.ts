@@ -8,8 +8,9 @@ import {
 } from "../../../../helpers/flows/build-catalog-flow";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { CANVAS_TIMEOUT_MS, openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { PERMISSIONS_GATE_TIMEOUT_MS } from "../../../../helpers/flows/permissions-gate";
+import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 
 // Multi-edit safety (upstream #14903 / #15824): each exit of the "Review Version Changes"
 // dialog promises where the viewer's work ends up, and every promise is checked on the
@@ -24,7 +25,23 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
 
   const createdFlowIds: string[] = [];
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }, testInfo) => {
+    // Leave the editor BEFORE deleting: an editor open over a deleted flow keeps
+    // polling `GET /flows/{id}/events`, and each 404 is logged as a backend error
+    // (three in one 6-worker batch, #2523). On a failure the page is kept first,
+    // because CI's only-on-failure screenshot is taken after this hook and would
+    // otherwise show `about:blank`.
+    if (testInfo.status !== testInfo.expectedStatus) {
+      try {
+        await testInfo.attach("page-at-teardown", {
+          body: await page.screenshot({ fullPage: true }),
+          contentType: "image/png",
+        });
+      } catch {
+        // The page may already be gone; the deletes below are what matter.
+      }
+    }
+    await unmountEditorForCleanup(page);
     const authToken = await getAuthToken(request);
     for (const id of createdFlowIds) {
       await deleteFlow(request, id, {
@@ -197,7 +214,7 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
 
   test(
     "Duplicate Flow puts the viewer's work in a new flow and leaves the original alone",
-    { tag: ["@workspace", "@database", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
       const ctx = await raiseConflict(page, request);
       const before = await getFlow(request, ctx);
@@ -215,14 +232,19 @@ test.describe("Multi-edit safety — the conflict dialog's exits", () => {
         const id = (await res.json()).id as string;
         createdFlowIds.push(id);
         await expect(page).toHaveURL(new RegExp(`/flow/${id}`));
-        await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({ timeout: 60_000 });
-        // The copy is reached by an in-app navigation, not through openFlowById, so its
-        // writability gate is taken here: the editor is read-only while the copy's
-        // permissions load, and a drag in that window is swallowed with no request
-        // (#1005). This closes that one window and is not proven to be the whole cause:
-        // without it, 3 of 5 runs timed out waiting for the copy's PATCH at a host load
-        // of 23–33 on 10 cores; with it, 22 of 24 passed, and the 2 failures (one
-        // 6-worker, fully parallel batch) left no trace. Not @stable until #2523 explains it.
+        // The copy is reached by an in-app navigation, not through openFlowById, so the
+        // writability gate is taken here, in two steps whose order is the fix (#2523).
+        // Until the copy is loaded no flow is current: `flow_name` is empty and
+        // `menu_bar_display` is ENABLED, because useIsFlowReadOnly(undefined) is false.
+        // An enabled header alone therefore proves nothing, and that is how the old wait
+        // let a drag through. Once the header shows the copy's name, the copy's
+        // permissions query is running, and the header stays disabled until it answers.
+        // A drag before that is swallowed with no request (#1005). Measured with that
+        // response held 4 s: the enabled-only wait timed out on the copy's PATCH, and this
+        // one passed.
+        await expect(page.getByTestId("flow_name")).toHaveText(`${ctx.name} (copy)`, {
+          timeout: CANVAS_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
           timeout: PERMISSIONS_GATE_TIMEOUT_MS,
         });
