@@ -1,6 +1,6 @@
 # Workflows v2 — the job lifecycle
 
-**Last validated:** Langflow 1.13.0.dev7 — `langflowai/langflow-nightly@sha256:080f47f85f4788f321b63ce5fc82920ea499407ce0f89d67a93b5dbd54675535`, the digest `:latest` resolves to (`docker inspect --format '{{index .RepoDigests 0}}'`). Same version the nine #1784 measurement dispatches ran against.
+**Last validated:** Langflow 1.14.0.dev35 — `langflowai/langflow-nightly@sha256:a2f75e01e05dfecba01bc54bde43bdbf38b6e21e9b322666a2f657cef0d08fa9`, the digest `:latest` resolves to (`docker inspect --format '{{index .RepoDigests 0}}'`). Re-measured for #2216, which redesigned Test 4's declaration; Tests 1–3 and 5 were last measured on 1.13.0.dev7, the version the nine #1784 dispatches ran against.
 
 ---
 
@@ -30,10 +30,11 @@ Three of the four axes below are green on the measured build. The fourth is **re
 
 No **functional** tag applies, following the `api/flows/` family: `api-run-with-tweaks`, `api-run-flow`, `api-flows-crud` and `api-key-expiry-enforcement` all carry cross-cutting tags only, because the tag table's functional axis names product areas (playground, agents, MCP…) and this is the transport layer under all of them. `@api` marks the layer; `@regression` is what #1575 asks for — every axis here pins a specific upstream fix.
 
-**No `@stable`.** Two independent reasons, and the first is the disqualifying one:
+**All five tests are `@stable`.** Tests 1, 2, 3 and 5 were promoted by #1786 after nine 3/3-green `manual.yml` dispatches. Test 4 was promoted with them, quarantined by #2216 (`test.fixme`, `@stable` removed) and restored by #2216's redesign.
 
-- **Test 4 is declared failing** (`test.fail()`) against a live product defect. Even declared, it does not belong in a scheduled lane: the day upstream lands the fix it starts reporting *"expected to fail but passed"*, and that alarm should reach a reviewer on a PR, not open a `daily-failure` issue at 05:00.
-- The rest is a new spec awaiting a validation cycle, so its bullets are `[-]`.
+This doc used to argue that Test 4 does not belong in a scheduled lane: when the fix lands, the *"expected to fail but passed"* alarm should reach a reviewer on a PR, not open a `daily-failure` issue. #1786 overruled that, for a reason the argument missed: the PR lane selects specs by import graph, so it runs this file only when a PR touches it. Without a scheduled lane, nothing would run Test 4 on the day upstream fixes the defect. The daily is the lane where the fix alarm can actually fire.
+
+That only works if the declaration is deterministic. A declaration that loses the race now and then turns a day with no change into a red day, which is the #2216 flake. See *The sync defect* and the *Validation criterion*.
 
 **Why Test 4 is `test.fail()` rather than a plain red.** The assertions are identical either way — `test.fail()` inverts the *verdict*, never the assertion, so nothing is weakened. What it buys is the half a plain red does not have: **the fix becomes detectable**. A permanent red is a signal that decays — it fails every run, reviewers learn its name, and the day it starts passing nobody notices. Declared failing, the fix arrives as a *new* red (`expected to fail but passed`) asking for the annotation back.
 
@@ -80,6 +81,15 @@ GET  /api/v2/workflows?job_id=<that job>        ← the obvious next call
 
 Reproduced 15/15 through the spec. It **self-heals in 250–463 ms** — median 434 ms, 12 of 12 cold jobs, each on its own freshly created flow — so a caller that polls converges and a caller that reads once loses the session *and* every output. The window is narrow, which is what makes the ordering of the two calls a design constraint rather than a detail (see *Validation criterion*).
 
+**The race is sometimes won, and that is what #2216 is about.** The 15/15 figure did not hold over time. On the QA VM lane, the single-job version of Test 4 passed its first attempt on two dailies (`1.13.0.dev16` on 2026-09-18 and `1.13.0.dev35` on 2026-10-07), so a declared-failing test went red on days when nothing had changed. Re-measured on `1.14.0.dev35` (2026-11-22, local Docker, one worker):
+
+| Measurement | Defect reproduced | Race won |
+|---|---|---|
+| The single-job Test 4, `--repeat-each=30 --retries=0` | 26 / 30 | 4 / 30 (13 %) |
+| A probe running the same POST → GET pair, 5 fresh flows × 20 jobs | 89 / 100 | 11 / 100 (11 %) |
+
+The wins in the probe are spread out. There are no consecutive wins, and the job's position on its flow makes no difference (job 1 won 2 of 5 times, later positions 0–2 of 5). So each job is an independent draw with a win rate of about 11 %. A submit takes a median 64 ms and the read-back 20 ms, so one pair costs under 100 ms. The defect is still live on `1.14.0.dev35`; the wins are not an upstream fix.
+
 Mechanism, read from `langflow/api/v2/workflow.py` inside the image (the `COMPLETED` branch): with the flag off `job_metadata` is `null`, so `effective_session_id = flow_id_str`; `job.result` is `null`, so the primary path is skipped; `reconstruct_workflow_response_from_job_id` then raises `ValueError("No vertex builds found for job_id …")` because the `vertex_build` rows have not committed yet, and the `except` arm returns an empty response carrying the flow id. The reconstruction itself is **correct** — a later `GET` on the same job returns the submitted session and the outputs, and the stored blob carries `session_id` at `results.message.data.session_id`, exactly where `_recover_session_id` looks.
 
 What rules out *"eventual consistency, working as intended"*: **the same response body asserts `status: "completed"` while reporting no outputs**, and `mode=background` answers correctly on its first completed `GET`. A caller cannot distinguish this from a run that genuinely produced nothing.
@@ -123,11 +133,17 @@ Delete the shared flow plus every flow the batch tests created, each by id, in n
 
 **Test 4 — a completed sync run answers its own status query with what it just returned** *(expected red)*
 
-1. `POST /api/v2/workflows` with `{flow_id, input_value: "ping", session_id: <unique>, mode: "sync"}`. Assert `200`, `status === "completed"`, `session_id` equals the submitted session, and `outputs` carries the Chat Output content. *These are the premise: the run finished and the API said so.*
-2. `GET /api/v2/workflows?job_id=<job_id>` **once**, immediately — the call a client makes next.
-3. Assert `status === "completed"` — it is, which is what makes the rest a contradiction rather than a timing question.
-4. Assert `session_id` equals the submitted session and is **not** the flow id. **Fails today.**
-5. Assert `outputs` is non-empty. **Fails today.**
+The title is unchanged since #1575 even though the test now runs 10 jobs: the daily history and the `@stable` orphan reconciler both match tests by title.
+
+1. Run **10** sync jobs one after another. For each one, with a unique `session_id`:
+   - `POST /api/v2/workflows` with `{flow_id, input_value: "ping", session_id: <unique>, mode: "sync"}`;
+   - read its `job_id`, and `GET /api/v2/workflows?job_id=<job_id>` **once**, immediately: the call a client makes next.
+
+   Nothing else happens between a submit and its read-back. Every assertion is deferred until all 10 pairs have answered, and the next pair starts as soon as the previous read-back returns.
+2. Record, as a test annotation, how many of the 10 read-backs came back degraded (`session_id` not the submitted one, or no Chat Output). The count is computed before any assertion runs, so it is reported even when the test fails at the first job.
+3. For each of the 10 submits, assert `200`, `status === "completed"`, `session_id` equals its submitted session, and `outputs` carries the Chat Output content. *These are the premise: every run finished and the API said so.*
+4. For each of the 10 read-backs, assert `200` and `status === "completed"`. They all are, which is what makes the rest a contradiction rather than a timing question.
+5. For each of the 10 read-backs, assert `session_id` equals its submitted session and is **not** the flow id, and that `outputs` carries the Chat Output content `"ping"`. **Fails today**, on the first job that lost the race. Every assertion message names the job's index.
 
 **Test 5 — attribution control: the same read is correct once the job's rows settle**
 
@@ -142,7 +158,9 @@ This test exists to make Test 4's red **attributable**, and it is the pairing th
 ## Validation criterion *(required)*
 
 - Tests 1, 2, 3 and 5 pass. **Test 4 fails and is declared to** (`test.fail()`), so the run reports `5 passed` with Test 4 counted as an expected failure; its failure is at the read-back step, with the reported `session_id` equal to the flow id. Should it ever *pass*, Playwright reports *"expected to fail but passed"* — that is the fix landing, and the annotation plus this criterion come off together.
-- **Detection is 15/15, and that took a design decision worth keeping.** The settle window is 250–463 ms (median 434), measured over 12 cold jobs. The defect is a race, so the submit and the read-back are issued back to back with no assertion between them — the sequence a real client runs. An earlier draft parsed the submit body and asserted its four premises first, and that work was enough to let the race go the other way: the defect went undetected in 1 of 13 measured runs. Any future edit that reintroduces work between those two calls silently weakens the test to ~92 %.
+- **Test 4's declaration must be deterministic, so the contract is asserted over 10 jobs, not one (#2216).** Each job is an independent draw that wins the race about 11 % of the time (*The sync defect*). A single-job test therefore "passed" about 1 run in 8 while the defect was live, and on a scheduled lane that reads as the fix landing. With 10 jobs the declared failure holds unless every job wins: about 3 × 10⁻¹⁰ at the measured 11 %, and about 6 × 10⁻⁶ even if a faster host pushed the win rate to 30 %. The fix, by contrast, makes every read-back correct, so all 10 pass and the alarm fires deterministically. The extra cost is under one second.
+- **The annotation shows a partial fix before it shows as a pass.** It reports `k of 10` read-backs degraded on every run. If upstream narrows the window without closing it, `k` drops before the test ever flips to an unexpected pass.
+- **The no-work-between rule still applies to each pair.** The settle window is 250–463 ms (median 434), measured over 12 cold jobs. The submit and its read-back are issued back to back with no assertion between them, the sequence a real client runs. An earlier draft asserted the submit's premises first, and that alone let the race go the other way in 1 of 13 runs. Any future edit that puts work between the two calls raises every job's win rate, which the 10-job margin hides until it does not.
 - Test 1's control (step 1) passes, so the `409`s are refusals and not a broken endpoint.
 - Test 3's first completed response carries the submitted session — proving the endpoint *can* do this, which is what makes Test 4 a defect rather than an unsupported feature.
 - Test 5 converges within 10 s, so Test 4's red is the race and not a dead reconstruction path.
