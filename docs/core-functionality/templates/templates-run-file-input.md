@@ -11,7 +11,7 @@ Owning issue: #2461 (row **E3** of the planned spec inventory in
 (`templates-run-knowledge.spec.ts`, **E4**) — the same run shape, the same observables ·
 **Related:** #1452 (`page.flowErrorReport()`), #1372 / #1678 (a run can silently carry a model
 nobody picked), #2043 (uploaded files outlive their flow), #1864 (**S1**, instantiation), #2467
-(moving the helpers this spec copies from its siblings into a shared module)
+(the helpers the family shares, `tests/helpers/flows/template-run.ts`)
 
 ---
 

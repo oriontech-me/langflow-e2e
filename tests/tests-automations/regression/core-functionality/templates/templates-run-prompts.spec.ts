@@ -4,6 +4,20 @@ import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropp
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import {
+  buildableNodes,
+  componentNodes,
+  field,
+  inspectionControl,
+  modelPairs,
+  nodesOfType,
+  onlyNode,
+  ranField,
+  readNodeOutput,
+  readTemplate,
+  resolveModelOption,
+  type FlowData,
+} from "../../../../helpers/flows/template-run";
 import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 import { isRunRequest } from "../../../../helpers/flows/watch-run-model-binding";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
@@ -14,7 +28,8 @@ import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-
 // Instantiation through the gallery is S1's (templates-instantiate.spec.ts), which proves
 // the created flow equals the `basic_examples` entry this spec reads — so the flow is
 // created from that entry through the API, id-addressed and private to the test.
-// Sibling: templates-run-knowledge.spec.ts (#2045), the same run shape for §11.5.
+// Sibling: templates-run-knowledge.spec.ts (#2045), the same run shape for §11.5; the
+// helpers the family shares are in helpers/flows/template-run.ts (#2467).
 // Spec doc: docs/core-functionality/templates/templates-run-prompts.md
 
 /**
@@ -84,165 +99,8 @@ const TWITTER_THREAD_GENERATOR: TemplateUnderTest = {
   builtTypes: ["Agent", "ChatInput", "Prompt"],
 };
 
-type TemplateField = { value?: unknown; options?: unknown[]; type?: string } | undefined;
-
-interface FlowNode {
-  id: string;
-  type?: string;
-  data?: {
-    type?: string;
-    showNode?: boolean;
-    node?: { tool_mode?: boolean; template?: Record<string, TemplateField> };
-  };
-}
-
-interface FlowEdge {
-  source: string;
-  target: string;
-  data?: { targetHandle?: { fieldName?: string } };
-}
-
-interface FlowData {
-  nodes: FlowNode[];
-  edges: FlowEdge[];
-  [key: string]: unknown;
-}
-
-/** One entry of `GET /api/v1/model_options/language` — the picker's own option shape. */
-interface ModelOption {
-  name?: string;
-  provider?: string;
-  [key: string]: unknown;
-}
-
 function newNonce(): string {
   return `tpl2459-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-/** The template as the image registers it, deep-copied so the pins never leak. */
-async function readTemplate(
-  request: APIRequestContext,
-  name: string,
-  headers: Record<string, string>,
-): Promise<{ data: FlowData; description: string }> {
-  const url = "/api/v1/flows/basic_examples/";
-  // Idempotent reads re-dial once on a dropped pooled socket (the ~2 s keep-alive
-  // edge, measured here on 1.14.0.dev29); a response is passed through untouched.
-  const res = await retryOnDroppedConnection(() => request.get(url, { headers }));
-  if (res.status() !== 200) {
-    throw new Error(`GET ${url} failed: ${res.status()} — ${(await res.text()).slice(0, 200)}`);
-  }
-  const listing = (await res.json()) as Array<{
-    name?: string;
-    description?: string;
-    data?: FlowData;
-  }>;
-  const entry = listing.find((f) => f.name === name);
-  if (!entry?.data) {
-    throw new Error(
-      `Template "${name}" is not in ${url} (registered: ` +
-        `${listing.map((f) => f.name).join(", ")}). templates-registration.spec.ts ` +
-        `names a missing template; this spec cannot run one that is not there.`,
-    );
-  }
-  return {
-    data: JSON.parse(JSON.stringify(entry.data)) as FlowData,
-    description: entry.description ?? "",
-  };
-}
-
-/**
- * The option the model picker would write for `model`. `model_options/language` lists
- * only the models enabled on the instance, so a model collect-models did not enable is
- * absent here — and the test stops instead of running a model nobody chose. Basic
- * Prompting's Language Model ships with empty `options`, so the template cannot supply it.
- */
-async function resolveModelOption(
-  request: APIRequestContext,
-  model: string,
-  headers: Record<string, string>,
-): Promise<ModelOption> {
-  const url = "/api/v1/model_options/language";
-  const res = await retryOnDroppedConnection(() => request.get(url, { headers }));
-  if (res.status() !== 200) {
-    throw new Error(`GET ${url} failed: ${res.status()} — ${(await res.text()).slice(0, 200)}`);
-  }
-  const options = (await res.json()) as ModelOption[];
-  const option = options.find((o) => o.name === model && o.provider === "OpenAI");
-  if (!option) {
-    throw new Error(
-      `${model} / OpenAI is not an enabled language model on this instance (${url} lists: ` +
-        `${options.map((o) => `${o.name} / ${o.provider}`).join(", ")}). Run ` +
-        "`npx playwright test tests/collect-models.spec.ts` first.",
-    );
-  }
-  return option;
-}
-
-function componentNodes(data: FlowData): FlowNode[] {
-  return data.nodes.filter((n) => n.type === "genericNode");
-}
-
-function nodesOfType(data: FlowData, type: string): FlowNode[] {
-  return componentNodes(data).filter((n) => n.data?.type === type);
-}
-
-function onlyNode(data: FlowData, type: string, template: string): FlowNode {
-  const matches = nodesOfType(data, type);
-  if (matches.length !== 1) {
-    throw new Error(
-      `Template "${template}" has ${matches.length} "${type}" component(s); this spec ` +
-        `expects exactly one. The template changed upstream — re-read it before pinning.`,
-    );
-  }
-  return matches[0];
-}
-
-function field(node: FlowNode, name: string, template: string): NonNullable<TemplateField> {
-  const f = node.data?.node?.template?.[name];
-  if (!f) {
-    throw new Error(
-      `Template "${template}": node ${node.id} (${node.data?.type}) has no ` +
-        `template.${name} field — the pin would silently leave it unset.`,
-    );
-  }
-  return f;
-}
-
-/**
- * The value a node field carried in the run, read off the object the run builds from:
- * the request's live-canvas `data` (which takes priority over the saved flow, #1372),
- * or — when the request carried none — the saved flow itself.
- */
-async function ranFieldValue(
-  runBody: unknown,
-  savedFlow: () => Promise<FlowData>,
-  nodeId: string,
-  fieldName: string,
-): Promise<unknown> {
-  const live = (runBody as { data?: { nodes?: unknown } } | null)?.data?.nodes;
-  const nodes = Array.isArray(live) ? (live as FlowNode[]) : (await savedFlow()).nodes;
-  return nodes.find((n) => n?.id === nodeId)?.data?.node?.template?.[fieldName]?.value;
-}
-
-/** `name / provider` for each entry of a unified model selector value. */
-function modelPairs(value: unknown): string[] {
-  const entries = Array.isArray(value) ? value : value ? [value] : [];
-  return entries.map((e) =>
-    e !== null && typeof e === "object"
-      ? `${(e as { name?: unknown }).name} / ${(e as { provider?: unknown }).provider}`
-      : String(e),
-  );
-}
-
-/** The node's output-inspection control: disabled until the node has an output. */
-function inspectionControl(page: Page, nodeId: string) {
-  return page.locator(`[data-id="${nodeId}"] [data-testid^="output-inspection-"]`);
-}
-
-/** The output-inspection dialog (it is the only dialog carrying the copy button). */
-function outputDialog(page: Page) {
-  return page.getByRole("dialog").filter({ has: page.getByTestId("copy-output-button") });
 }
 
 test.describe("core-functionality/templates — prompt and agent templates run (§11.3)", () => {
@@ -313,11 +171,9 @@ test.describe("core-functionality/templates — prompt and agent templates run (
       modelNodeIds = modelNodes.map((n) => n.id);
 
       // A tool builds only when the model calls it; a hidden node renders no control.
-      const built = componentNodes(data).filter(
-        (n) => n.data?.node?.tool_mode !== true && n.data?.showNode !== false,
-      );
+      const built = buildableNodes(data);
       expect(
-        built.map((n) => n.data?.type ?? "").sort(),
+        built.map((n) => n.type).sort(),
         `${template.name}: the components whose build this spec checks`,
       ).toEqual(template.builtTypes);
       builtNodeIds = built.map((n) => n.id);
@@ -419,7 +275,7 @@ test.describe("core-functionality/templates — prompt and agent templates run (
       };
       for (const id of modelNodeIds) {
         expect(
-          modelPairs(await ranFieldValue(runBody, savedFlow, id, "model")),
+          modelPairs((await ranField(runBody, savedFlow, id, "model"))?.value),
           `model node ${id} ran`,
         ).toEqual([`${model} / OpenAI`]);
       }
@@ -459,18 +315,14 @@ test.describe("core-functionality/templates — prompt and agent templates run (
 
     if (template === BLOG_WRITER) {
       await test.step("the source URL reached the Agent's system prompt", async () => {
-        await page
-          .locator(`[data-id="${promptTemplateId}"]`)
-          .getByTestId("output-inspection-prompt-prompt template")
-          .click();
         // Langflow's formatting of the Chat Input into {URL}, not model output.
-        const prompt = outputDialog(page).locator("textarea");
-        await expect(prompt).toBeVisible({ timeout: 15000 });
-        expect(await prompt.inputValue()).toContain(ECHO_SOURCE_URL);
-        // Escape does not close this dialog reliably (measured on 1.13.0.dev25); a
-        // dialog left open intercepts every later click.
-        await outputDialog(page).getByTestId("btn-close-modal").click();
-        await expect(outputDialog(page)).toBeHidden({ timeout: 5000 });
+        expect(
+          await readNodeOutput(
+            page,
+            promptTemplateId,
+            "output-inspection-prompt-prompt template",
+          ),
+        ).toContain(ECHO_SOURCE_URL);
       });
     }
 
