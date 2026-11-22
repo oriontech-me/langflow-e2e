@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-20
+> **Last updated:** 2026-11-22
 
 ---
 
@@ -1920,9 +1920,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 162 | 139 | 0 | 3 | 20 |
+| `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **935** | **801 (86%)** | **69 (7%)** | **18 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **943** | **808 (86%)** | **69 (7%)** | **18 (2%)** | **48 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1938,7 +1938,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 923 `test()` calls carrying the `@stable` tag, distributed across 324 spec
+> 929 `test()` calls carrying the `@stable` tag, distributed across 325 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2188,6 +2188,10 @@
 - [x] scope=all is superuser-only and shows every user's triggers with their owner and no actions on rows the caller does not own → `api-triggers-operator.spec.ts`
 - [x] bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused → `api-triggers-operator.spec.ts`
 - [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
+- [x] the seventeen 1.14 provider kinds are served as trigger components and cannot be created through the triggers API → `api-triggers-provider-kinds.spec.ts`
+- [x] <subject.name>: each kind's saved node reconciles one pending trigger, and enable refuses it until a <subject.name> connection could serve it → `api-triggers-provider-kinds.spec.ts`
+- [x] a delivery to a push provider's ingress answers the uniform 404, for an id that exists and one that does not → `api-triggers-provider-kinds.spec.ts`
+- [x] Lead (no upstream ticket yet): a Jira or Salesforce trigger arms on a pending connection that holds no credential → `api-triggers-provider-kinds.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
 - [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
@@ -2440,6 +2444,8 @@
 - [x] the Enabled switch resumes and pauses the trigger, and a refused resume says why → `trigger-node-controls.spec.ts`
 - [x] background-run consent is the connection owner's switch, persists, and the fix path allows and resumes → `trigger-node-controls.spec.ts`
 - [x] the webhook secret is shown once, signs deliveries, and rotating it refuses the old one → `trigger-node-controls.spec.ts`
+- [x] a Jira trigger node lists only Jira connections, and shows the server's refusals one gate at a time → `trigger-node-controls.spec.ts`
+- [x] a GitHub trigger node says at save time that push delivery needs public ingress, and a resume is refused with that reason → `trigger-node-controls.spec.ts`
 - [x] the Triggers category holds Schedule and Inbound Webhook, and every trigger row is marked apart from the actions → `trigger-placement.spec.ts`
 - [x] with a trigger on the canvas every other trigger is blocked in the palette, and removing it unblocks them → `trigger-placement.spec.ts`
 - [x] pasting or duplicating a trigger leaves it out with a notice, and keeps the rest of the selection → `trigger-placement.spec.ts`
