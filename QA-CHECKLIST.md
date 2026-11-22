@@ -1909,7 +1909,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 45 | 0 | 0 | 1 |
 | `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
-| `flow-functionality/` | 57 | 52 | 1 | 3 | 1 |
+| `flow-functionality/` | 57 | 53 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1922,7 +1922,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **943** | **808 (86%)** | **69 (7%)** | **18 (2%)** | **48 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **943** | **809 (86%)** | **68 (7%)** | **18 (2%)** | **48 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1938,7 +1938,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 929 `test()` calls carrying the `@stable` tag, distributed across 325 spec
+> 930 `test()` calls carrying the `@stable` tag, distributed across 325 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2770,6 +2770,7 @@
 
 #### flow-functionality/multi-edit/
 - [x] Update Current Flow writes the viewer's work and keeps the replaced version → `multi-edit-conflict-exits.spec.ts`
+- [x] Duplicate Flow puts the viewer's work in a new flow and leaves the original alone → `multi-edit-conflict-exits.spec.ts`
 - [x] Load Latest asks first, archives the viewer's canvas, and that archive restores → `multi-edit-conflict-exits.spec.ts`
 - [x] a second save while choosing is not overwritten → `multi-edit-conflict-exits.spec.ts`
 - [x] Cancel changes nothing → `multi-edit-conflict-exits.spec.ts`
@@ -2960,7 +2961,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 1 | 1 |
+| `flow-functionality/` | 0 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 1 |
 | `ui-ux/` — Settings | 0 | 0 |
