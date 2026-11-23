@@ -47,7 +47,7 @@ test("project-root guides get the root budget; any other guide the area budget",
 // --- block boundaries ------------------------------------------------------
 
 test("consecutive column-0 bullets are separate blocks, with no blank line between them", () => {
-  assert.deepEqual(starts(["- one", "- two", "* three", "+ four", "1. five", "10) six"].join("\n")), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(starts(["- one", "- two", "* three", "+ four", "1. five", "10) six", "-", "#"].join("\n")), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
 test("a column-0 heading starts a block, and so does the line after a blank one", () => {
@@ -113,7 +113,7 @@ test("findImports reports @tokens that name an existing file, and nothing else",
     "@docs/infra/x.md",
     "See @README for the overview.",
     "Tag with @stable, install @axe-core/playwright, pin @1.5.1, mail a@b.c.",
-    "Inline `cat @docs/infra/x.md` is code.",
+    "Inline `cat @docs/infra/x.md | wc` is code.",
     "- (@docs/infra/x.md) has no whitespace before @.",
     "\t@~/notes.md and @/abs/file.md.",
   ].join("\n");

@@ -20,7 +20,7 @@ end-to-end. You do not decide what comes next — the CLI does.
 Talk to the user in PT-BR; every artifact (code, spec docs, commit/PR/issue
 text, branch names) in English. Repo rule — `CLAUDE.md`.
 
-**Where a mechanism's write-up goes.** In `docs/infra/<mechanism>.md`, never in `CLAUDE.md`: that file keeps the standing rule plus a link, and a CI budget fails the PR otherwise (#2542).
+**Where a mechanism's write-up goes.** In `docs/infra/<mechanism>.md`, never in `CLAUDE.md`: that file keeps the standing rule plus a link. A CI size budget per file and per block backs this up, but a short narrative still passes it: the rule is the point, not the budget (#2542).
 
 ## The loop (only behavior of this skill)
 
