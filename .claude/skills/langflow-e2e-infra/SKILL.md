@@ -61,6 +61,8 @@ Talk to the user in **Portuguese (PT-BR)**; produce every technical artifact
 (YAML, scripts, config, commit/PR/issue text, branch names, this skill) in
 **English**. Repo rule — see `CLAUDE.md`.
 
+**Where a mechanism's write-up goes.** In `docs/infra/<mechanism>.md`, never in `CLAUDE.md`: that file keeps the standing rule plus a link, and a CI budget fails the PR otherwise (#2542).
+
 ## Hard gates (non-negotiable)
 
 - **Propose → confirm, for issues AND PRs.** Present findings / the fix, then

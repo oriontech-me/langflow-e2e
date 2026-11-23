@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**What belongs here.** This file loads into every agent session, so it holds standing rules and pointers only. A mechanism's narrative (measurements, traps, history, the why) goes in `docs/infra/<mechanism>.md`, and the bullet here keeps the rule plus a link. `scripts/check-claude-md-budget.mjs` enforces a size budget per file and per bullet on every PR (#2542).
+
 ## Language
 
 **All content in this repository must be written in English** — without exception.
