@@ -60,9 +60,11 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
   `GET /{id}` returns it with `flow_name: null` (the operator file pins that difference).
 - **PATCH nulls.** `name`, `config`, `binding_target`, `session_policy`, `concurrency_limit` and
   `max_attempts` sent as `null` → `422`, `type: "value_error"`, `loc ["body", <field>]`, `msg` *"Value
-  error, This field cannot be null."*. `connection_id` (an owned connection), `deployment_id` (any UUID,
-  with the `flow` binding) and `flow_version_id` (through `pin`) can each be set, and a `PATCH` sending
-  `null` → `200` and a re-read reads `null`.
+  error, This field cannot be null."*. `connection_id` (an owned connection) and `flow_version_id`
+  (through `pin`) can each be set, and a `PATCH` sending `null` → `200` and a re-read reads `null`.
+  `deployment_id` is left out of that step on purpose: it is a foreign key to `deployment.id`, a
+  deployment row needs a deployment provider account (watsonx Orchestrate) this suite does not have, and
+  a made-up id is lead 8's subject, whose outcome depends on the database (#2539).
 - **Schedule through the API.** `kind: "schedule"` with `config: {cron: "0 0 1 1 *"}` → `201`, `pending`,
   `config` filled to `{cron, timezone: "UTC", catchup_policy: "coalesce"}` (no `share_session`, which only
   the reconciler adds). `{cron: "not a cron"}` → `422 {"detail": "Invalid cron expression: a valid
@@ -141,15 +143,26 @@ ticket:
 
 | Test | Candidate ticket |
 |---|---|
-| *lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch* | Create (and `PATCH`) should refuse a `deployment_id` that names no deployment, instead of accepting it and failing every event at dispatch |
+| *lead: a deployment binding's deployment_id is never checked — stored and failed at dispatch, or a 500 where foreign keys are enforced* | Create (and `PATCH`) should refuse a `deployment_id` that names no deployment with a `4xx`, instead of accepting it and failing every event at dispatch (foreign keys off) or answering `500` with the raw `IntegrityError` (foreign keys on) |
 | *lead: enable arms a webhook whose payload_schema is malformed, and erases the error* | `enable` should refuse an `inbound_webhook` whose config the reconciler recorded as invalid, as it does a schedule, and must not erase that reason |
 | *lead: a stored payload_schema is not enforced on delivery* | Ingress should validate a delivery against the trigger's `payload_schema`, or the node should stop offering a schema it never applies |
 
-- **A `deployment` binding accepts a `deployment_id` that names nothing.** A random UUID → `201`,
-  `binding_target: "deployment"`; `enable` → `active`; `POST …/test` → an event that ends `failed` with
-  `error` *"Trigger binding target 'deployment' is stored but not dispatched in this release; re-bind the
-  trigger to its flow to run it."*, and the trigger reads `active` / `reason: "degraded"` with that text in
-  `last_error`. The refusal arrives at dispatch, never at create or enable.
+- **A `deployment_id` that names nothing is never checked by the API.** Neither `create_trigger` nor
+  `update_trigger` looks the deployment up; `trigger.deployment_id` is a foreign key to `deployment.id`,
+  so what the caller sees is decided by the database, and both outcomes are the same defect (#2539):
+  - **Foreign keys not enforced** (SQLite's default pragmas, as the image ships and the PR lane runs): a
+    random UUID → `201`, `binding_target: "deployment"`; `enable` → `active`; `POST …/test` → an event
+    that ends `failed` with `error` *"Trigger binding target 'deployment' is stored but not dispatched in
+    this release; re-bind the trigger to its flow to run it."*, and the trigger reads `active` /
+    `reason: "degraded"` with that text in `last_error`. The refusal arrives at dispatch, never at create
+    or enable.
+  - **Foreign keys enforced** (`LANGFLOW_SQLITE_PRAGMAS` with `"foreign_keys": "ON"`, as the QA VM's
+    daily runs since #1717, and every Postgres deployment): the create → **`500`**, whose body is the raw
+    `IntegrityError` naming the foreign-key violation and the SQL statement, and no row is written. Measured
+    on the 2026-11-20 daily (`1.14.0.dev33`, run `20261120T080016Z`).
+
+  The fixed contract is a `4xx` at create (and at `PATCH`) naming the missing deployment; either
+  outcome above going away is the lead turning red.
 - **`enable` validates only schedule configs.** An Inbound Webhook node with `payload_schema: "not json"`
   reconciles `pending` with the error in `last_error`; `enable` → `200`, `active`, and `last_error` is
   **cleared** (`set_state` clears it) while `config.payload_schema` is still `"not json"`. The only record
@@ -207,9 +220,9 @@ empty (`{nodes: [], edges: []}`) unless stated. Names carry a per-run suffix.
 3. `PATCH {name, concurrency_limit: 3, max_attempts: 7, session_policy: "shared"}` → `200` with the four
    values; a re-read agrees.
 4. `PATCH` each of the six required fields to `null` → `422`, the exact entry; a re-read is unchanged.
-5. Set the three nullable references (a connection planted through `createConnectionViaApi`, a random
-   `deployment_id`, a pin to a snapshot of A) and re-read them set; `PATCH` each to `null` → `200`, and a
-   re-read reads `null`.
+5. Set two nullable references (a connection planted through `createConnectionViaApi`, a pin to a
+   snapshot of A) and re-read them set; `PATCH` each to `null` → `200`, and a re-read reads `null`.
+   `deployment_id` is not set here (see *Measured* → *PATCH nulls*).
 6. Create a `schedule` with a valid cron → `201`, the filled config, a re-read agrees. A malformed cron on
    create and on `PATCH` → `422`, the exact sentence; the stored config is unchanged.
 7. `DELETE` → `204`, empty body. `GET`, a second `DELETE` → `404 "Trigger not found"`; the list is `[]`.
@@ -270,12 +283,20 @@ empty (`{nodes: [], edges: []}`) unless stated. Names carry a per-run suffix.
    that flow and `GET ?flow_id=` of it → each `404 {"detail": "Trigger not found"}`.
 3. The owner's re-read is unchanged (`active`, same name, same `updated_at`), and its list holds only it.
 
-### 8. Lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch
+### 8. Lead: a deployment binding's deployment_id is never checked — stored and failed at dispatch, or a 500 where foreign keys are enforced
 
-1. Create with `binding_target: "deployment"` and a random `deployment_id` → `201`; a re-read holds both.
+1. Create with `binding_target: "deployment"` and a random `deployment_id`. The answer must be one of
+   the two outcomes of the unchecked foreign key, and the test records which one in an annotation
+   (`deployment-fk`); anything else, a `4xx` included, fails with a *"LEAD:"* message:
+   - **`500`** (foreign keys enforced): the body names an `IntegrityError` and the foreign key, and the
+     flow's trigger list is `[]`. The test ends here.
+   - **`201`** (not enforced): a re-read holds both values, and steps 2–3 run.
 2. `enable` → `active`, re-read.
 3. `POST …/test` → `202`; poll the events until it settles → `failed`, the exact `error`. The trigger
    reads `active`, `reason: "degraded"`, that `last_error`.
+
+Both branches are exercised by the lanes as they are configured: the PR lane's image runs SQLite's
+default pragmas, and the QA VM's daily enforces foreign keys.
 
 ### 9. Lead: enable arms a webhook whose payload_schema is malformed, and erases the error
 
@@ -327,6 +348,8 @@ The file drives only the `request` fixture, so the HTTP-error monitor sees none 
   removal pause and `normalize_webhook_config`.
 - `src/backend/base/langflow/services/triggers/capabilities.py` — the `node_removed` reason.
 - `src/backend/base/langflow/services/triggers/constants.py` — `CANVAS_ONLY_KINDS`.
+- `src/backend/base/langflow/services/database/models/trigger/model.py` — `deployment_id`'s foreign key to
+  `deployment.id`, which no API path checks before writing (lead 8).
 - `src/backend/base/langflow/services/database/models/trigger/schemas.py` — `TriggerCreate`,
   `TriggerUpdate` and `TriggerPinRequest`.
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_read_flow`, owner-scoped without an

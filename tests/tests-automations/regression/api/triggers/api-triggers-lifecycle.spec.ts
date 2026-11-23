@@ -220,7 +220,7 @@ test.describe("Triggers — the lifecycle", () => {
 
   test(
     "creates, reads, lists, updates and deletes a trigger on the owner's own flow",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -290,22 +290,24 @@ test.describe("Triggers — the lifecycle", () => {
       await test.step("An explicit null clears each nullable reference that was set, and a re-read agrees", async () => {
         // Each reference is SET first: clearing a field that is already null proves
         // nothing, and would pass a server that dropped nulls (exclude_none) instead
-        // of honouring them (exclude_unset).
+        // of honouring them (exclude_unset). `deployment_id` is not among them: it is a
+        // foreign key to a deployment row this suite cannot make (that needs a provider
+        // account), and a made-up id is the deployment lead's subject — accepted where
+        // the database does not enforce foreign keys, a 500 where it does (#2539).
         const connection = await createConnectionViaApi(request, headers(), { label: "trglife refs" });
         const version = await snapshot(request, flowId);
         const set = {
           connection_id: connection.id,
-          deployment_id: randomUUID(),
           flow_version_id: version,
         };
-        await updateTrigger(request, headers(), created.id, { connection_id: set.connection_id, deployment_id: set.deployment_id });
+        await updateTrigger(request, headers(), created.id, { connection_id: set.connection_id });
         await pinTrigger(request, headers(), created.id, set.flow_version_id);
         const before = await getTrigger(request, headers(), created.id);
         expect(
-          { connection_id: before.connection_id, deployment_id: before.deployment_id, flow_version_id: before.flow_version_id },
-          "the three references are set before they are cleared",
+          { connection_id: before.connection_id, flow_version_id: before.flow_version_id },
+          "the two references are set before they are cleared",
         ).toEqual(set);
-        for (const field of ["connection_id", "deployment_id", "flow_version_id"] as const) {
+        for (const field of ["connection_id", "flow_version_id"] as const) {
           expect((await updateTrigger(request, headers(), created.id, { [field]: null }))[field], `PATCH {${field}: null}`).toBeNull();
           expect((await getTrigger(request, headers(), created.id))[field], `PATCH {${field}: null}, re-read`).toBeNull();
         }
@@ -766,8 +768,8 @@ test.describe("Triggers — the lifecycle", () => {
   // own test so a fix to one cannot take the others' @stable with it. When one goes
   // red with a "LEAD:" message, upstream changed it: turn it into the fixed contract.
   test(
-    "lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch",
-    { tag: ["@api", "@integrations"] },
+    "lead: a deployment binding's deployment_id is never checked — stored and failed at dispatch, or a 500 where foreign keys are enforced",
+    { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -780,11 +782,33 @@ test.describe("Triggers — the lifecycle", () => {
       const flowId = await emptyFlow(request, "lead deployment");
       const deploymentId = randomUUID();
 
-      const row = await test.step("Create accepts a deployment_id that names no deployment", async () => {
-        const created = await make(request, flowId, "lead deployment", {
-          binding_target: "deployment",
-          deployment_id: deploymentId,
+      // The API never looks the deployment up; `trigger.deployment_id` is a foreign key,
+      // so the database decides what the caller sees (#2539). Where foreign keys are
+      // enforced (the QA VM's pragmas, any Postgres) the write is a 500 carrying the raw
+      // IntegrityError and nothing is stored; where they are not (SQLite's defaults, as
+      // the image ships) it is stored and fails only at dispatch. Both are the lead; a
+      // 4xx naming the missing deployment would be the fix, and fails here as such.
+      const row = await test.step("Create does not check that the deployment_id names a deployment", async () => {
+        const res = await request.post("/api/v1/triggers", {
+          headers: headers(),
+          data: { flow_id: flowId, name: `lead deployment ${run}`, kind: "inbound_webhook", binding_target: "deployment", deployment_id: deploymentId },
         });
+        const text = await res.text();
+        expect([201, 500], `LEAD: create neither refuses nor checks a deployment_id that names nothing — ${res.status()} ${text}`).toContain(
+          res.status(),
+        );
+        test.info().annotations.push({
+          type: "deployment-fk",
+          description: res.status() === 500 ? "enforced: the create answered 500" : "not enforced: the create answered 201",
+        });
+        if (res.status() === 500) {
+          expect(text, "LEAD: with foreign keys enforced, the unchecked deployment_id surfaces as the database's IntegrityError").toMatch(
+            /IntegrityError[\s\S]*foreign key/i,
+          );
+          expect(await listTriggers(request, headers(), { flow_id: flowId }), "the refused create stored nothing").toEqual([]);
+          return null;
+        }
+        const created = JSON.parse(text) as TriggerRead;
         const reread = await getTrigger(request, headers(), created.id);
         expect(
           { binding_target: reread.binding_target, deployment_id: reread.deployment_id },
@@ -792,6 +816,9 @@ test.describe("Triggers — the lifecycle", () => {
         ).toEqual({ binding_target: "deployment", deployment_id: deploymentId });
         return created;
       });
+
+      // Foreign keys enforced: the 500 above is the whole lead, and there is no row to arm.
+      if (row === null) return;
 
       await test.step("Enable arms it", async () => {
         expect((await setTriggerEnabled(request, headers(), row.id, true)).state, "LEAD: enable arms it").toBe("active");
