@@ -37,6 +37,16 @@ jobs:
       - name: TypeScript check
         run: npm run typecheck
 
+      # CLAUDE.md loads into every agent session. It grew to 171 KB one infra
+      # fix at a time, each bullet absorbing its mechanism's whole narrative,
+      # until #2532 moved those into docs/infra/. Budget per file and per block
+      # so the next narrative lands in docs/infra/ instead (#2542). It runs
+      # before the unit lanes; it and they carry `!cancelled()`, so a red
+      # `tsc`, budget or unit lane never hides the others' verdicts.
+      - name: CLAUDE.md size budget
+        if: ${{ !cancelled() }}
+        run: npm run check:claude-md-budget
+
       # Unit tests for the dependency-free helpers under scripts/ — plain
       # `node --test`, no Playwright and no backend, so they belong in this fast
       # job rather than the E2E one. These cover CI-critical logic that had no
@@ -44,6 +54,7 @@ jobs:
       # and the report-integrity guard (#1012). A guard whose own test never
       # runs is a guard nobody is guarding.
       - name: Script unit tests
+        if: ${{ !cancelled() }}
         run: npm run test:scripts
 
       # The TypeScript half of the same idea (#1017). Everything written in `.ts`
@@ -58,6 +69,7 @@ jobs:
       # Node 20 this workflow pins; the trade-off and the rejected options are
       # recorded in CONTRIBUTING.md → "Unit tests".
       - name: TypeScript unit tests
+        if: ${{ !cancelled() }}
         run: npm run test:units
 
       # The deterministic issue pipeline — 2.8k lines of TypeScript that owns
@@ -73,12 +85,14 @@ jobs:
       # cannot load (measured: 0 pass, 1 fail), so the script uses tsx and runs
       # `tsc -p` against the pipeline's own tsconfig in the same step.
       - name: Issue-pipeline unit tests
+        if: ${{ !cancelled() }}
         run: npm run test:pipeline
 
       # The REGRESSIONS.md indicator block is generated and committed by hand.
       # Fail the PR when a row was added without regenerating it, so the
       # headline number can never silently disagree with the table.
       - name: Regression Ledger indicator in sync
+        if: ${{ !cancelled() }}
         run: npm run regressions:check
 
   lint:

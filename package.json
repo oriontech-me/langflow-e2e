@@ -29,6 +29,7 @@
     "validate:specs": "ts-node scripts/validate-spec-deps.ts",
     "check:checklist-coverage": "ts-node scripts/check-checklist-coverage.ts",
     "check:stable-ownership": "ts-node scripts/check-stable-ownership.ts",
+    "check:claude-md-budget": "node scripts/check-claude-md-budget.mjs",
     "catalog:baseline": "ts-node scripts/update-component-catalog-baseline.ts",
     "triage:baseline": "ts-node scripts/update-inherited-backlog-baseline.ts",
     "triage:verify": "node scripts/build-triage-grep.mjs --verify",
