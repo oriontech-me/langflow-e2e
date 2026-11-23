@@ -32,6 +32,14 @@ Four independent tests:
    the header and renders the page description
    `"Configure AI model providers and manage their API keys."`.
 
+Tests 3 and 4 open their section by its sidebar **link** (`getByRole("link")`),
+never by its text. Since `1.14.0.dev33` the Settings frame also renders a
+mobile `<select>` (`settings-mobile-navigation`, inside a `<nav>` that is `sm:hidden`) whose `<option>`
+elements carry the same labels; it is hidden by CSS at desktop width but still
+in the DOM, so an exact-text locator resolves to two elements and Playwright's
+strict mode refuses the click (#2540). A `<option>` is not a link, so the role
+locator matches the sidebar entry only.
+
 Tests 1–2 are the "can the user reach Settings at all" gate; a regression in the
 profile menu, the route, or the section list breaks them before any deeper
 Settings spec runs.
@@ -57,6 +65,7 @@ Providers, Langflow MCP Client) — those are still moving upstream.
 
 - `src/frontend/src/components/core/appHeaderComponent/components/AccountMenu/index.tsx` — `user-profile-settings`, `menu_settings_button` testids.
 - `src/frontend/src/pages/SettingsPage/index.tsx` — `settings_menu_header` testid and the sidebar link labels.
+- `src/frontend/src/customization/components/custom-settings-page-frame.tsx` — the Settings frame: the sidebar links, and the `settings-mobile-navigation` `<select>` whose options repeat their labels (the reason tests 3–4 click by link role). The `<select>` is on `release-1.14.0` since `1.14.0.dev33` (upstream #16510) and not yet on `main`.
 - `src/frontend/src/pages/SettingsPage/pages/ShortcutsPage/index.tsx` — AG Grid with `display_name` / `shortcut` columns.
 - `src/frontend/src/constants/constants.ts` — `defaultShortcuts` array (27 entries on 1.12.0.dev5). Shrinking it below 27 fails test 3 by design.
 - `src/frontend/src/pages/SettingsPage/pages/ModelProvidersPage/index.tsx` — the literal description string asserted in test 4.
@@ -66,4 +75,4 @@ so it leaves no state behind (no cleanup needed).
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev6`)
+1.14.x (nightly `1.14.0.dev35`)
