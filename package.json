@@ -45,15 +45,15 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.65.1",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.6",
     "axe-core": "4.13.0",
-    "eslint": "^10.11.0",
-    "eslint-plugin-playwright": "^2.12.0",
+    "eslint": "^10.15.0",
+    "eslint-plugin-playwright": "^2.12.2",
     "playwright": "1.65.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^5.4.5",
-    "typescript-eslint": "^8.71.0",
+    "typescript-eslint": "^8.73.0",
     "yauzl": "3.4.0",
     "yazl": "3.3.1"
   }
