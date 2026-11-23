@@ -23,8 +23,9 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
 1. **CRUD.** `POST /triggers` answers `201` with the exact 28-key `TriggerRead` and the defaults
    (`pending`, `flow` binding, `per_event`, `concurrency_limit: 1`, `max_attempts: 5`), owned by the flow's
    owner. `GET` by id, the list by `flow_id`, `PATCH` and `DELETE` (`204`, then `404` on every read).
-   `PATCH` with an explicit `null` is refused on the six required fields and, on the two nullable
-   references the suite can set (`connection_id`, `flow_version_id`), clears a value that was set. A `schedule` created through the API validates its cron on
+   `PATCH` with an explicit `null` is refused on the six required fields and, on the two
+   nullable references the suite can set (`connection_id`, `flow_version_id`), clears a value that was
+   set. A `schedule` created through the API validates its cron on
    create and on `PATCH`.
 2. **State machine.** `enable` arms (`active`) and `disable` pauses (`paused`). Both are idempotent.
    `pending`, `expired` and `error` all enable. A `dead` trigger can be neither enabled nor disabled, and
@@ -322,8 +323,8 @@ measured on `1.14.0.dev35`) and is not asserted: the create is the lead's one pr
 
 ## Validation criterion *(required)*
 
-Tests 1–10 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev35`, and at the
-default worker count, **both with SQLite foreign keys enforced** (`LANGFLOW_SQLITE_PRAGMAS` with
+Tests 1–10 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev35`, and once at
+the default worker count, **both with SQLite foreign keys enforced** (`LANGFLOW_SQLITE_PRAGMAS` with
 `"foreign_keys": "ON"`, as the QA VM runs) **and with the product's default pragmas** (as the image ships),
 with:
 

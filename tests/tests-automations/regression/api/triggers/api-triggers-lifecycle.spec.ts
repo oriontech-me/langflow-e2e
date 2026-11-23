@@ -800,7 +800,7 @@ test.describe("Triggers — the lifecycle", () => {
         });
         if (res.status() === 500) {
           apiCoverage.declare(["GET /api/v1/triggers"]);
-          expect(text, "LEAD: with foreign keys enforced, the unchecked deployment_id surfaces as the database's IntegrityError").toMatch(
+          expect(text, "LEAD: with foreign keys enforced, the unchecked deployment_id surfaces as the database's foreign-key error").toMatch(
             // SQLite through aiosqlite names the class `IntegrityError`; Postgres through
             // psycopg names the driver's `ForeignKeyViolation` instead. Both say "foreign key".
             /(IntegrityError|ForeignKeyViolation)[\s\S]*foreign key/i,
