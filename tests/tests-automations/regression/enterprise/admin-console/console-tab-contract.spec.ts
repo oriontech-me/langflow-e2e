@@ -205,25 +205,26 @@ const TABS: AdminTab[] = [
       "Review administrative activity, access events, and governance changes across your workspace.",
     // OSS's unified feed since 1.13 (EE PR 381); `/authz/audit` is no longer read.
     read: "/api/v1/audits",
-    // The screen probes the per-resource audit sources and marks a refused one
-    // unavailable. Both need `audit_read`, which no built-in Enterprise role
-    // grants — so with bypass off even the superuser holding `admin` is refused.
-    // A product observation recorded in #2263, declared rather than silenced so
-    // a fix surfaces as a stale declaration naming itself.
+    // The screen probes the per-resource audit sources to decide whether to
+    // offer Flows and Projects, and a refusal still offers them. Both need
+    // `audit_read`, which Enterprise grants only through a custom role — so with
+    // bypass off the superuser holding the built-in `admin` is refused, by
+    // design (#2263; asserted in audit-log-filters-and-export.spec.ts). Declared
+    // rather than silenced so a build that stops refusing fails naming itself.
     knownHttpErrors: [
       {
         pathname: "/api/v1/flows/audits",
         status: 403,
         reason:
-          "no built-in Enterprise role grants flow:audit_read, so the audit screen's " +
-          "per-resource probe is refused even to the RBAC superuser (#2263)",
+          "by design: flow:audit_read is granted only through a custom role, so the " +
+          "audit screen's per-resource probe is refused to the RBAC superuser (#2263)",
       },
       {
         pathname: "/api/v1/projects/audits",
         status: 403,
         reason:
-          "no built-in Enterprise role grants project:audit_read, so the audit screen's " +
-          "per-resource probe is refused even to the RBAC superuser (#2263)",
+          "by design: project:audit_read is granted only through a custom role, so the " +
+          "audit screen's per-resource probe is refused to the RBAC superuser (#2263)",
       },
     ],
     // The reads that carry the declarations above (#1636's rule).

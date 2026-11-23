@@ -247,14 +247,15 @@ Non-2xx responses expected here. The first two are declared to the fixture with
 `page.expectKnownHttpError()`; the rest are globally exempt already:
 
 - `GET /api/v1/flows/audits?limit=1` and `GET /api/v1/projects/audits?limit=1` → `403
-  Permission denied`, on every arrival at `audit-logs` (1.13). The screen probes the
-  per-resource audit sources and marks a refused one unavailable — by design. They are
-  refused because they require `flow:audit_read` / `project:audit_read`, which no built-in
-  Enterprise role grants (the Enterprise repository's built-in role definitions: the vocabulary lists `audit_read`, the
-  `admin` role's permission set does not include it), so with bypass off even the
-  superuser holding `admin` cannot read them while the screen's *Resource* filter still
-  offers *Flows* and *Projects*. Recorded as a product observation in #2263, not asserted
-  as correct; declared so a fix shows up as a stale declaration that names itself.
+  Permission denied`, on every arrival at `audit-logs` (1.13), **by design**. The screen probes
+  the per-resource audit sources only to decide whether to offer *Flows* and *Projects* in its
+  *Resource* filter, and a `403` still counts as *offered*. The routes require
+  `flow:audit_read` / `project:audit_read`, which Enterprise grants only through a custom role
+  (commit `c86afb69`); the built-in `admin` does not carry it, so with bypass off the superuser
+  is refused. Picking *Flows* or *Projects* reads the unified feed, which the superuser can
+  read — so the refusal costs the operator nothing. `audit-log-filters-and-export.spec.ts`
+  asserts that (#2263). Declared here so the test's advisory log stays clean, and so a build
+  that stops refusing fails naming the entry to delete.
 
   The 403 is also why the UI session now carries a refresh token. The frontend answers any
   401/403 by refreshing; a session seeded with only an access token failed that refresh and

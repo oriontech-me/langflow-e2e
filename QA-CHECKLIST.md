@@ -1483,6 +1483,7 @@
 - [-] Ticking **Include permission checks** drops `kind` from the query (`exclude_event` on 1.12) — the control changes what is fetched, not only itself → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
 - [-] The **Result filter narrows server-side and every visible row matches**, over a denial this run seeded under a username that cannot pre-exist. A deny row reads *Denied* (a denied action *Failed*). Both halves are needed: "every row is a deny" alone was satisfied by denials the container already held, measured by a mutation that removed the seed and stayed green → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
 - [-] A **Resource label sends the API's value, not its own text** (the *Event type* filter on 1.12) — *Connections & sign-in* → `resource_type=sso_connection`. A screen that sent the label would filter nothing and still look filtered → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
+- [-] **Flows and Projects stay offered and read the unified feed although the superuser is refused their per-resource sources** — the `limit=1` probes of `/api/v1/flows/audits` and `/api/v1/projects/audits` answer `403 Permission denied` to the RBAC superuser by design (`audit_read` is custom-role-only, Enterprise `c86afb69`), the filter still offers both, and picking each reads `/api/v1/audits?resource_type=flow|project` → `200` with no listing read of the refused source. Closes the screen half of #2263; a row under them waits on the resource event store (#2530) → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
 - [-] **Export downloads the filtered set, not the visible page** — since 1.13 a browser download of `/api/v1/audits/export` carrying the active filter and no `limit`, and the **file** is asserted: its name, its header, every row a deny, this run's seed among them. On 1.12 only the request could be asserted, because the XHR export was deduplicated into producing nothing (#1639, structurally obsolete now) → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
 - [ ] The audit screen's `User` combobox and pagination — neither is where the screen can mislead an operator about what the log contains
 - [-] **Approving a provider writes the alias its dialog displayed** — since 1.13 approval is the `Add provider` dialog (the recommended cards are gone), which shows the `Credential alias` and writes the scope as a hidden default; the governance record is keyed on that alias, scoped `workspaces: ["all"]`, `status: "active"` and attributed to the approver, and `approved_provider_ids` gains exactly that provider. The displayed terms are the INPUT to the operator's decision, so a screen that shows one scope and writes another is wrong in a way no API test can see → `enterprise/admin-console/provider-approval-terms.spec.ts`
@@ -1919,7 +1920,7 @@
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 16 | 0 | 0 | 0 |
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
-| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
+| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 106 | 0 | 88 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
@@ -1939,7 +1940,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 930 `test()` calls carrying the `@stable` tag, distributed across 325 spec
+> 932 `test()` calls carrying the `@stable` tag, distributed across 325 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2910,6 +2911,8 @@
 - [x] Settings > Messages displays sent messages in correct order with working filters → `settings-message-history.spec.ts`
 - [x] user can access Settings page from the profile menu → `settings-navigation.spec.ts`
 - [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
+- [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
+- [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
 - [x] editing the Duplicate shortcut persists and triggers the action on canvas → `settings-shortcuts-edit.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`

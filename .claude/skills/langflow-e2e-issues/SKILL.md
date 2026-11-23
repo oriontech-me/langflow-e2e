@@ -42,6 +42,8 @@ Talk to the user in **Portuguese (PT-BR)**; produce every technical artifact
 (test code, spec docs, commit/PR/issue text, branch names) in **English**. Repo
 rule — see `CLAUDE.md`.
 
+**Where a mechanism's write-up goes.** In `docs/infra/<mechanism>.md`, never in `CLAUDE.md`: that file keeps the standing rule plus a link. A CI size budget per file and per block backs this up, but a short narrative still passes it: the rule is the point, not the budget (#2542).
+
 ## Hard gates (non-negotiable)
 
 - **Spec-first.** Never write or edit a `.spec.ts` before its spec doc under
