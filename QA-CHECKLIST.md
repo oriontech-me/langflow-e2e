@@ -1939,7 +1939,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 933 `test()` calls carrying the `@stable` tag, distributed across 326 spec
+> 928 `test()` calls carrying the `@stable` tag, distributed across 325 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2174,14 +2174,12 @@
 - [x] an owner's resume, pause and replay each write one audit row naming the trigger → `api-triggers-audit.spec.ts`
 - [x] an operator's bulk pause and resume write admin rows only for the triggers it selected → `api-triggers-audit.spec.ts`
 - [x] the audit log answers only a superuser and is left out of the OpenAPI schema → `api-triggers-audit.spec.ts`
-- [x] creates, reads, lists, updates and deletes a trigger on the owner's own flow → `api-triggers-lifecycle.spec.ts`
 - [x] enable arms and disable pauses, idempotently, from every state but dead → `api-triggers-lifecycle.spec.ts`
 - [x] pins a trigger to a version of its own flow, and to nothing else → `api-triggers-lifecycle.spec.ts`
 - [x] refuses through the API the kinds that only a component on the canvas creates → `api-triggers-lifecycle.spec.ts`
 - [x] a flow save creates the trigger unarmed, never arms or disarms it, and pauses it when its node is removed → `api-triggers-lifecycle.spec.ts`
 - [x] refuses out-of-range and server-owned fields on create and on update → `api-triggers-lifecycle.spec.ts`
 - [x] only the flow's owner can see or act on its triggers → `api-triggers-lifecycle.spec.ts`
-- [x] lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch → `api-triggers-lifecycle.spec.ts`
 - [x] lead: enable arms a webhook whose payload_schema is malformed, and erases the error → `api-triggers-lifecycle.spec.ts`
 - [x] lead: a stored payload_schema is not enforced on delivery → `api-triggers-lifecycle.spec.ts`
 - [x] a single-flow write that carries a second trigger is refused, and changes nothing → `api-triggers-one-per-flow.spec.ts`
@@ -2809,7 +2807,6 @@
 
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
-- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
@@ -2911,8 +2908,6 @@
 - [x] Settings > Messages displays sent messages in correct order with working filters → `settings-message-history.spec.ts`
 - [x] user can access Settings page from the profile menu → `settings-navigation.spec.ts`
 - [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
-- [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
-- [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
 - [x] editing the Duplicate shortcut persists and triggers the action on canvas → `settings-shortcuts-edit.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
