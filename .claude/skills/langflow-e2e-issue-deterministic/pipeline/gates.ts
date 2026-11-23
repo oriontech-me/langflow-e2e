@@ -536,9 +536,8 @@ const UPSTREAM_COL = 5
 /**
  * A recognised upstream ticket. `kind` decides how a cell is matched: a Jira id
  * is unique on its own, an upstream GitHub number is NOT — this repo writes
- * `#1777` for its own issues and `langflow#14741` for upstream ones (docs/infra/stable-ownership.md
- * records that spelling), so a bare number must be qualified by the word
- * `langflow` in the same cell.
+ * `#1777` for its own issues and `langflow#14741` for upstream ones, so a bare
+ * number must be qualified by the word `langflow` in the same cell.
  */
 export interface TicketRef {
   kind: 'jira' | 'langflow'
