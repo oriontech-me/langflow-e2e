@@ -220,7 +220,7 @@ test.describe("Triggers — the lifecycle", () => {
 
   test(
     "creates, reads, lists, updates and deletes a trigger on the owner's own flow",
-    { tag: ["@api", "@integrations", "@stable"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -767,7 +767,7 @@ test.describe("Triggers — the lifecycle", () => {
   // red with a "LEAD:" message, upstream changed it: turn it into the fixed contract.
   test(
     "lead: a deployment binding accepts a deployment_id that names nothing, and fails only at dispatch",
-    { tag: ["@api", "@integrations", "@stable"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
