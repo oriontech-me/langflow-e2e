@@ -102,7 +102,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 13,
+    "stableSpecs": 12,
     "penalty": 0
    },
    "mitigation": 0.7,
@@ -127,7 +127,7 @@
    "upstreamBugCount": 69,
    "specCounts": {
     "specs": 13,
-    "stable": 13
+    "stable": 12
    }
   },
   {
@@ -266,7 +266,7 @@
     "weightedBugs": 20.1,
     "weightedChurn": 1.9
    },
-   "mitigationBulletDerived": 0.63,
+   "mitigationBulletDerived": 0.64,
    "mitigationOverride": 0.72,
    "testHealth": {
     "chronicHardFailures": 0,
@@ -275,9 +275,9 @@
     "penalty": 0
    },
    "mitigation": 0.72,
-   "checklistBullets": 11,
+   "checklistBullets": 12,
    "bulletStates": {
-    "x": 8,
+    "x": 9,
     "!": 2,
     " ": 1
    },
@@ -584,8 +584,8 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 1,
-    "stableSpecs": 38,
-    "penalty": 0.011
+    "stableSpecs": 42,
+    "penalty": 0.01
    },
    "mitigation": 0.79,
    "checklistBullets": 26,
@@ -608,7 +608,7 @@
    "upstreamBugCount": 74,
    "specCounts": {
     "specs": 42,
-    "stable": 38
+    "stable": 42
    }
   },
   {
@@ -659,54 +659,6 @@
    }
   },
   {
-   "area": "1 REST API / endpoints",
-   "residualRisk": 3.8,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "inputs": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 2,
-    "weightedBugs": 9.5,
-    "weightedChurn": 2.61
-   },
-   "mitigationBulletDerived": 0.75,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 54,
-    "penalty": 0
-   },
-   "mitigation": 0.75,
-   "checklistBullets": 106,
-   "bulletStates": {
-    "x": 96,
-    "!": 1,
-    "-": 4,
-    "~": 3,
-    " ": 2
-   },
-   "previous": {
-    "residualRisk": 4.4,
-    "inherentRisk": 20,
-    "mitigation": 0.78,
-    "checklistBullets": 28
-   },
-   "judgementRationale": "'Flow as an API' is the advertised deploy path",
-   "upstreamBugsByYear": {
-    "2024": 10,
-    "2025": 5,
-    "2026": 3
-   },
-   "upstreamBugCount": 18,
-   "specCounts": {
-    "specs": 55,
-    "stable": 54
-   }
-  },
-  {
    "area": "21 Governance / policy",
    "residualRisk": 3.8,
    "inherentRisk": 6,
@@ -740,6 +692,54 @@
    "specCounts": {
     "specs": 11,
     "stable": 0
+   }
+  },
+  {
+   "area": "1 REST API / endpoints",
+   "residualRisk": 3.6,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "inputs": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 2,
+    "weightedBugs": 9.5,
+    "weightedChurn": 2.61
+   },
+   "mitigationBulletDerived": 0.76,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 57,
+    "penalty": 0
+   },
+   "mitigation": 0.76,
+   "checklistBullets": 106,
+   "bulletStates": {
+    "x": 99,
+    "!": 1,
+    "-": 1,
+    "~": 3,
+    " ": 2
+   },
+   "previous": {
+    "residualRisk": 4.4,
+    "inherentRisk": 20,
+    "mitigation": 0.78,
+    "checklistBullets": 28
+   },
+   "judgementRationale": "'Flow as an API' is the advertised deploy path",
+   "upstreamBugsByYear": {
+    "2024": 10,
+    "2025": 5,
+    "2026": 3
+   },
+   "upstreamBugCount": 18,
+   "specCounts": {
+    "specs": 57,
+    "stable": 57
    }
   },
   {
@@ -922,50 +922,6 @@
    "specCounts": null
   },
   {
-   "area": "11 Templates / starter",
-   "residualRisk": 1.8,
-   "inherentRisk": 8,
-   "probability": 2,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.9,
-    "weightedChurn": 6.91
-   },
-   "mitigationBulletDerived": 0.78,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 6,
-    "penalty": 0
-   },
-   "mitigation": 0.78,
-   "checklistBullets": 46,
-   "bulletStates": {
-    "x": 45,
-    " ": 1
-   },
-   "previous": {
-    "residualRisk": 7.4,
-    "inherentRisk": 8,
-    "mitigation": 0.08,
-    "checklistBullets": 34
-   },
-   "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path",
-   "upstreamBugsByYear": {
-    "2025": 5,
-    "2026": 1
-   },
-   "upstreamBugCount": 6,
-   "specCounts": {
-    "specs": 6,
-    "stable": 6
-   }
-  },
-  {
    "area": "3.3 API Request / Webhook",
    "residualRisk": 1.8,
    "inherentRisk": 9,
@@ -1005,6 +961,49 @@
    },
    "upstreamBugCount": 15,
    "specCounts": null
+  },
+  {
+   "area": "11 Templates / starter",
+   "residualRisk": 1.6,
+   "inherentRisk": 8,
+   "probability": 2,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.9,
+    "weightedChurn": 6.91
+   },
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0
+   },
+   "mitigation": 0.8,
+   "checklistBullets": 46,
+   "bulletStates": {
+    "x": 46
+   },
+   "previous": {
+    "residualRisk": 7.4,
+    "inherentRisk": 8,
+    "mitigation": 0.08,
+    "checklistBullets": 34
+   },
+   "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path",
+   "upstreamBugsByYear": {
+    "2025": 5,
+    "2026": 1
+   },
+   "upstreamBugCount": 6,
+   "specCounts": {
+    "specs": 7,
+    "stable": 7
+   }
   },
   {
    "area": "4.3 Global variables",
@@ -1215,9 +1214,9 @@
    }
   }
  ],
- "refreshed": "2026-11-20",
+ "refreshed": "2026-11-23",
  "refreshWindow": {
-  "testHealthSince": "2026-10-06",
+  "testHealthSince": "2026-10-09",
   "days": 45
  }
 }

@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-11-20",
+ "refreshed": "2026-11-23",
  "refreshWindow": {
-  "testHealthSince": "2026-10-06",
+  "testHealthSince": "2026-10-09",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 837,
-  "bulletsAutomatedUnwatched": 137,
-  "residualRiskTotal": 98.7
+  "bullets": 838,
+  "bulletsAutomatedUnwatched": 134,
+  "residualRiskTotal": 98.3
  },
  "areas": [
   {
@@ -71,12 +71,12 @@
    },
    "specs": {
     "specs": 13,
-    "stable": 13
+    "stable": 12
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 13,
+    "stableSpecs": 12,
     "penalty": 0
    },
    "upstreamBugsByYear": {
@@ -268,7 +268,7 @@
    "probability": 4,
    "impact": 5,
    "mitigation": 0.72,
-   "mitigationBulletDerived": 0.63,
+   "mitigationBulletDerived": 0.64,
    "mitigationOverride": 0.72,
    "axes": {
     "bugQuintile": 3,
@@ -278,8 +278,8 @@
     "weightedChurn": 1.9
    },
    "bullets": {
-    "total": 11,
-    "validated": 8,
+    "total": 12,
+    "validated": 9,
     "automatedUnwatched": 0,
     "partial": 0,
     "flaky": 2,
@@ -698,13 +698,13 @@
    },
    "specs": {
     "specs": 42,
-    "stable": 38
+    "stable": 42
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 1,
-    "stableSpecs": 38,
-    "penalty": 0.011
+    "stableSpecs": 42,
+    "penalty": 0.01
    },
    "upstreamBugsByYear": {
     "2023": 1,
@@ -789,67 +789,9 @@
    "rationale": "Core providers only (OpenAI/Anthropic/Gemini) after the bundle exclusion; external APIs and keys"
   },
   {
-   "key": "rest-api",
-   "label": "1 REST API / endpoints",
-   "rank": 14,
-   "residualRisk": 3.8,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.75,
-   "mitigationBulletDerived": 0.75,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 2,
-    "weightedBugs": 9.5,
-    "weightedChurn": 2.61
-   },
-   "bullets": {
-    "total": 106,
-    "validated": 96,
-    "automatedUnwatched": 4,
-    "partial": 3,
-    "flaky": 1,
-    "empty": 2
-   },
-   "specs": {
-    "specs": 55,
-    "stable": 54
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 54,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2024": 10,
-    "2025": 5,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 14,
-    "residualRisk": 4.4,
-    "inherentRisk": 20,
-    "mitigation": 0.78
-   },
-   "delta": {
-    "residualRisk": -0.6,
-    "rank": 0,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
-   "platformItems": [],
-   "rationale": "'Flow as an API' is the advertised deploy path"
-  },
-  {
    "key": "governance-policy",
    "label": "21 Governance / policy",
-   "rank": 15,
+   "rank": 14,
    "residualRisk": 3.8,
    "inherentRisk": 6,
    "probability": 2,
@@ -890,6 +832,64 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "OSS operator surface, instance-global: a policy that fails open makes a blocked component placeable. Not an advertised promise, so impact is blast radius only."
+  },
+  {
+   "key": "rest-api",
+   "label": "1 REST API / endpoints",
+   "rank": 15,
+   "residualRisk": 3.6,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.76,
+   "mitigationBulletDerived": 0.76,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 2,
+    "weightedBugs": 9.5,
+    "weightedChurn": 2.61
+   },
+   "bullets": {
+    "total": 106,
+    "validated": 99,
+    "automatedUnwatched": 1,
+    "partial": 3,
+    "flaky": 1,
+    "empty": 2
+   },
+   "specs": {
+    "specs": 57,
+    "stable": 57
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 57,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 10,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 14,
+    "residualRisk": 4.4,
+    "inherentRisk": 20,
+    "mitigation": 0.78
+   },
+   "delta": {
+    "residualRisk": -0.8,
+    "rank": -1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
+   "platformItems": [],
+   "rationale": "'Flow as an API' is the advertised deploy path"
   },
   {
    "key": "auth",
@@ -1124,66 +1124,9 @@
    "rationale": "Control-flow components; affects the flows that use them"
   },
   {
-   "key": "templates",
-   "label": "11 Templates / starter",
-   "rank": 20,
-   "residualRisk": 1.8,
-   "inherentRisk": 8,
-   "probability": 2,
-   "impact": 4,
-   "mitigation": 0.78,
-   "mitigationBulletDerived": 0.78,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.9,
-    "weightedChurn": 6.91
-   },
-   "bullets": {
-    "total": 46,
-    "validated": 45,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 1
-   },
-   "specs": {
-    "specs": 6,
-    "stable": 6
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 6,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2025": 5,
-    "2026": 1
-   },
-   "previous": {
-    "rank": 5,
-    "residualRisk": 7.4,
-    "inherentRisk": 8,
-    "mitigation": 0.08
-   },
-   "delta": {
-    "residualRisk": -5.6,
-    "rank": -15,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "'Hundreds of pre-built flows' is advertised; the onboarding path"
-  },
-  {
    "key": "api-request-webhook",
    "label": "3.3 API Request / Webhook",
-   "rank": 21,
+   "rank": 20,
    "residualRisk": 1.8,
    "inherentRisk": 9,
    "probability": 3,
@@ -1226,7 +1169,7 @@
    },
    "delta": {
     "residualRisk": -0.2,
-    "rank": 1,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -1234,6 +1177,63 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "Network-dependent component, widely used but replaceable"
+  },
+  {
+   "key": "templates",
+   "label": "11 Templates / starter",
+   "rank": 21,
+   "residualRisk": 1.6,
+   "inherentRisk": 8,
+   "probability": 2,
+   "impact": 4,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.9,
+    "weightedChurn": 6.91
+   },
+   "bullets": {
+    "total": 46,
+    "validated": 46,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2025": 5,
+    "2026": 1
+   },
+   "previous": {
+    "rank": 5,
+    "residualRisk": 7.4,
+    "inherentRisk": 8,
+    "mitigation": 0.08
+   },
+   "delta": {
+    "residualRisk": -5.8,
+    "rank": -16,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "'Hundreds of pre-built flows' is advertised; the onboarding path"
   },
   {
    "key": "global-variables",
