@@ -156,6 +156,37 @@ updates:
         versions:
           - ">=6"
 
+      # @axe-core/playwright and axe-core: held at the 4.13 line (#2535), the pin
+      # #2304 set (`921dced4`). Two independent reasons, both measured on npm:
+      #
+      #   1. @axe-core/playwright 4.14.0 (npm `latest` since 2026-10-15) declares
+      #      `engines: { node: ">=22.12.0" }`. 4.13.0 declared none, and every lane
+      #      runs `node-version: "20"`. `npm ci` only WARNS on an engines mismatch,
+      #      so the grouped PR goes green on an unsupported combination (#2534).
+      #   2. axe-core is pinned exactly because `connections-a11y-i18n.spec.ts`
+      #      checks against a known-violation baseline written for the 4.13 rule
+      #      set, and a new rule would redden it with no change on our side. 4.14.0
+      #      of the integration depends on `axe-core ~4.14.0`, so the two move
+      #      together, which is why both are listed.
+      #
+      # Scoped by `update-types`, not by `versions: [">=4.14"]`, and that is a
+      # choice, not an oversight: the guard in scripts/dependabot-config.test.mjs
+      # refuses a range starting inside the current major, because it would block
+      # the current line, security updates included. Minor-only keeps 4.13.x
+      # patches flowing, which is where a security fix for this line would land.
+      # The guard does not read `update-types`, so this entry is held to its intent
+      # by this comment and not by a test.
+      #
+      # REVISIT when the lanes move to Node >= 22.12. Then the bump is a
+      # deliberate PR that also re-baselines the a11y scan against the new rule
+      # set, never a merged bot PR.
+      - dependency-name: "@axe-core/playwright"
+        update-types:
+          - "version-update:semver-minor"
+      - dependency-name: "axe-core"
+        update-types:
+          - "version-update:semver-minor"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
