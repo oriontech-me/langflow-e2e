@@ -32,6 +32,15 @@ const SQL_LEAK_MARKERS = [
   "parameters:",
 ];
 
+/**
+ * How many sync jobs the declared-failing read-back test submits (#2216). Each
+ * job wins the read-back race about 11 % of the time, independently, measured
+ * on 1.14.0.dev35. With one job, the declaration went red on about 1 run in 8
+ * while the defect was live. With 10, every job has to win: about 3e-10 at the
+ * measured rate, and about 6e-6 at 30 %. A pair costs under 100 ms.
+ */
+const SYNC_READBACK_JOBS = 10;
+
 /** How long the attribution control waits for the sync read-back to settle. */
 const SETTLE_BUDGET_MS = 10_000;
 const SETTLE_POLL_MS = 100;
@@ -301,22 +310,26 @@ test.describe("Workflows v2 — the job lifecycle", () => {
     },
   );
 
-  // Quarantined for #2216: recurrent flake (VM dailies 2026-09-18 and 2026-10-07), the
-  // declared-failing body passed on the first attempt both days, so the test.fail() below
-  // is not deterministic. Lifting it (drop `test.fixme`, restore `@stable`) is #2216's deliverable.
-  test.fixme(
+  test(
     "a completed sync run answers its own status query with the session and outputs it returned",
-    { tag: ["@api", "@regression"] },
-    async ({ request }) => {
+    { tag: ["@stable", "@api", "@regression"] },
+    async ({ request }, testInfo) => {
       // DECLARED FAILING, and the declaration is the alarm in both directions.
       //
-      // The assertions below are the intended contract, unweakened: 15/15 they
-      // fail on 1.12.0.dev37 because the sync read-back races the vertex_build
-      // commit it reconstructs from (spec doc → *The sync defect*). Declaring
-      // that keeps a known-broken product path out of a permanent red, and —
-      // the half a plain red does not give — makes the FIX detectable: the day
-      // upstream lands it this body passes, Playwright reports "expected to
-      // fail but passed", and the suite goes red asking for this line back.
+      // The assertions below are the intended contract, unweakened: the sync
+      // read-back races the vertex_build commit it reconstructs from (spec doc
+      // → *The sync defect*). Declaring that keeps a known-broken product path
+      // out of a permanent red, and — the half a plain red does not give —
+      // makes the FIX detectable: the day upstream lands it this body passes,
+      // Playwright reports "expected to fail but passed", and the suite goes
+      // red asking for this line back.
+      //
+      // The contract is asserted over SYNC_READBACK_JOBS jobs, not one (#2216).
+      // A single job wins the race about 11 % of the time, so a one-job version
+      // passed on two VM dailies (2026-09-18, 2026-10-07) while the defect was
+      // live, and an unexpected pass on a scheduled lane is exactly what the
+      // fix looks like. Requiring every job to read back correctly keeps the
+      // declaration deterministic, and the fix still passes all of them.
       //
       // `test.fail()` is rejected elsewhere in this suite for a real reason —
       // mcp-client-agent-gemini-tool-regression.spec.ts: it "converts ANY
@@ -328,55 +341,93 @@ test.describe("Workflows v2 — the job lifecycle", () => {
       // (and the three tests above it) rather than hiding here.
       test.fail();
 
-      const sessionId = unique("sync-session");
+      // Each submit and its read-back are issued back to back with NOTHING
+      // between them, and every assertion is deferred until all the pairs have
+      // answered. This is the sequence a real client runs — submit, then read
+      // the job it was given — and the ordering is load-bearing: the
+      // degradation below is a race against the vertex_build commit, so
+      // parsing bodies or asserting the submit response first spends the very
+      // window the test is measuring. With the assertions interleaved the
+      // defect went undetected in 1 of 13 measured runs. Reading `job_id` is
+      // the only work between the two calls, and the read-back needs it.
+      const pairs: Array<{
+        sessionId: string;
+        submit: APIResponse;
+        jobId: string;
+        readBack: APIResponse;
+      }> = [];
+      for (let i = 0; i < SYNC_READBACK_JOBS; i++) {
+        const sessionId = unique(`sync-session-${i + 1}`);
+        const submit = await postWorkflow(request, "sync", sessionId);
+        const jobId = String((await submit.json())?.job_id ?? "");
+        const readBack = await getJob(request, jobId);
+        pairs.push({ sessionId, submit, jobId, readBack });
+      }
 
-      // The two calls are issued back to back with NOTHING between them, and
-      // every assertion is deferred until both have answered. This is the
-      // sequence a real client runs — submit, then read the job it was given —
-      // and the ordering is load-bearing: the degradation below is a race
-      // against the vertex_build commit, so parsing bodies or asserting the
-      // submit response first spends the very window the test is measuring.
-      // With the assertions interleaved the defect went undetected in 1 of 13
-      // measured runs; issued back to back it is 10 of 10.
-      const submit = await postWorkflow(request, "sync", sessionId);
-      const jobId = String((await submit.json())?.job_id ?? "");
-      const readBack = await getJob(request, jobId);
+      // A body that is not JSON reads as null here and fails its own assertion
+      // below; it still counts as degraded, so the annotation is always written.
+      const jobs = await Promise.all(
+        pairs.map(async (pair, index) => ({
+          ...pair,
+          label: `job ${index + 1} of ${SYNC_READBACK_JOBS}`,
+          submitted: await readJobFacts(pair.submit).catch(() => null),
+          readFacts: await readJobFacts(pair.readBack).catch(() => null),
+        })),
+      );
 
-      await test.step("the run completed and said so, carrying its session and outputs", async () => {
-        // The premise. Everything below contradicts it, rather than asking a
-        // timing question — which is why it is asserted rather than assumed.
-        expect(submit.status()).toBe(200);
-        expect(jobId, "the submit response names the job to read back").toBeTruthy();
-
-        const facts = await readJobFacts(submit);
-        expect(facts.status).toBe("completed");
-        expect(facts.sessionId).toBe(sessionId);
-        expect(facts.outputKeys).toContain(CHAT_OUTPUT_NODE_ID);
-        expect(facts.outputText).toBe(RUN_INPUT);
+      // Written before any assertion, so it is reported even when the first
+      // job fails. Today it reads about 9 of 10. If upstream narrows the
+      // window without closing it, this count drops before the test ever
+      // flips to "expected to fail but passed".
+      const degraded = jobs.filter(
+        (job) =>
+          job.readFacts?.sessionId !== job.sessionId ||
+          job.readFacts?.outputText !== RUN_INPUT,
+      ).length;
+      testInfo.annotations.push({
+        type: "sync-readback-degraded",
+        description: `${degraded} of ${SYNC_READBACK_JOBS} read-backs degraded (session not the submitted one, or no Chat Output)`,
       });
 
-      await test.step("reading that job back reports the same session and outputs", async () => {
-        expect(readBack.status()).toBe(200);
-        const facts = await readJobFacts(readBack);
+      await test.step("every run completed and said so, carrying its session and outputs", async () => {
+        // The premise. Everything below contradicts it, rather than asking a
+        // timing question — which is why it is asserted rather than assumed.
+        for (const job of jobs) {
+          expect(job.submit.status(), `${job.label}: submit status`).toBe(200);
+          expect(job.jobId, `${job.label}: the submit response names the job to read back`).toBeTruthy();
+          expect(job.submitted, `${job.label}: the submit body is JSON`).not.toBeNull();
+          expect(job.submitted!.status, `${job.label}: submit status field`).toBe("completed");
+          expect(job.submitted!.sessionId, `${job.label}: submit session`).toBe(job.sessionId);
+          expect(job.submitted!.outputKeys, `${job.label}: submit outputs`).toContain(CHAT_OUTPUT_NODE_ID);
+          expect(job.submitted!.outputText, `${job.label}: submit output text`).toBe(RUN_INPUT);
+        }
+      });
 
-        // Asserted first: it is what makes the rest a contradiction. The API
-        // says the job is done, so "the outputs are not ready yet" is not an
-        // available reading of the two assertions below.
-        expect(
-          facts.status,
-          "the status endpoint agrees the job is complete",
-        ).toBe("completed");
+      await test.step("reading each job back reports the same session and outputs", async () => {
+        // Asserted first, for every job: it is what makes the rest a
+        // contradiction. The API says each job is done, so "the outputs are
+        // not ready yet" is not an available reading of the assertions below.
+        for (const job of jobs) {
+          expect(job.readBack.status(), `${job.label}: read-back status`).toBe(200);
+          expect(job.readFacts, `${job.label}: the read-back body is JSON`).not.toBeNull();
+          expect(
+            job.readFacts!.status,
+            `${job.label}: the status endpoint agrees the job is complete`,
+          ).toBe("completed");
+        }
 
-        expect(
-          facts.sessionId,
-          "a completed job must report the session it was submitted with — message memory and chat history scope to this key, so a status read that substitutes the flow id hands the caller a thread that is not the one that ran",
-        ).toBe(sessionId);
-        expect(facts.sessionId).not.toBe(flowId);
-        expect(
-          facts.outputKeys,
-          "a job the API reports as completed must not report zero outputs: a caller cannot tell this from a run that genuinely produced nothing",
-        ).toContain(CHAT_OUTPUT_NODE_ID);
-        expect(facts.outputText).toBe(RUN_INPUT);
+        for (const job of jobs) {
+          expect(
+            job.readFacts!.sessionId,
+            `${job.label}: a completed job must report the session it was submitted with — message memory and chat history scope to this key, so a status read that substitutes the flow id hands the caller a thread that is not the one that ran`,
+          ).toBe(job.sessionId);
+          expect(job.readFacts!.sessionId, `${job.label}: read-back session`).not.toBe(flowId);
+          expect(
+            job.readFacts!.outputKeys,
+            `${job.label}: a job the API reports as completed must not report zero outputs: a caller cannot tell this from a run that genuinely produced nothing`,
+          ).toContain(CHAT_OUTPUT_NODE_ID);
+          expect(job.readFacts!.outputText, `${job.label}: read-back output text`).toBe(RUN_INPUT);
+        }
       });
     },
   );
