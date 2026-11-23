@@ -180,7 +180,7 @@ export function render(results, budgets = BUDGETS) {
       out.push(`  block over ${budgets.block} bytes: ${r.path}:${b.line}  ${b.bytes} bytes  ${b.preview}`);
     }
     for (const imp of r.imports) {
-      out.push(`  import: ${r.path}:${imp.line}  ${imp.token} — inlines that file into every session`);
+      out.push(`  import: ${r.path}:${imp.line}  ${imp.token} — inlines that file into every session (not meant as one? wrap it in backticks)`);
     }
   }
   if (results.some(failed)) {

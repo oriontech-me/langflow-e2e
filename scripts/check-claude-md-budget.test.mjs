@@ -119,7 +119,7 @@ test("findImports reads tokens as Claude Code does and keeps only imports", () =
     "See @README for the overview, and @docs/infra/x.md#section for one part.",
     "Tag with @stable, install @axe-core/playwright, pin @1.5.1, mail a@b.c.",
     "Inline `cat @docs/infra/x.md | wc` is code.",
-    "- (@docs/infra/x.md) has no whitespace before @.",
+    "- (@docs/infra/x.md and more: no whitespace before @.",
     "\t@~/.claude/notes.md and @/abs/file and @CLAUDE.local.md and @my\\ file.md",
     "@notes/plain",
   ].join("\n");
@@ -148,12 +148,14 @@ test("isImport: ~/ and absolute by syntax, .md by name, anything else only if th
   writeFileSync(join(dir, "docs", "plain"), "");
   // ~/ and absolute never depend on the machine: CI has no such file, a laptop may.
   assert.equal(isImport("~/.claude/missing.md", dir), true);
+  assert.equal(isImport("~/bin/tool.sh", dir), true, "~/ fails by syntax, not by the .md rule");
   assert.equal(isImport("/nonexistent/file", dir), true);
   // A .md path is an import even when absent here (an ignored local file).
   assert.equal(isImport("CLAUDE.local.md", dir), true);
   assert.equal(isImport("docs/plain", dir), true);
   assert.equal(isImport("docs", dir), false, "a directory is not an import");
   assert.equal(isImport("stable", dir), false);
+  writeFileSync(join(dir, "README.md"), "");
   assert.equal(isImport("README", dir), false, "no .md fallback: Claude Code never appends it");
   assert.equal(isImport("", dir), false);
 });
