@@ -1,5 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import { parseStreamEvents } from "../../../../fixtures/flow-error-policy";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { parseNdjson } from "../../../../helpers/other/parse-ndjson";
 import {
@@ -11,7 +12,8 @@ import {
 
 // Validates the graph-execution engine's contract as it is observable over REST —
 // POST /api/v1/build/{flow_id}/flow?event_delivery=direct (the NDJSON build
-// stream) and POST /api/v2/workflows (mode=sync). Issue #1896;
+// stream) and POST /api/v2/workflows (mode=sync, and mode=stream with the AG-UI
+// protocol for the terminal-error rule). Issue #1896;
 // docs/api/flows/graph-execution-contract.md.
 //
 // Every node is a CustomComponent whose Python body fixes its behavior (echo,
@@ -325,6 +327,57 @@ test.describe("Graph execution contract — order, partial failure, skipped bran
       // Sink is downstream of the never-run cycle, so it never built — the
       // engine must not report it in outputs as a completed node.
       expect(Object.keys(outputs), "Sink never built and must not be reported completed").not.toContain("Sink");
+    },
+  );
+
+  test(
+    "a failing run's AG-UI stream ends at RUN_ERROR, with no RUN_FINISHED after it",
+    { tag: ["@api", "@regression", "@playground", "@stable"] },
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare([WORKFLOWS_OP]);
+
+      // Root -> X(raise) ; Root -> S(slow) -> T. S is still building when X
+      // fails, so a stream that kept going after the failure would have events
+      // to send after RUN_ERROR. RUN_ERROR is terminal in AG-UI; until upstream
+      // #16492 the stream sent it mid-run and still ended with RUN_FINISHED.
+      const spec: GraphSpec = {
+        nodes: [
+          { id: "Root", kind: "echo" },
+          { id: "X", kind: "raise", fields: ["incoming"] },
+          { id: "S", kind: "echo", fields: ["incoming"], delayS: 0.5 },
+          { id: "T", kind: "echo", fields: ["incoming"] },
+        ],
+        edges: [
+          { source: "Root", target: "X", field: "incoming" },
+          { source: "Root", target: "S", field: "incoming" },
+          { source: "S", target: "T", field: "incoming" },
+        ],
+      };
+      const flowId = await makeFlow(request, "gxc-agui-error", spec);
+
+      const res = await request.post("/api/v2/workflows", {
+        headers: { Authorization: bearerToken },
+        data: { flow_id: flowId, mode: "stream", stream_protocol: "agui", input_value: "in" },
+      });
+      expect(res.status(), "the AG-UI stream answers 200").toBe(200);
+      const events = parseStreamEvents(await res.text()) as Array<{ type?: unknown; message?: unknown }>;
+      const types = events.map((event) => String(event?.type));
+      const sequence = types.join(" -> ");
+
+      await test.step("the stream starts with RUN_STARTED", () => {
+        expect(types[0], `the first event (stream: ${sequence})`).toBe("RUN_STARTED");
+      });
+
+      await test.step("RUN_ERROR is sent once, as the last event, and no RUN_FINISHED follows", () => {
+        expect(types.filter((type) => type === "RUN_ERROR"), `one RUN_ERROR (stream: ${sequence})`).toHaveLength(1);
+        expect(types[types.length - 1], `the last event (stream: ${sequence})`).toBe("RUN_ERROR");
+        expect(types, `no RUN_FINISHED after a failure (stream: ${sequence})`).not.toContain("RUN_FINISHED");
+      });
+
+      await test.step("the error is the one X raised", () => {
+        const runError = events.find((event) => event?.type === "RUN_ERROR");
+        expect(String(runError?.message ?? ""), "RUN_ERROR carries X's error").toContain("boom-X");
+      });
     },
   );
 });
