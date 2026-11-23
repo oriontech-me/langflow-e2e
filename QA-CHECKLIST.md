@@ -1911,7 +1911,7 @@
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
-| `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
+| `core-functionality/a2a/` | 20 | 15 | 0 | 1 | 4 |
 | `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
@@ -1925,7 +1925,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **944** | **811 (86%)** | **68 (7%)** | **18 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **945** | **812 (86%)** | **68 (7%)** | **18 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1941,7 +1941,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 932 `test()` calls carrying the `@stable` tag, distributed across 325 spec
+> 936 `test()` calls carrying the `@stable` tag, distributed across 326 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2365,6 +2365,10 @@
 - [x] the api-key gate follows the project the flow lives in → `a2a-server-auth-apikey.spec.ts`
 - [x] discovery lists only agent-typed, A2A-enabled flows → `a2a-server-discovery.spec.ts`
 - [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
+- [x] a paused task resumes on the approved branch only → `a2a-server-hitl-pause-resume.spec.ts`
+- [x] a paused task resumes on the rejected branch only → `a2a-server-hitl-pause-resume.spec.ts`
+- [x] a second Human Input pauses the same task again → `a2a-server-hitl-pause-resume.spec.ts`
+- [x] a paused task can only be resumed by the principal that started it → `a2a-server-hitl-pause-resume.spec.ts`
 - [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
