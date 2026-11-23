@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BUDGETS, checkDocument, fileBudget, render, splitBlocks } from "./check-claude-md-budget.mjs";
+import { BUDGETS, checkDocument, fileBudget, findImports, render, splitBlocks, toRepoPath } from "./check-claude-md-budget.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-claude-md-budget.mjs", import.meta.url));
@@ -37,36 +37,118 @@ test("a top-level list item owns its indented and nested lines, across blank lin
   assert.equal(blocks[1].line, 6);
 });
 
-test("a heading, a table or a column-0 paragraph after a blank line ends the block", () => {
-  const text = [
-    "- item",
-    "## Heading",
-    "- item two",
-    "| a | b |",
-    "- item three",
-    "",
-    "A paragraph",
-    "that wraps.",
-  ].join("\n");
+test("a heading ends a block; a column-0 paragraph after a blank line starts one", () => {
+  const text = ["- item", "## Heading", "- item two", "", "A paragraph", "that wraps."].join("\n");
   const blocks = splitBlocks(text);
-  assert.deepEqual(blocks.map((b) => b.line), [1, 3, 5, 7]);
-  // The table row is not folded into the item before it.
+  assert.deepEqual(blocks.map((b) => b.line), [1, 3, 5]);
+  assert.equal(blocks[0].bytes, Buffer.byteLength("- item\n"));
   assert.equal(blocks[1].bytes, Buffer.byteLength("- item two\n"));
-  assert.equal(blocks[3].bytes, Buffer.byteLength("A paragraph\nthat wraps.\n"));
+  assert.equal(blocks[2].bytes, Buffer.byteLength("A paragraph\nthat wraps.\n"));
 });
 
-test("a column-0 fenced block is not a block and its list-like lines are ignored", () => {
-  const text = ["```bash", "- not a bullet " + "x".repeat(500), "```", "- real"].join("\n");
+test("numbered, `*` and `+` items are blocks like `-` items", () => {
+  const blocks = splitBlocks(["1. one", "10) ten", "* star", "+ plus"].join("\n"));
+  assert.deepEqual(blocks.map((b) => b.line), [1, 2, 3, 4]);
+});
+
+test("each table row is its own block, so narrative in a row is budgeted", () => {
+  const row = "| " + "n".repeat(200) + " | y |";
+  const blocks = splitBlocks(["- item", "| a | b |", "|---|---|", row].join("\n"));
+  assert.deepEqual(blocks.map((b) => b.line), [1, 2, 3, 4]);
+  assert.equal(blocks[0].bytes, Buffer.byteLength("- item\n"));
+  assert.equal(blocks[3].bytes, Buffer.byteLength(row) + 1);
+});
+
+test("a column-0 fence is one block, and list-like lines inside it start nothing", () => {
+  const inner = "- not a bullet " + "x".repeat(500);
+  const blocks = splitBlocks(["```bash", inner, "```", "- real"].join("\n"));
+  assert.deepEqual(blocks.map((b) => b.line), [1, 4]);
+  assert.equal(blocks[0].bytes, Buffer.byteLength(["```bash", inner, "```", ""].join("\n")));
+  assert.equal(blocks[1].preview, "- real");
+});
+
+test("a tilde fence is a fence too", () => {
+  const blocks = splitBlocks(["~~~", "- inside", "~~~", "- after"].join("\n"));
+  assert.deepEqual(blocks.map((b) => b.line), [1, 4]);
+});
+
+test("a fence closes only on the same character, at least as long", () => {
+  const text = ["~~~~", "```", "- inside", "~~~", "- still inside", "~~~~", "- after"].join("\n");
+  assert.deepEqual(splitBlocks(text).map((b) => b.line), [1, 7]);
+  // Same length, other character: still inside.
+  const mixed = ["~~~", "```", "- inside", "~~~", "- after"].join("\n");
+  assert.deepEqual(splitBlocks(mixed).map((b) => b.line), [1, 5]);
+});
+
+test("a line starting with inline backticks is text, not a fence", () => {
+  const text = ["Para", "```foo``` is inline " + "x".repeat(50), "- next"].join("\n");
   const blocks = splitBlocks(text);
-  assert.equal(blocks.length, 1);
-  assert.equal(blocks[0].preview, "- real");
+  assert.deepEqual(blocks.map((b) => b.line), [1, 3]);
+  assert.ok(blocks[0].bytes > 50);
 });
 
-test("an indented fence inside a list item counts toward that item", () => {
+test("an unclosed fence runs to the end and is counted, never hidden", () => {
+  const tail = "- a " + "x".repeat(400);
+  const blocks = splitBlocks(["```", "", tail].join("\n"));
+  assert.equal(blocks.length, 1);
+  assert.ok(blocks[0].bytes > 400);
+});
+
+test("an indented fence inside a list item, after a blank line, counts toward the item", () => {
   const body = "  echo " + "y".repeat(300);
-  const text = ["- item", "  ```bash", body, "  ```"].join("\n");
-  const [block] = splitBlocks(text);
-  assert.ok(block.bytes > 300, `fence content must count, got ${block.bytes}`);
+  const text = ["- item", "", "  ```bash", body, "  - not an item", "  ```", "- next"].join("\n");
+  const blocks = splitBlocks(text);
+  assert.deepEqual(blocks.map((b) => b.line), [1, 7]);
+  const expected = ["- item", "  ```bash", body, "  - not an item", "  ```"]
+    .reduce((n, l) => n + Buffer.byteLength(l) + 1, 0) + 1;
+  assert.equal(blocks[0].bytes, expected);
+});
+
+test("@path imports are found outside code; @tags and code spans are not", () => {
+  const text = [
+    "@docs/infra/pr-validation.md",
+    "See @README.md and `cat @not/this.md`.",
+    "Tag with @stable or @release.",
+    "```",
+    "@inside/fence.md",
+    "```",
+    "- (@~/notes/x.md)",
+  ].join("\n");
+  assert.deepEqual(findImports(text), [
+    { line: 1, token: "@docs/infra/pr-validation.md" },
+    { line: 2, token: "@README.md" },
+    { line: 7, token: "@~/notes/x.md" },
+  ]);
+});
+
+test("an import fails the check even when every budget is met", () => {
+  const r = checkDocument("CLAUDE.md", "- ok\n@docs/infra/x.md\n", SMALL);
+  assert.equal(r.overFile, false);
+  assert.equal(r.overBlocks.length, 0);
+  assert.match(render([r], SMALL), /^FAIL[\s\S]*import: CLAUDE\.md:2 {2}@docs\/infra\/x\.md/m);
+});
+
+test("a file exactly at budget passes; one byte more fails", () => {
+  const text = "a".repeat(SMALL.rootFile);
+  assert.equal(checkDocument("CLAUDE.md", text, { ...SMALL, block: 1e9 }).overFile, false);
+  assert.equal(checkDocument("CLAUDE.md", text + "a", { ...SMALL, block: 1e9 }).overFile, true);
+});
+
+test(".claude/CLAUDE.md is a project-root guide and gets the root budget", () => {
+  assert.equal(fileBudget(".claude/CLAUDE.md"), BUDGETS.rootFile);
+});
+
+test("toRepoPath normalises ./, absolute and subdirectory-relative paths", () => {
+  assert.equal(toRepoPath("./CLAUDE.md", "/r", "/r"), "CLAUDE.md");
+  assert.equal(toRepoPath("/r/CLAUDE.md", "/r", "/anywhere"), "CLAUDE.md");
+  assert.equal(toRepoPath("CLAUDE.md", "/r", "/r/a/b"), "a/b/CLAUDE.md");
+  assert.equal(toRepoPath("../../CLAUDE.md", "/r", "/r/a/b"), "CLAUDE.md");
+});
+
+test("the over-budget report lists up to five largest blocks", () => {
+  const text = Array.from({ length: 8 }, (_, i) => `- item ${i} ${"z".repeat(60)}`).join("\n");
+  const report = render([checkDocument("CLAUDE.md", text, { ...SMALL, block: 1e9 })], SMALL);
+  assert.equal((report.match(/^ {4}CLAUDE\.md:\d+/gm) ?? []).length, 5);
 });
 
 test("bytes are UTF-8 bytes, not characters", () => {
@@ -147,4 +229,20 @@ test("CLI: with no arguments it discovers root and nested tracked guides", () =>
   assert.match(res.stdout, /^ok {3}CLAUDE\.md: \d+ \/ 40000/m);
   assert.match(res.stdout, /^ok {3}a\/b\/CLAUDE\.md: \d+ \/ 20000/m);
   assert.doesNotMatch(res.stdout, /untracked/);
+});
+
+test("CLI: run from a subdirectory it still checks every guide, with root-relative paths", () => {
+  const dir = makeTempDir("claude-md-budget-subdir-");
+  execFileSync("git", ["init", "-q", dir]);
+  mkdirSync(join(dir, "a", "b"), { recursive: true });
+  writeFileSync(join(dir, "CLAUDE.md"), "- root\n");
+  writeFileSync(join(dir, "a", "b", "CLAUDE.md"), "- area\n");
+  execFileSync("git", ["-C", dir, "add", "CLAUDE.md", "a/b/CLAUDE.md"]);
+  const res = spawnSync("node", [SCRIPT], { cwd: join(dir, "a", "b"), encoding: "utf8" });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^ok {3}CLAUDE\.md: \d+ \/ 40000/m);
+  assert.match(res.stdout, /^ok {3}a\/b\/CLAUDE\.md: \d+ \/ 20000/m);
+  const explicit = spawnSync("node", [SCRIPT, "CLAUDE.md", "../../CLAUDE.md"], { cwd: join(dir, "a", "b"), encoding: "utf8" });
+  assert.match(explicit.stdout, /^ok {3}a\/b\/CLAUDE\.md: \d+ \/ 20000/m);
+  assert.match(explicit.stdout, /^ok {3}CLAUDE\.md: \d+ \/ 40000/m);
 });

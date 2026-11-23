@@ -37,6 +37,14 @@ jobs:
       - name: TypeScript check
         run: npm run typecheck
 
+      # CLAUDE.md loads into every agent session. It grew to 171 KB one infra
+      # fix at a time, each bullet absorbing its mechanism's whole narrative,
+      # until #2532 moved those into docs/infra/. Budget per file and per bullet
+      # so the next narrative lands in docs/infra/ instead (#2542). It runs
+      # before the unit lanes so a red unit test never hides its verdict.
+      - name: CLAUDE.md size budget
+        run: npm run check:claude-md-budget
+
       # Unit tests for the dependency-free helpers under scripts/ — plain
       # `node --test`, no Playwright and no backend, so they belong in this fast
       # job rather than the E2E one. These cover CI-critical logic that had no
@@ -80,13 +88,6 @@ jobs:
       # headline number can never silently disagree with the table.
       - name: Regression Ledger indicator in sync
         run: npm run regressions:check
-
-      # CLAUDE.md loads into every agent session. It grew to 171 KB one infra
-      # fix at a time, each bullet absorbing its mechanism's whole narrative,
-      # until #2532 moved those into docs/infra/. Budget per file and per bullet
-      # so the next narrative lands in docs/infra/ instead (#2542).
-      - name: CLAUDE.md size budget
-        run: npm run check:claude-md-budget
 
   lint:
     name: ESLint
