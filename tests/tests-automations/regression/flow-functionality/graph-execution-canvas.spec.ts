@@ -98,20 +98,26 @@ test.describe("Graph execution on the canvas — cycle refusal and partial-failu
   );
 
   test(
-    "a partial failure flags the failed node and shows the completed branches on the canvas",
+    "a partial failure flags the failed node on the canvas",
     { tag: ["@workspace", "@ui-ux", "@playground", "@regression", "@stable"] },
     async ({ page, request }) => {
       // DECLARED FAILING (#1896). Root -> Raiser(raise) -> Join.left ;
-      // Root -> Slow -> Tail -> Join.right. Running Join, the backend completes
-      // the Slow/Tail branch and flags Raiser, but the AG-UI stream emits
-      // RUN_ERROR mid-run and the frontend stops there: no node_status_icon
-      // renders and only node_duration_root shows (measured 1.13.0.dev14). The
-      // assertion below is the correct contract — a completed branch (Tail) shows
-      // as built — which fails today; test.fail() expects that. The day upstream
-      // stops treating a component error as terminal, Tail renders and this flips
-      // to an unexpected pass: drop test.fail(), restore @stable if the daily
-      // already removed it (it treats the unexpected pass as a hard failure),
-      // flip the §12.6 canvas bullet.
+      // Root -> Slow -> Tail -> Join.right. Running Join, the AG-UI stream the
+      // canvas receives (measured 1.14.0.dev35, 3/3) is RUN_STARTED, two
+      // STATE_SNAPSHOTs, Root's STEP_FINISHED + STATE_DELTA, a langflow.event
+      // error naming Raiser, then RUN_ERROR, and it ends there. Raiser's own
+      // STATE_DELTA (status "error") never arrives, so no node_status_icon
+      // renders. The frontend can draw the flag: with that delta injected before
+      // RUN_ERROR, node_status_icon_raiser_error appears. The assertion below is
+      // that contract; it fails today and test.fail() expects that. The day the
+      // backend reports the failed node before RUN_ERROR, this flips to an
+      // unexpected pass: drop test.fail(), restore @stable if the daily already
+      // removed it (it treats the unexpected pass as a hard failure), flip the
+      // §12.6 canvas bullet.
+      //
+      // This test used to assert that the completed Slow -> Tail branch renders.
+      // Upstream #16492 made RUN_ERROR terminal and drops every later event, so
+      // that can no longer happen by design; the contract spec pins that rule.
       test.fail();
       (page as PageWithFlowHooks).allowFlowErrors();
 
@@ -141,10 +147,10 @@ test.describe("Graph execution on the canvas — cycle refusal and partial-failu
       await expect(page.getByTestId("node_duration_root")).toBeVisible({ timeout: 30000 });
       await expect(page.getByText("Flow build failed")).toBeVisible({ timeout: 10000 });
 
-      // The correct contract: the Slow -> Tail branch completed on the backend,
-      // so Tail should render as built. It does not today (the canvas froze at
-      // RUN_ERROR), so this fails and test.fail() expects it.
-      await expect(page.getByTestId("node_duration_tail")).toBeVisible({ timeout: 8000 });
+      // The correct contract: the node that raised is flagged as failed. It is
+      // not today (its error state never reaches the canvas before RUN_ERROR),
+      // so this fails and test.fail() expects it.
+      await expect(page.getByTestId("node_status_icon_raiser_error")).toBeVisible({ timeout: 8000 });
     },
   );
 });

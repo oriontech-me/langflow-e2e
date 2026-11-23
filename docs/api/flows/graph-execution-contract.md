@@ -1,6 +1,6 @@
 # Graph Execution Contract — order, partial failure, skipped branches
 
-**Last validated:** Langflow 1.13.x
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev35`, `sha256:a2f75e01…`) — Test 6 added there for upstream #16492; Tests 1–5 re-run on the same image, 3 of 3, with Test 5 failing as declared
 
 ---
 
@@ -8,9 +8,11 @@
 
 Validates the **graph-execution engine's contract** as it is observable over the
 REST run surface — `POST /api/v1/build/{flow_id}/flow?event_delivery=direct` (the
-NDJSON build stream) and `POST /api/v2/workflows` (`mode: "sync"`). It covers the
+NDJSON build stream) and `POST /api/v2/workflows` (`mode: "sync"`, and
+`mode: "stream"` with `stream_protocol: "agui"` for Test 6). It covers the
 three `QA-CHECKLIST` §12.6 behaviors that hold today plus the one that does not,
-for the engine's own semantics rather than any component:
+for the engine's own semantics rather than any component, and the AG-UI stream's
+terminal-error rule:
 
 1. **Execution order respects data dependency** — a node that consumes another's
    output never finishes before its producer, and it receives that producer's
@@ -25,6 +27,13 @@ for the engine's own semantics rather than any component:
    (**declared failing**, see Tags) — a graph carrying a cycle through regular
    (non-loop) input ports runs to `status: "completed"` and lists a downstream
    node that never built in `outputs`, which is the defect this spec pins.
+5. **A failing run's AG-UI stream ends at `RUN_ERROR`** — `RUN_ERROR` is the last
+   event, it appears once, and no `RUN_FINISHED` follows it, even though an
+   independent branch is still building. This is the AG-UI rule that `RUN_ERROR`
+   is terminal. Until upstream #16492 (`release-1.14.0`, merged 2026-11-18) the
+   stream sent `RUN_ERROR` mid-run and kept going until `RUN_FINISHED`; that
+   violation was the backend target #1896 recorded for the canvas defect. The
+   test is a regression guard for the fix.
 
 Every node is a `CustomComponent` whose Python body fixes its behavior (echo,
 optionally after a delay; `raise`; `self.stop()`), so the **graph shape is the
@@ -42,7 +51,7 @@ consumer built before its producer, or a stopped branch built anyway.
 
 `@api` `@regression` `@playground` `@stable`
 
-Every test carries `@stable`, including the declared-failing one. **Test 4 is
+Every test carries `@stable`, including the declared-failing one. **Test 5 is
 declared failing with `test.fail()`** against a live upstream defect (issue #1896):
 `POST /api/v2/workflows` `mode=sync` answers `status: "completed"` for a graph
 whose regular-port cycle, and the node downstream of it, never built — and lists
@@ -52,9 +61,9 @@ failing as expected; the day upstream fixes it, the run reports *"expected to
 fail, but passed"* and the lift is: delete `test.fail()` and this note, restore
 `@stable` if the daily already removed it (the daily treats the unexpected pass as a
 hard failure), flip the §12.6 bullet, and close #1896. An **attribution control**
-(Test 4's sibling, not declared failing) builds the *acyclic* equivalent through
+(Test 4, not declared failing) builds the *acyclic* equivalent through
 the same helpers and asserts the downstream node builds and is reported
-`completed` with its real output — so a red Test 4 is the cycle defect, never a
+`completed` with its real output — so a red Test 5 is the cycle defect, never a
 broken harness.
 
 ---
@@ -105,7 +114,7 @@ records — the output type must be set to `Message` (the stock template says
 3. Assert `status: "completed"`, `errors: []`, and `Leaf` present in `outputs`
    with non-null content — the harness reads a completed terminal correctly.
 
-**Test 4 (declared failing, `test.fail()`) — a regular-port cycle must not report a never-built node completed (`/workflows` sync)**
+**Test 5 (declared failing, `test.fail()`) — a regular-port cycle must not report a never-built node completed (`/workflows` sync)**
 1. Build `Root → Alpha`, `Alpha → Beta`, `Beta → Alpha` (regular `loopback`
    port — a cycle), `Beta → Sink`; `Root` is the external root and no node id
    matches the `"webhook"/"chat"` start heuristic, so the cycle never runs and the
@@ -115,6 +124,18 @@ records — the output type must be set to `Message` (the stock template says
 3. Assert the correct contract — `Sink` (downstream of the cycle, never built) is
    **not** reported in `outputs` as `completed`. Today it is, so the assertion
    fails and `test.fail()` expects that.
+
+**Test 6 — a failing run's AG-UI stream ends at `RUN_ERROR` (`/workflows` stream, `agui`)**
+1. Build `Root → X(raise)`; `Root → S(0.5 s) → T`. The slow independent branch is
+   still building when `X` fails, so a stream that kept going after the failure
+   would have events to send after `RUN_ERROR`.
+2. `POST /api/v2/workflows` `{mode: "stream", stream_protocol: "agui"}` — the
+   protocol the canvas and the Playground send. Assert `200`, and parse the SSE
+   body with `parseStreamEvents()` (`tests/fixtures/flow-error-policy.ts`).
+3. Assert the first event is `RUN_STARTED`, exactly one event is `RUN_ERROR`, it
+   is the **last** event, no `RUN_FINISHED` appears anywhere, and its `message`
+   carries `boom-X`. Measured on `1.14.0.dev35`: the stream is exactly
+   `RUN_STARTED → RUN_ERROR("boom-X")`.
 
 ---
 
@@ -126,8 +147,13 @@ records — the output type must be set to `Message` (the stock template says
   sibling failure with the failed node flagged, and the stopped branch is skipped.
 - Test 4's attribution control is green (acyclic terminal reported `completed`
   with output).
-- Test 4 (declared) fails as expected while #1896 is live: `Sink` is reported
+- Test 5 (declared) fails as expected while #1896 is live: `Sink` is reported
   `completed` though it never built.
+- Test 6 is green: the failing run's AG-UI stream starts with `RUN_STARTED` and
+  ends with its only `RUN_ERROR`, with no `RUN_FINISHED`. Force-failed twice: with
+  `X` turned into an echo (no failure, so the stream ends `RUN_FINISHED` with no
+  `RUN_ERROR`), and with a `RUN_FINISHED` event appended to the received body
+  (the shape the stream had before #16492).
 - `apiCoverage` declares `POST /api/v1/build/{flow_id}/flow` and
   `POST /api/v2/workflows`, each issued by the test that declares it.
 - No `🚨 Backend Error` is logged — the runs answer HTTP 200; the deliberate
@@ -140,10 +166,11 @@ records — the output type must be set to `Message` (the stock template says
 
 ## What this test does not cover *(optional)*
 
-- **The AG-UI / canvas surface.** `mode=stream, stream_protocol=agui` (what the
-  Playground sends) mis-handles a partial failure — RUN_ERROR mid-run freezes the
-  canvas — and the canvas refuses to *draw* a cycle edge. Both are the sibling
-  **canvas** spec's subject (issue #1896).
+- **The canvas surface.** Whether the canvas flags the failed node of a partial
+  failure (declared failing: the stream never carries that node's error state
+  before `RUN_ERROR`), and the canvas's refusal to *draw* a cycle edge, are the
+  sibling **canvas** spec's subject (issue #1896). This spec covers only the
+  AG-UI stream's terminal-error rule (Test 6).
 - **The pure-cycle runaway.** A regular-port cycle with **no external root** whose
   node id matches the `"webhook"/"chat"` start heuristic *does* run, unbounded,
   because the `/build` walker enforces no `max_iterations`. It is deliberately not
@@ -187,7 +214,10 @@ records — the output type must be set to `Message` (the stock template says
   (`find_start_component_id` / `layered_topological_sort`, the `"webhook"/"chat"`
   start heuristic), and `src/backend/base/langflow/api/build.py` (the
   `build_vertices` driver, which stops only the failed vertex's successors and
-  passes no `max_iterations`).
+  passes no `max_iterations`), and `src/lfx/src/lfx/workflow/agui_translator.py`
+  (after `RUN_ERROR` it drops every later event, since upstream #16492 — Test 6).
+- **Fixture** — `parseStreamEvents()` in `tests/fixtures/flow-error-policy.ts`,
+  the suite's one SSE/NDJSON parser.
 - **Custom components** — the graphs are built from `CustomComponent`, so
   `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` is required (#668/#746).
 - **No external network, no provider account.**
