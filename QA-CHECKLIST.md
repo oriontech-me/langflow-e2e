@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-22
+> **Last updated:** 2026-11-23
 
 ---
 
@@ -1938,7 +1938,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 931 `test()` calls carrying the `@stable` tag, distributed across 326 spec
+> 932 `test()` calls carrying the `@stable` tag, distributed across 326 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2126,6 +2126,7 @@
 - [x] batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working → `workflows-v2-job-lifecycle.spec.ts`
 - [x] batch create refuses a duplicate endpoint_name with its own message → `workflows-v2-job-lifecycle.spec.ts`
 - [x] a completed background run reports the session it was given → `workflows-v2-job-lifecycle.spec.ts`
+- [x] a completed sync run answers its own status query with the session and outputs it returned → `workflows-v2-job-lifecycle.spec.ts`
 - [x] attribution control: the sync read-back is correct once the job's rows settle → `workflows-v2-job-lifecycle.spec.ts`
 
 #### api/instance/
