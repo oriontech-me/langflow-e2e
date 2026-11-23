@@ -519,7 +519,7 @@ Ask what the number is for:
   #   npx playwright test --grep "@stable" --list
   ```
 
-`CLAUDE.md` already states this for one counter that moves whenever a doc names a component path — *"re-run the grep rather than quoting the number"*. It generalises: **if a reader cannot re-derive your figure from what you wrote, do not write the figure.**
+`docs/infra/component-availability.md` (moved from `CLAUDE.md`) already states this for one counter that moves whenever a doc names a component path — *"re-run the grep rather than quoting the number"*. It generalises: **if a reader cannot re-derive your figure from what you wrote, do not write the figure.**
 
 And when a measurement has to be taken, take it **through the path the code actually uses**. A value built by hand for the measurement is a measurement of the hand-built value.
 
