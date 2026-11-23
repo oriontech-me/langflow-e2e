@@ -2,7 +2,7 @@
 
 One line per moving part, linking to its file or owner doc. This is an index, not
 an explanation — the authoritative behaviour lives in each file's header comments,
-`CLAUDE.md` (CI/CD section), and the linked docs. Verify against the live files
+`CLAUDE.md` (CI/CD section), `docs/infra/` (the full mechanisms), and the linked docs. Verify against the live files
 before acting; this list drifts.
 
 ## GitHub workflows (`.github/workflows/`)

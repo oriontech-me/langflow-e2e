@@ -658,7 +658,7 @@ test("the component-probe gate spec does not read as provider-dependent", () => 
   // hard-failing test by itself and commits it to `main` unreviewed, and since
   // #1822/#1857 that path reaches the gate specs too — so asserting the tag here
   // would redden `test:scripts` on `main` and on every open PR until a human
-  // edited this file, landing a daily failure on uninvolved authors. CLAUDE.md
+  // edited this file, landing a daily failure on uninvolved authors. docs/infra/stable-ownership.md
   // records that inversion as the reason the ownership guard only WARNS for a
   // spec the PR did not touch (#980). Who owns the tag is
   // `stable-orphan-reconcile.yml` and `check-stable-ownership`; what this guard

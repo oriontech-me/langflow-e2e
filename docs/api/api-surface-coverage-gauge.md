@@ -195,7 +195,7 @@ already trusted here and its failure modes are already understood (#1040, #980,
 
 The verdict is a **pure function that cannot throw** — `globalSetup` holds only
 I/O. That layering is what made the catalog guarantee testable instead of asserted,
-and the lesson it cost is recorded in `CLAUDE.md`: the first version compared
+and the lesson it cost is recorded in `docs/infra/component-availability.md`: the first version compared
 outside both try blocks and aborted a whole run with `TypeError` on a hand-repaired
 baseline.
 

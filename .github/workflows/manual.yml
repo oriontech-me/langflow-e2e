@@ -26,7 +26,7 @@ on:
           Verifying a suite-wide change? Use @stable — it is the largest selection
           this lane finishes inside its timeout. Empty = every test, which is NOT
           bounded: it pulls in the unvalidated specs, and those retry twice against
-          a 5-minute per-test timeout. See CLAUDE.md -> What manual.yml can actually run.
+          a 5-minute per-test timeout. See docs/infra/lanes-and-services.md -> What manual.yml can actually run.
         required: false
         default: ""
       test_grep:
