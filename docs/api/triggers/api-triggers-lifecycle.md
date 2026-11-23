@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/triggers/api-triggers-lifecycle.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev35`)
 
 Owning issue: #2303 (Dedicated Integrations, batch 2). The siblings in this directory each needed a
 trigger to exist and made one with the calls they needed; this file owns the calls themselves. What a
@@ -23,8 +23,8 @@ API and an imported flow JSON are the only surfaces for most of it. The contract
 1. **CRUD.** `POST /triggers` answers `201` with the exact 28-key `TriggerRead` and the defaults
    (`pending`, `flow` binding, `per_event`, `concurrency_limit: 1`, `max_attempts: 5`), owned by the flow's
    owner. `GET` by id, the list by `flow_id`, `PATCH` and `DELETE` (`204`, then `404` on every read).
-   `PATCH` with an explicit `null` is refused on the six required fields and, on the three nullable
-   references, clears a value that was set. A `schedule` created through the API validates its cron on
+   `PATCH` with an explicit `null` is refused on the six required fields and, on the two nullable
+   references the suite can set (`connection_id`, `flow_version_id`), clears a value that was set. A `schedule` created through the API validates its cron on
    create and on `PATCH`.
 2. **State machine.** `enable` arms (`active`) and `disable` pauses (`paused`). Both are idempotent.
    `pending`, `expired` and `error` all enable. A `dead` trigger can be neither enabled nor disabled, and
@@ -158,8 +158,12 @@ ticket:
     or enable.
   - **Foreign keys enforced** (`LANGFLOW_SQLITE_PRAGMAS` with `"foreign_keys": "ON"`, as the QA VM's
     daily runs since #1717, and every Postgres deployment): the create → **`500`**, whose body is the raw
-    `IntegrityError` naming the foreign-key violation and the SQL statement, and no row is written. Measured
-    on the 2026-11-20 daily (`1.14.0.dev33`, run `20261120T080016Z`).
+    driver error naming the foreign-key violation and the SQL statement (`(sqlite3.IntegrityError) FOREIGN
+    KEY constraint failed` on SQLite; psycopg names it `ForeignKeyViolation` on Postgres, not measured
+    here), and no row is written. The exception is unhandled, so the server also drops the connection
+    after the `500`, and the next request on that keep-alive socket fails with *"socket hang up"*; the test
+    sends `Connection: close` on this one request. Measured on the 2026-11-20 daily (`1.14.0.dev33`, run
+    `20261120T080016Z`) and locally on `1.14.0.dev35`.
 
   The fixed contract is a `4xx` at create (and at `PATCH`) naming the missing deployment; either
   outcome above going away is the lead turning red.
@@ -295,8 +299,11 @@ empty (`{nodes: [], edges: []}`) unless stated. Names carry a per-run suffix.
 3. `POST …/test` → `202`; poll the events until it settles → `failed`, the exact `error`. The trigger
    reads `active`, `reason: "degraded"`, that `last_error`.
 
-Both branches are exercised by the lanes as they are configured: the PR lane's image runs SQLite's
-default pragmas, and the QA VM's daily enforces foreign keys.
+The scheduled lane, the QA VM's daily, enforces foreign keys, so it runs only the `500` branch. The `201`
+branch (enable, the test event, `degraded`) runs on the PR lane's image, which keeps SQLite's default
+pragmas, whenever a PR selects this spec, and locally against an image started without the pragma. A
+`PATCH` of a `deployment_id` that names nothing behaves the same way (`500` with foreign keys enforced,
+measured on `1.14.0.dev35`) and is not asserted: the create is the lead's one probe.
 
 ### 9. Lead: enable arms a webhook whose payload_schema is malformed, and erases the error
 
@@ -315,8 +322,10 @@ default pragmas, and the QA VM's daily enforces foreign keys.
 
 ## Validation criterion *(required)*
 
-Tests 1–10 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev32`, and three
-times at the default worker count, with:
+Tests 1–10 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev35`, and at the
+default worker count, **both with SQLite foreign keys enforced** (`LANGFLOW_SQLITE_PRAGMAS` with
+`"foreign_keys": "ON"`, as the QA VM runs) **and with the product's default pragmas** (as the image ships),
+with:
 
 - every refusal asserted by its status and its exact body, or its `type` and `loc`;
 - every write's effect re-read through `GET` or the flow's list — never inferred from the write's own

@@ -791,7 +791,7 @@ test.describe("Triggers — the lifecycle", () => {
           data: { flow_id: flowId, name: `lead deployment ${run}`, kind: "inbound_webhook", binding_target: "deployment", deployment_id: deploymentId },
         });
         const text = await res.text();
-        expect([201, 500], `LEAD: create neither refuses nor checks a deployment_id that names nothing — ${res.status()} ${text}`).toContain(
+        expect([201, 500], `LEAD changed: an unchecked deployment_id answers 201 or 500, this one answered ${res.status()} ${text}`).toContain(
           res.status(),
         );
         test.info().annotations.push({
@@ -801,7 +801,9 @@ test.describe("Triggers — the lifecycle", () => {
         if (res.status() === 500) {
           apiCoverage.declare(["GET /api/v1/triggers"]);
           expect(text, "LEAD: with foreign keys enforced, the unchecked deployment_id surfaces as the database's IntegrityError").toMatch(
-            /IntegrityError[\s\S]*foreign key/i,
+            // SQLite through aiosqlite names the class `IntegrityError`; Postgres through
+            // psycopg names the driver's `ForeignKeyViolation` instead. Both say "foreign key".
+            /(IntegrityError|ForeignKeyViolation)[\s\S]*foreign key/i,
           );
           expect(await listTriggers(request, headers(), { flow_id: flowId }), "the refused create stored nothing").toEqual([]);
           return null;
