@@ -10,26 +10,40 @@
 //
 // Two budgets, both in UTF-8 bytes:
 //   * per file — the whole guide (the project-root guides and the area guides
-//     have different budgets);
-//   * per block — the unit that grew. A file budget alone lets one bullet absorb
-//     the headroom left by trimming the others. A block is one top-level list
-//     item with its nested and continuation lines, one paragraph, one top-level
-//     fenced code block, or one table row. Fences and rows are blocks too, so
-//     narrative cannot be parked in them out of the block budget's sight.
+//     have different budgets). This is the bound that holds.
+//   * per block — what follows a blank line or a column-0 list marker or
+//     heading, up to the next one. It exists to name, early, the one bullet
+//     that is absorbing a narrative.
+// A block is deliberately NOT a full Markdown construct: no fences, tables or
+// indentation rules. Two review rounds on a
+// hand-written CommonMark splitter (#2542) each found new ways a nested table,
+// a CRLF fence or an indented heading moved a boundary; the guard grew to ~280
+// lines to watch 33 KB of text. Two line-level boundaries have no such cases.
+// Their known blind spots — narrative broken up by blank lines, or a column-0
+// `- ` inside a fenced block splitting it — make blocks smaller, never hide a
+// file's growth: the file budget still bounds them, and the first is a
+// deliberate evasion, not the gradual growth this guards against.
+//
 // And one prohibition: an `@path` import. Claude Code inlines the imported file
-// into every session, so a 30-byte line can load 20 KB the budget never sees.
+// into every session, so one short line can load 20 KB the budget never sees.
+// An `@token` counts as an import when it names a file that exists (relative to
+// the guide, absolute, or under `~/`), so `@stable` and `@axe-core/playwright`
+// are not imports and `@README` is. Inline code spans are skipped; fenced code is
+// not (conservative: rephrase a fenced example rather than parse fences here).
 //
 // Raising a budget is an edit to BUDGETS below, so it shows up in review.
 //
 // Usage: node scripts/check-claude-md-budget.mjs [file ...]
 //   With no arguments, checks every CLAUDE.md tracked by git, from any
-//   directory of the checkout. Paths are reported relative to the repo root.
+//   directory of the checkout. Paths are reported relative to the repo root;
+//   a path outside the repository is refused.
 // Exits 1 when any file or block is over budget or a guide imports a file,
 // 2 when it cannot run.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BUDGETS = Object.freeze({
@@ -48,147 +62,76 @@ export function fileBudget(repoPath, budgets = BUDGETS) {
   return ROOT_GUIDES.has(repoPath) ? budgets.rootFile : budgets.areaFile;
 }
 
-/**
- * A fence opener per CommonMark: three or more backticks or tildes, indented at
- * most three spaces past `baseIndent`, and — for backticks — an info string with
- * no backtick (so "```foo``` is inline" is text, not a fence).
- */
-function fenceOpener(raw, baseIndent) {
-  const m = /^( *)(`{3,}|~{3,})(.*)$/.exec(raw);
-  if (!m) return null;
-  if (m[1].length - baseIndent > 3 || m[1].length < baseIndent) return null;
-  if (m[2][0] === "`" && m[3].includes("`")) return null;
-  return { char: m[2][0], len: m[2].length };
-}
+const normalise = (text) => text.replace(/\r\n?/g, "\n");
 
-/** A closer: the same character, at least as long, nothing after but spaces. */
-function closesFence(raw, fence) {
-  const m = /^ *(`{3,}|~{3,}) *$/.exec(raw);
-  return Boolean(m && m[1][0] === fence.char && m[1].length >= fence.len);
-}
+/** A line at column 0 that opens a list item or a heading starts a new block. */
+const BLOCK_START = /^([-*+]|\d{1,9}[.)]|#{1,6})(\s|$)/;
 
 /**
- * Split a Markdown document into budgeted blocks.
- * Returns [{ line, bytes, preview }] with 1-based start lines. Headings are not
- * blocks (they only end one). An unclosed fence runs to the end of the file, as
- * in CommonMark, and is counted as part of the block that opened it.
+ * Split a document into blocks. A block starts after a blank line
+ * (whitespace-only counts as blank) or at a column-0 list marker or heading, and
+ * runs until the next such boundary; everything indented stays with it. Returns
+ * [{ line, bytes, preview }], with 1-based start lines and bytes counted with
+ * one newline per line.
  */
 export function splitBlocks(text) {
-  const lines = text.split("\n");
   const blocks = [];
   let current = null;
-  let currentKind = null; // "item" | "para" | "fence" | "row"
-  let fence = null;
-  let pendingBlank = 0;
-
-  const close = () => {
-    if (current) blocks.push(current);
-    current = null;
-    currentKind = null;
-    pendingBlank = 0;
-  };
-  const start = (i, raw, kind) => {
-    close();
-    current = { line: i + 1, bytes: byteLength(raw) + 1, preview: raw.trim().slice(0, 80) };
-    currentKind = kind;
-  };
-  const add = (raw) => {
-    current.bytes += byteLength(raw) + 1 + pendingBlank;
-    pendingBlank = 0;
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-
-    if (fence) {
-      add(raw);
-      if (closesFence(raw, fence)) {
-        fence = null;
-        if (currentKind === "fence") close();
+  normalise(text)
+    .split("\n")
+    .forEach((raw, i) => {
+      if (raw.trim() === "") {
+        current = null;
+        return;
       }
-      continue;
-    }
-
-    if (raw.trim() === "") {
-      if (current) pendingBlank += 1;
-      continue;
-    }
-
-    const indented = /^\s/.test(raw);
-
-    // A fence inside a list item belongs to the item; one at the top level is a
-    // block of its own.
-    const nested = indented && currentKind === "item" ? fenceOpener(raw, 2) ?? fenceOpener(raw, 4) : null;
-    if (nested) {
-      add(raw);
-      fence = nested;
-      continue;
-    }
-    const top = fenceOpener(raw, 0);
-    if (top && !(indented && currentKind === "item")) {
-      start(i, raw, "fence");
-      fence = top;
-      continue;
-    }
-
-    if (/^ {0,3}#{1,6}(\s|$)/.test(raw)) {
-      close();
-      continue;
-    }
-    if (/^ {0,3}\|/.test(raw)) {
-      start(i, raw, "row");
-      continue;
-    }
-    if (indented && current && currentKind === "item") {
-      add(raw);
-      continue;
-    }
-    if (/^([-*+]|\d{1,9}[.)])(\s|$)/.test(raw)) {
-      start(i, raw, "item");
-      continue;
-    }
-    // Text right after a non-blank line continues that paragraph or item (lazy
-    // continuation); after a blank line, a row or a fence it starts a paragraph.
-    if (current && pendingBlank === 0 && (currentKind === "item" || currentKind === "para")) {
-      add(raw);
-      continue;
-    }
-    start(i, raw, "para");
-  }
-  close();
+      if (!current || BLOCK_START.test(raw)) {
+        current = { line: i + 1, bytes: 0, preview: raw.trim().slice(0, 80) };
+        blocks.push(current);
+      }
+      current.bytes += byteLength(raw) + 1;
+    });
   return blocks;
 }
 
+const isFile = (p) => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
 /**
- * `@path` imports outside code. Claude Code reads `@` followed by a path; a
- * bare `@stable` tag is not one, so a token must contain `/` or end in a file
- * extension. Inline code spans and fenced blocks are skipped.
+ * Where `@token` would resolve, per Claude Code's import rules: `~/` from the
+ * home directory, an absolute path as is, anything else relative to the guide.
+ * Returns the first existing file among the token and the token plus `.md`.
+ */
+export function resolveImport(token, guideDir, home = homedir()) {
+  const base = token.startsWith("~/") ? join(home, token.slice(2)) : isAbsolute(token) ? token : resolve(guideDir, token);
+  return [base, `${base}.md`].find(isFile) ?? null;
+}
+
+/**
+ * `@path` imports in a guide: an `@` at the start of a line or after whitespace,
+ * outside an inline code span, naming a file that exists.
  * Returns [{ line, token }].
  */
-export function findImports(text) {
+export function findImports(text, guideDir, exists = (t) => resolveImport(t, guideDir) !== null) {
   const found = [];
-  let fence = null;
-  text.split("\n").forEach((raw, i) => {
-    if (fence) {
-      if (closesFence(raw, fence)) fence = null;
-      return;
-    }
-    const opener = fenceOpener(raw.replace(/^\s+/, ""), 0);
-    if (opener) {
-      fence = opener;
-      return;
-    }
-    const prose = raw.replace(/(`+)[\s\S]*?\1/g, "");
-    for (const m of prose.matchAll(/(?:^|[\s(])@([~.\w/-]+)/g)) {
-      const token = m[1].replace(/[.,;:)]+$/, "");
-      if (token.includes("/") || /\.\w{1,5}$/.test(token)) found.push({ line: i + 1, token: `@${token}` });
-    }
-  });
+  normalise(text)
+    .split("\n")
+    .forEach((raw, i) => {
+      const prose = raw.replace(/(`+)[^`][\s\S]*?\1/g, " ");
+      for (const m of prose.matchAll(/(?:^|\s)@(\S+)/g)) {
+        const token = m[1].replace(/[.,;:!?)\]'"]+$/, "");
+        if (token && exists(token)) found.push({ line: i + 1, token: `@${token}` });
+      }
+    });
   return found;
 }
 
 /** Check one document. `path` is relative to the repository root. */
-export function checkDocument(path, text, budgets = BUDGETS) {
+export function checkDocument(path, text, budgets = BUDGETS, exists) {
   const bytes = byteLength(text);
   const budget = fileBudget(path, budgets);
   const blocks = splitBlocks(text);
@@ -199,7 +142,7 @@ export function checkDocument(path, text, budgets = BUDGETS) {
     budget,
     overFile: bytes > budget,
     overBlocks: blocks.filter((b) => b.bytes > budgets.block),
-    imports: findImports(text),
+    imports: exists ? findImports(text, ".", exists) : [],
     largest,
   };
 }
@@ -248,10 +191,14 @@ function trackedGuides() {
   return listed.split("\n").filter(Boolean);
 }
 
-/** A path given on the command line, made relative to the repository root. */
+/**
+ * A path given on the command line, made relative to the repository root.
+ * Returns null for a path outside the repository.
+ */
 export function toRepoPath(arg, root, cwd = process.cwd()) {
   const abs = isAbsolute(arg) ? arg : resolve(cwd, arg);
   const rel = relative(root, abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
   return rel.split(sep).join("/");
 }
 
@@ -265,6 +212,11 @@ function main(argv) {
     console.error(`check-claude-md-budget: cannot list tracked CLAUDE.md files: ${e.message}`);
     return 2;
   }
+  const outside = argv.filter((_, i) => paths[i] === null);
+  if (argv.length && outside.length) {
+    console.error(`check-claude-md-budget: outside the repository: ${outside.join(", ")}`);
+    return 2;
+  }
   if (paths.length === 0) {
     // An empty listing is a broken checkout, never "all clean".
     console.error("check-claude-md-budget: no CLAUDE.md found — refusing to report clean.");
@@ -272,14 +224,16 @@ function main(argv) {
   }
   const results = [];
   for (const p of paths) {
+    const abs = resolve(root, p);
     let text;
     try {
-      text = readFileSync(resolve(root, p), "utf8");
+      text = readFileSync(abs, "utf8");
     } catch (e) {
       console.error(`check-claude-md-budget: cannot read ${p}: ${e.message}`);
       return 2;
     }
-    results.push(checkDocument(p, text));
+    const guideDir = dirname(abs);
+    results.push(checkDocument(p, text, BUDGETS, (t) => resolveImport(t, guideDir) !== null));
   }
   console.log(render(results));
   return results.some(failed) ? 1 : 0;
