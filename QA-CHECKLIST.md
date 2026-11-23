@@ -1910,7 +1910,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
 | `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
-| `flow-functionality/` | 57 | 53 | 0 | 3 | 1 |
+| `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1923,7 +1923,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **943** | **810 (86%)** | **68 (7%)** | **18 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **944** | **811 (86%)** | **68 (7%)** | **18 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1939,7 +1939,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 932 `test()` calls carrying the `@stable` tag, distributed across 326 spec
+> 933 `test()` calls carrying the `@stable` tag, distributed across 326 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2120,6 +2120,7 @@
 - [x] a branch stopped by Component.stop() never builds and is reported inactive → `graph-execution-contract.spec.ts`
 - [x] sync reports an acyclic terminal as completed with its output (attribution control) → `graph-execution-contract.spec.ts`
 - [x] sync must not report a node downstream of a regular-port cycle as completed → `graph-execution-contract.spec.ts`
+- [x] a failing run's AG-UI stream ends at RUN_ERROR, with no RUN_FINISHED after it → `graph-execution-contract.spec.ts`
 - [x] the instance under test has no serving identity header configured → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
@@ -2758,7 +2759,7 @@
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
 - [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
-- [x] a partial failure flags the failed node and shows the completed branches on the canvas → `graph-execution-canvas.spec.ts`
+- [x] a partial failure flags the failed node on the canvas → `graph-execution-canvas.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
