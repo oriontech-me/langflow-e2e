@@ -771,14 +771,8 @@ test.describe("Triggers — the lifecycle", () => {
     "lead: a deployment binding's deployment_id is never checked — stored and failed at dispatch, or a 500 where foreign keys are enforced",
     { tag: ["@api", "@integrations", "@stable"] },
     async ({ request, apiCoverage }) => {
-      apiCoverage.declare([
-        "POST /api/v1/flows/",
-        "POST /api/v1/triggers",
-        "GET /api/v1/triggers/{trigger_id}",
-        "POST /api/v1/triggers/{trigger_id}/enable",
-        "POST /api/v1/triggers/{trigger_id}/test",
-        "GET /api/v1/triggers/{trigger_id}/events",
-      ]);
+      // Declared per branch below, as each is driven: the 500 branch never reaches a row.
+      apiCoverage.declare(["POST /api/v1/flows/", "POST /api/v1/triggers"]);
       const flowId = await emptyFlow(request, "lead deployment");
       const deploymentId = randomUUID();
 
@@ -805,12 +799,19 @@ test.describe("Triggers — the lifecycle", () => {
           description: res.status() === 500 ? "enforced: the create answered 500" : "not enforced: the create answered 201",
         });
         if (res.status() === 500) {
+          apiCoverage.declare(["GET /api/v1/triggers"]);
           expect(text, "LEAD: with foreign keys enforced, the unchecked deployment_id surfaces as the database's IntegrityError").toMatch(
             /IntegrityError[\s\S]*foreign key/i,
           );
           expect(await listTriggers(request, headers(), { flow_id: flowId }), "the refused create stored nothing").toEqual([]);
           return null;
         }
+        apiCoverage.declare([
+          "GET /api/v1/triggers/{trigger_id}",
+          "POST /api/v1/triggers/{trigger_id}/enable",
+          "POST /api/v1/triggers/{trigger_id}/test",
+          "GET /api/v1/triggers/{trigger_id}/events",
+        ]);
         const created = JSON.parse(text) as TriggerRead;
         const reread = await getTrigger(request, headers(), created.id);
         expect(
