@@ -699,7 +699,7 @@ export interface DeclaredStableSpecs {
  * The spec files the daily's `--grep @stable --list` is expected to produce.
  *
  * Derived from the AST, never from a grep for the token: `@stable` appears in
- * prose all over this suite, and `CLAUDE.md` records that the loose substring
+ * prose all over this suite, and `docs/infra/pr-validation.md` records that the loose substring
  * test overcounts by 8 files — one of whose only occurrence is the comment
  * "`@release`, never `@stable`".
  *

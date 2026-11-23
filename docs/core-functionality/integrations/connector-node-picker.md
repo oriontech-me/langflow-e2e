@@ -216,7 +216,7 @@ handle is bound) and `refresh-connections-<id>`.
   `ownership_mode="instance"`.
 - **The node-header connect button (A2)** is still Composio-only, and **the "managed by connection" state
   (A6)** is not shipped.
-- **`ENABLE_INTEGRATIONS` is now a frontend flag, and it is `true`.** `CLAUDE.md` still says the gate is
+- **`ENABLE_INTEGRATIONS` is now a frontend flag, and it is `true`.** `docs/infra/tags.md` (moved from `CLAUDE.md`) still says the gate is
   wired nowhere. With it off, `applyFeatureFlagFilters` would hide every connection-backed component.
 
 ---

@@ -49,7 +49,7 @@ if the image installs its distribution (`docs/component-distribution-policy.md`)
 
 Consult live; they change and override anything here:
 
-- `CLAUDE.md` (root) — architecture, commands, tags, CI, conventions.
+- `CLAUDE.md` (root) — architecture, commands, tags, CI, conventions; the full CI and fixture mechanisms it links live in `docs/infra/`.
 - `CONTRIBUTING.md` — test validation checklist and `@stable` triage rules.
 - `QA-CHECKLIST.md` — coverage per area (auto-generated blocks are read-only).
 - `QA-SCENARIOS-GUIDE.md` — step-by-step scenarios and the real DOM testids.

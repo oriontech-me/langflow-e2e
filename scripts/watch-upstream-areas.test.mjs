@@ -893,7 +893,7 @@ function suiteTagSets() {
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile() && entry.name.endsWith(".spec.ts")) {
         const source = fs.readFileSync(full, "utf8");
-        // The strict predicate CLAUDE.md records: a `tag:` array, never a match
+        // The strict predicate docs/infra/pr-validation.md records: a `tag:` array, never a match
         // anywhere in the file — the loose form overcounted 8 of 235 specs, one of
         // them on the comment "`@release`, never `@stable`".
         const tagsIn = (text) => [...text.matchAll(/@[a-z0-9-]+/g)].map((m) => m[0]);

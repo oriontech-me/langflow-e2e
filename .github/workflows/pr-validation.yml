@@ -576,7 +576,7 @@ jobs:
           # they are what keeps a shortened run from reading as a clean one even if the
           # step dies before it can render (#1012).
           if [ "$FULL_SUITE" = "true" ]; then
-            echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted and PR CI runs a bounded subset. Before merging, dispatch manual.yml on this branch with test_tag=@stable — the full suite does NOT fit that lane and never did (#1174). What @stable leaves out is named in the run summary and in CLAUDE.md -> 'What manual.yml can actually run'."
+            echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted and PR CI runs a bounded subset. Before merging, dispatch manual.yml on this branch with test_tag=@stable — the full suite does NOT fit that lane and never did (#1174). What @stable leaves out is named in the run summary and in docs/infra/lanes-and-services.md -> 'What manual.yml can actually run'."
           fi
           if [ "$DROPPED" -gt 0 ]; then
             echo "::warning::Capped at $IMPACTED_SPEC_CAP of $TOTAL impacted specs — $DROPPED not run in this PR (listed in the step log)."
@@ -885,7 +885,7 @@ jobs:
           #
           # One attribution NOT to make, because an earlier version of this
           # comment made it and this file refutes it 60 lines above: the wedge is
-          # not wholly a `Collect models` problem. CLAUDE.md does attribute
+          # not wholly a `Collect models` problem. docs/infra/lanes-and-services.md does attribute
           # #922/#927 to that sweep, but the LANGFLOW_WORKER_TIMEOUT note above
           # records run 30410211167 burning TWO 300 s outages — the
           # post-collect-models wedge, AND "a second block starting within seconds

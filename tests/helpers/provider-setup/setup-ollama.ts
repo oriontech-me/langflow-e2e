@@ -168,7 +168,7 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     // runner can put the save round-trip seconds out) and the value is read only in
     // the empty-dropdown branch, where several seconds have already passed and the
     // answer is waiting. `.catch()` keeps the unawaited rejection handled; it is safe
-    // here in a way it would not be for a verdict promise (see CLAUDE.md on the v1
+    // here in a way it would not be for a verdict promise (see docs/infra/error-gates.md on the v1
     // flow-error read) because this one only ever picks the wording of a failure that
     // happens either way.
     // The un-awaited `waitForResponse` is the point of this block, not an oversight —

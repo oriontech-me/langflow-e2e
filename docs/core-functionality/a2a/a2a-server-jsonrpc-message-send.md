@@ -193,7 +193,7 @@ deletes both in a `finally` (`cleanup()`: the flow, then the project).
   code-only assertions. Missing `params` moved to `-32602` with a2a-sdk 1.3.1
   (#2478, above).
 - The error event's message object elsewhere in this stack carries
-  `"error": false` (see `flow-error-policy.ts` in `CLAUDE.md`); do **not** infer
+  `"error": false` (see `flow-error-policy.ts` in `docs/infra/error-gates.md`); do **not** infer
   failure from a truthy `error` field anywhere in the result — the JSON-RPC
   envelope's top-level `error` key is the only verdict.
 - `message/send` is **synchronous on this path**: the response already carries the

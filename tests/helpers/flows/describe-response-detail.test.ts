@@ -19,7 +19,7 @@
 //    differently.
 //
 // The read-rejects branch is not exotic, which is the measurement worth
-// keeping: CLAUDE.md's #1432 entry records that Chromium does not retain a
+// keeping: docs/infra/error-gates.md's #1432 entry records that Chromium does not retain a
 // zero-length response body, so `response.text()` REJECTS for a bodyless
 // response rather than resolving to `""`. A naive `await res.text()` in a
 // failing branch therefore throws on exactly the responses this helper exists
