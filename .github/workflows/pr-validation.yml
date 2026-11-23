@@ -41,9 +41,10 @@ jobs:
       # fix at a time, each bullet absorbing its mechanism's whole narrative,
       # until #2532 moved those into docs/infra/. Budget per file and per block
       # so the next narrative lands in docs/infra/ instead (#2542). It runs
-      # before the unit lanes, and they run even when it fails (`!cancelled()`),
-      # so neither verdict hides the other.
+      # before the unit lanes; it and they carry `!cancelled()`, so a red
+      # `tsc`, budget or unit lane never hides the others' verdicts.
       - name: CLAUDE.md size budget
+        if: ${{ !cancelled() }}
         run: npm run check:claude-md-budget
 
       # Unit tests for the dependency-free helpers under scripts/ — plain
