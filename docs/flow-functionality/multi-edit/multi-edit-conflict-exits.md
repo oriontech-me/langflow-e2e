@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev35`)
 
 Owning issue: #2343 (Wave 11 — Multi-edit, instance migration & integrations; tracker #2356).
 Upstream feature: multi-edit safety, `langflow-ai/langflow#14903`, follow-up `#15824`. How the
@@ -58,6 +58,24 @@ written:
   - The test also asserts the *"Open it again to continue editing"* half: reopening
     shows the other session's version, and an edit saves normally.
   - The notice itself stays uncovered.
+- **The copy is reached by an in-app navigation, and the editor's usual readiness
+  signals are true before the copy is loaded** (#2523, measured on `1.14.0.dev35`).
+  *Duplicate* calls `navigate()`, so the old flow is cleared and the copy is fetched
+  only after the flow list refetch the fork triggers. That refetch took up to 2.4 s
+  locally. While no flow is loaded, `flow_name` is empty and `menu_bar_display` is
+  **enabled**: upstream's `useIsFlowReadOnly(undefined)` is `false`, and the canvas
+  controls never unmount. A writability wait taken there passes at once (3 of 3 runs
+  passed it with `flow_name` empty). When the copy is then applied, its
+  `POST /api/v1/authz/me/permissions` starts, and the canvas is read-only until it
+  answers (`nodesDraggable={!effectiveLocked}`). The copy has the same node ids as
+  the original, so *Mine Prompt* becomes visible right away, and a drag in that
+  window moves nothing and sends no request (#1005). That is the copy's `PATCH`
+  timeout. With the permissions response held for 4 s, the old wait failed 1 of 1
+  this way. The test therefore waits for the header to show the **copy's** name
+  first. Only then does `menu_bar_display` describe the copy's permissions. With the
+  same 4 s hold, and with 8 s, it passed 2 of 2. `openFlowById` does not have this
+  gap: after a full page load, its wait returned only after a held permissions
+  response, with the flow's name already in the header.
 - **The archive-failure branch is isolated**, so it is covered. Only `POST
   /api/v1/flows/{id}/versions/` is routed to `500`; every other call is real.
 - **Deliberate HTTP errors are declared narrowly** with `page.expectKnownHttpError()`:
@@ -75,14 +93,32 @@ written:
 
 ## Tags *(required)*
 
-`@stable` `@workspace` `@database` `@ui-ux` (on every test but one)
+`@stable` `@workspace` `@database` `@ui-ux` (on every test)
 
-**`@stable` since #2469, except *Duplicate Flow puts the viewer's work in a new flow and
-leaves the original alone*.** Measured for #2469 on `1.14.0.dev32` under the daily's shard settings (2 workers, file-level parallelism, `--retries=0`), the other five passed 25 of 25 across 5 repeats at a
-host load of 23–33 on 10 cores. The Duplicate test failed 3 of 5 there, timing out on the
-copy's `PATCH`. The writability wait added for it (test 2) did not settle it: 22 of 24
-afterwards, with 2 failures in one 6-worker, fully parallel batch that left no trace. It
-stays out until that cause is found, owned by #2523.
+**Five tests have been `@stable` since #2469. *Duplicate Flow puts the viewer's work in a
+new flow and leaves the original alone* joined them with #2523.** Under the daily's shard
+settings (2 workers, file-level parallelism, `--retries=0`) on `1.14.0.dev32`, the
+Duplicate test had failed 3 of 5, timing out on the copy's `PATCH`. #2469 added a
+writability wait. That wait was vacuous during the in-app navigation (see *Facts that
+shape the design*), and it still let 2 of 24 runs through. With the copy's name checked
+first, measured on `1.14.0.dev35`, all six tests passed every run:
+
+| Run | Host load (10 cores) | Result |
+|---|---|---|
+| Daily settings, ×5 | 27–31 | 30 of 30 |
+| Daily settings, ×3, backend limited to 1 CPU | 17–23 | 18 of 18 |
+| `--workers=1`, ×3 | 25–27 | 18 of 18 |
+| `--workers=4`, ×1 | 20–25 | 6 of 6 |
+| 6 workers, fully parallel, with `multi-edit-run-and-draft`, ×4 | 10–12 | 24 of 24 for this file |
+
+The 6-worker batch ran before the teardown left the editor first. It logged three
+`🚨 Backend Error` lines, `404` on the events poll of a flow already deleted (see *Step by
+step*). The four runs above it ran after that change and logged none. The same 6-worker batch was repeated at a
+host load of 16–25 and failed 11 of 52 tests across **both** files. In those failures, the
+test's own API calls (`GET` and `POST /api/v1/flows/`) timed out at 20 s, and the backend
+log shows its trigger workers losing their database lease (`LeaseLostError`). No failure
+was a copy `PATCH` timeout. That batch saturates the local SQLite backend, at three times
+the daily's 2 workers, so it is not counted against promotion.
 
 ---
 
@@ -100,7 +136,12 @@ It then raises the conflict:
 - the viewer clicks *Review changes*.
 
 Each test opens the flow with `openFlowById`, and an id-scoped `afterEach` deletes every
-flow it created, the fork included. Waits key on this flow's responses, never on time.
+flow it created, the fork included. Before it deletes anything, it takes the page off the
+editor (`unmountEditorForCleanup`). An editor left open over a deleted flow keeps polling
+`GET /api/v1/flows/{id}/events`, and each `404` is logged as `🚨 Backend Error`: one
+6-worker batch logged three, from two tests (#2523). When a test failed, the hook first
+attaches a screenshot of the page, because CI's failure screenshot is taken after the
+hook and would show a blank page. Waits key on this flow's responses, never on time.
 
 1. **Update Current Flow writes the viewer's work and keeps the replaced version.**
    - Click *Update Current Flow*. `POST /overwrite` answers `200`, and the
@@ -116,14 +157,12 @@ flow it created, the fork included. Waits key on this flow's responses, never on
      `/flow/<copy id>`.
    - The copy is named `<original> (copy)`, has *Mine Prompt* moved and Chat Input at
      `hello`.
-   - Wait for the copy's header to be enabled before editing it. The copy is reached by an
-     in-app navigation, so `openFlowById`'s writability gate does not run; the editor is
-     read-only while the copy's permissions load, and a drag in that window is swallowed
-     with no request (#1005). Without this wait, 3 of 5 runs timed out on the copy's
-     `PATCH` at a host load of 23–33 on 10 cores. With it, 22 of 24 runs passed; the 2
-     failures came in one 6-worker, fully parallel batch, beyond the daily's 2 workers, and
-     left no trace, so the wait is not proven to be the whole cause. This test is the only
-     one in the spec without `@stable` (see *Tags*).
+   - Before editing the copy, wait for the header to show `<original> (copy)` and then
+     for it to be enabled. The order matters. Until the copy is loaded the header is
+     enabled, because no flow is loaded yet, so an enabled header alone proves nothing.
+     Once the header shows the copy's name, enabled means the copy's permissions have
+     answered and the canvas accepts the drag (see *Facts that shape the design*,
+     #2523).
    - Edit the copy and wait for its autosave (`200`). That save comes after the
      debounce, so any save still queued for the original would already have been sent.
      None was: no `PATCH` reached the original.
@@ -168,6 +207,11 @@ flow it created, the fork included. Waits key on this flow's responses, never on
 
 - All six tests pass three consecutive times at `--retries=0 --workers=1` on the
   current nightly, and once at `--workers=4`.
+- All six tests pass under the daily's shard settings (`CI=1 PW_SHARD_FILE_LEVEL=1
+  --workers=2 --retries=0`), repeated.
+- The Duplicate test still passes with the copy's `POST /api/v1/authz/me/permissions`
+  held for 4 s. Under the same hold, the wait it replaced (`menu_bar_display` enabled,
+  with no check that the copy is loaded) times out on the copy's `PATCH`.
 - Each test fails under a mutation of its load-bearing assertion, run in isolation:
   - the overwrite keeps B's text;
   - the original changed after the fork;
@@ -185,6 +229,10 @@ flow it created, the fork included. Waits key on this flow's responses, never on
 - A running Langflow OSS instance at `PLAYWRIGHT_BASE_URL`, with auto-login or the superuser.
 - `src/frontend/src/components/core/flowConflict/ConflictDialogFooter.tsx`: the exit buttons, the in-place Load Latest confirmation, and their testids.
 - `src/frontend/src/components/core/flowConflict/DuplicateFlowModal.tsx`: `onOverwrite`, `onDuplicate`, `handleOverwriteRefusal`, and the merge of unselected changes.
+- `src/frontend/src/pages/FlowPage/hooks/use-load-flow-for-route.ts`: the copy is fetched only once the flow list is loaded and no flow is current, which leaves the gap the Duplicate test waits out.
+- `src/frontend/src/components/core/appHeaderComponent/components/FlowMenu/index.tsx`: `flow_name` (empty while no flow is loaded) and `menu_bar_display` (`disabled={isReadOnly}`), the two signals the Duplicate test waits on, in that order.
+- `src/frontend/src/contexts/permissionsContext.tsx`: `useIsFlowReadOnly`, which is `false` for an undefined flow id and fails closed while the permissions query loads.
+- `src/frontend/src/pages/FlowPage/components/PageComponent/index.tsx`: `nodesDraggable={!effectiveLocked}`, so a drag while the copy's permissions load moves nothing.
 - `src/frontend/src/hooks/flows/use-take-latest-version.ts`: archive first, abandon on failure.
 - `src/frontend/src/hooks/flows/conflict-actions.ts`: `fetchAndAdoptServerVersion`, `attachTheirFlow`, `refreshConflictState`.
 - `src/frontend/src/stores/flowConflictStore.ts`: `abandonFlow` / `resumeFlow`.

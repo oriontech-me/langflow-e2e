@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-20
+> **Last updated:** 2026-11-23
 
 ---
 
@@ -131,7 +131,7 @@
 - [x] A batch create with a duplicate name is refused `409 "Name must be unique"` rather than stalling on the SQLite write lock, the body renders no SQL or bound parameters, and the **next write still succeeds** — the last clause is the one that matters: a `409` that left the lock held satisfies every other assertion and is still the defect `langflow-ai/langflow#14634` fixed, because the caller sees a clean conflict and the *next* writer dies with "database is locked" → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 - [x] A batch create with a duplicate `endpoint_name` is refused with its **own** message (`"Endpoint name must be unique"`), asserted as not equal to the name guard's — two guards, one status, so the message is the only thing separating them → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 - [x] A completed `mode=background` run reports the `session_id` it was submitted with, and its outputs, on the **first** status read that says `completed` — asserted as "not the flow id" too, since the flow id is the specific degradation `langflow-ai/langflow#14512` names → `api/flows/workflows-v2-job-lifecycle.spec.ts`
-- [!] A completed `mode=sync` run answers its own status query with the session and outputs it just returned — **declared failing (`test.fail()`) against a live defect, 15/15 on `1.12.0.dev37`**; it flips to an *unexpected pass* the day upstream fixes it, which is the alarm to remove the annotation: the read-back reports `status: "completed"` alongside `session_id == flow_id` and `outputs: {}`, self-healing in 250–463 ms (median 434, 12/12 cold jobs). #14512's fix is present (its `sync_result_storage_enabled` setting reads `False`, the default) but the flag-off path races the `vertex_build` commit it reconstructs from. Detection depends on issuing the two calls back to back — with assertions interleaved between them the defect went unseen in 1 of 13 runs → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [!] A completed `mode=sync` run answers its own status query with the session and outputs it just returned — **declared failing (`test.fail()`) against a live defect, still live on `1.14.0.dev35`**; it flips to an *unexpected pass* the day upstream fixes it, which is the alarm to remove the annotation: the read-back reports `status: "completed"` alongside `session_id == flow_id` and `outputs: {}`, self-healing in 250–463 ms (median 434, 12/12 cold jobs). #14512's fix is present (its `sync_result_storage_enabled` setting reads `False`, the default) but the flag-off path races the `vertex_build` commit it reconstructs from. A single job wins that race about 11 % of the time (11/100 on `1.14.0.dev35`), which made the one-job declaration flake on two VM dailies (#2216), so the contract is asserted over **10** jobs and holds only if every read-back is correct, while an annotation reports how many came back degraded. Each submit and its read-back are still issued back to back — with assertions interleaved between them the defect went unseen in 1 of 13 runs → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 - [x] Attribution control: the same sync read-back **is** correct once the job's rows settle (≤10 s). Paired with the row above on purpose — that red plus this green is the race; *both* red would be a strictly worse regression, reconstruction unavailable at any time, and without the pair the two would report as one finding → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 
 #### 1.10 Files API — the whole family, as a contract (1.13)
@@ -772,7 +772,7 @@
 
 - [x] Basic Prompting — run from the Playground on a pinned model, all four components build (each node's output inspection goes from disabled to enabled), the reply is non-empty and the flow-error report is evaluated and clean → `core-functionality/templates/templates-run-prompts.spec.ts`
 - [x] Blog Writer — with its source URL pointed at the self-hosted echo endpoint instead of `docs.langflow.org`, the run's input and the system prompt the Agent receives name the echo URL, every non-tool component builds, and the reply is non-empty with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
-- [ ] Image Sentiment Analysis — an image attached in the Playground reaches a vision-capable model, and the run completes with a non-empty reply and a clean flow-error report
+- [x] Image Sentiment Analysis — an image attached in the Playground reaches a vision-capable model, and the run completes with a non-empty reply and a clean flow-error report. "Reaches the model" is the provider's own billing: the image turn's stored `properties.usage.input_tokens` exceeds an identical image-less control turn's (8600 vs 100 on `gpt-4o-mini`) → `core-functionality/templates/templates-run-image-input.spec.ts`
 - [x] Memory Chatbot — retains context within a session across consecutive messages and a Playground reopen, and a new session starts without it → `llm-agents/memory-history-regression.spec.ts`
 - [x] Multi Agent Flow — all three Agents run the pinned model and build, and Chat Output renders a non-empty reply with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
 - [x] SEO Keyword Generator — the template has no Chat Input, so the Playground renders no text input and its send control runs the flow; Prompt, Agent and Chat Output build, and the reply is non-empty with a clean flow-error report → `core-functionality/templates/templates-run-prompts.spec.ts`
@@ -867,10 +867,11 @@
 - [x] Execution order respects data dependency — every consumer's build finishes after all of its producers', asserted on the `/build` direct run stream (finish order + received output, not wall-clock timing) → `api/flows/graph-execution-contract.spec.ts`
 - [x] Partial failure on the run stream — when one branch of a multi-branch graph raises, the independent branches still build to completion, the failed node is flagged (`valid: false`) and its descendants never build → `api/flows/graph-execution-contract.spec.ts`
 - [x] A branch stopped by its producer (`Component.stop()`, the mechanism If-Else uses) never builds and is reported in `inactivated_vertices`, while the sibling branch still builds → `api/flows/graph-execution-contract.spec.ts`
+- [x] A failing run's AG-UI stream (`stream_protocol: "agui"`, what the canvas and the Playground send) ends at `RUN_ERROR`: it is sent once, as the last event, carrying the component's error, and no `RUN_FINISHED` follows, even while an independent branch is still building. Regression guard for upstream #16492, which fixed the mid-run `RUN_ERROR` followed by `RUN_FINISHED` that #1896 recorded → `api/flows/graph-execution-contract.spec.ts`
 - [!] A graph with a regular-port cycle must not report a node it never built as completed (**declared failing** — `test.fail()` against a live engine defect, #1896; `POST /api/v2/workflows` `mode=sync` answers `completed` and lists a node downstream of the never-run cycle in `outputs`. The result is name-dependent: a pure cycle whose node id matches the `"webhook"/"chat"` start heuristic runs unbounded instead, which is out of scope here because it would hang the worker) → `api/flows/graph-execution-contract.spec.ts`
 - [ ] A node whose upstream produced no value (a producer returning `None`) is skipped rather than run with an empty input — measured on `1.13.0.dev14` the consumer instead **runs** and fails with a pydantic `MessageTextInput` error attributed to itself; recorded in #1896 pending an upstream decision, not pinned
 - [x] The canvas refuses a connection that would close a cycle through regular ports, and accepts a connection to the same target port from a node outside the cycle → `flow-functionality/graph-execution-canvas.spec.ts`
-- [!] Partial failure on the **canvas** — the failed node is flagged and the branches that completed show as built (**declared failing** — `test.fail()` against the AG-UI defect, #1896: the run stream emits `RUN_ERROR` mid-run and the frontend stops there, so no `node_status_icon` renders and a completed branch's `node_duration` never shows; flips to an unexpected pass the day upstream stops treating a component error as terminal) → `flow-functionality/graph-execution-canvas.spec.ts`
+- [!] Partial failure on the **canvas** — the failed node is flagged (**declared failing** — `test.fail()` against the AG-UI defect, #1896: measured on `1.14.0.dev35`, the run stream ends at `RUN_ERROR` without ever sending the failed node's error state, so no `node_status_icon` renders; injecting that state before `RUN_ERROR` makes the canvas draw `node_status_icon_raiser_error`, so it flips to an unexpected pass the day the backend reports the failed node before the terminal event). Re-scoped on `1.14.0.dev35`: it used to also assert that completed branches show as built, which upstream #16492 rules out by design (`RUN_ERROR` is terminal and every later event is dropped) → `flow-functionality/graph-execution-canvas.spec.ts`
 - [x] Playground button disabled with empty flow, and enabled once one Chat Output is on the canvas — the trigger's disabled twin is asserted first, then the Playground dialog is asserted by role and accessible name. Quarantine lifted in #1791: the failure was a stale expectation on `"Langflow Chat"`, the value of an i18n key with zero call sites in the bundle, not the product behaviour the TODO suspected. Quarantine lifted again in #2197: the Chat Output drag was issued while the editor was still read-only (sidebar entries are not draggable while `POST /api/v1/authz/me/permissions` is in flight — langflow#14523), so no node landed and the enabled trigger never rendered; every sidebar drag in the file now waits for `draggable="true"` and verifies the node landed. Quarantine lifted a third time in #2237: the blank flow was never created — a concurrent creation under the same superuser made the backend refuse it (`400 Name must be unique`, its check-then-insert name race), and upstream then leaves the templates modal open over the welcome overlay, which hides the toolbar; both tests now open the blank flow through `openBlankFlowFromModal` (wait for the modal to close, one repair click) → `regression/flow-functionality/generalBugs-shard-3.spec.ts`
 
 #### 12.7 Multi-edit safety (1.13+)
@@ -882,7 +883,7 @@
 - [x] Browsing version history is not an edit (guard for upstream's *"stop version history from faking an edit"*): after a history round trip and another session's save, a run adopts the newer version with *"{user} updated this flow… run again"*, shows the new value, raises no banner, and the viewer issued no `PATCH` → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
 - [x] Reloading with no change on the server shows no banner, and the next edit saves with `200` → `flow-functionality/multi-edit/multi-edit-conflict-review.spec.ts`
 - [x] *Update Current Flow* overwrites with `200` and *"Flow updated. The version it replaced is in the history."*: the server holds the viewer's canvas, the history's one entry is *"Replaced by a newer edit"* holding the other session's version, and the banner is gone → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
-- [-] *Duplicate Flow* forks with `201` and opens `<name> (copy)` holding the viewer's canvas; the original keeps its token and the other version, receives no `PATCH`, and saves normally once reopened (the *"This flow was duplicated…"* notice is unreachable from the UI, see the spec doc) → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts` (not `@stable`: intermittent copy `PATCH` timeout, #2523)
+- [x] *Duplicate Flow* forks with `201` and opens `<name> (copy)` holding the viewer's canvas; the original keeps its token and the other version, receives no `PATCH`, and saves normally once reopened (the *"This flow was duplicated…"* notice is unreachable from the UI, see the spec doc) → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [x] *Load Latest* asks first (*"Load the latest version?"*), archives the viewer's canvas as *"Saved when discarding a conflict"* (`201`), shows the latest version with the server untouched, and restoring that entry from version history brings the viewer's edit back → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [x] A second save by the other session while the dialog is open refuses *Update* with `409` and *"Someone saved again while you were choosing…"*, refreshes the dialog with the newer change, and keeps that save on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
 - [x] *Cancel* closes the dialog, keeps the banner and changes nothing on the server → `flow-functionality/multi-edit/multi-edit-conflict-exits.spec.ts`
@@ -1808,6 +1809,17 @@
 - [x] All 8 shipped catalogs (`en`, `de`, `es`, `fr`, `ja`, `ko`, `pt`, `zh-Hans`) render the page body, the row menu and the Add dialog with no raw `connections.`/`settings.`/`common.`/`loading.` key, as text or in `aria-label`/`placeholder`/`title`/`alt`; the switch is proved per locale (`<html lang>`, the catalog chunk fetched, the heading off English) → core-functionality/integrations/connections-a11y-i18n.spec.ts
 - [x] Connector components take their names from the backend catalog, which honours `Accept-Language`, and the sidebar shows the catalog's own name (under `pt`, *Gmail: Enviar e-mail*). Every connector name in every catalog is non-empty and not a raw key; whether a catalog translates any connector is declared and verified both ways (22 of 86 in six locales, none in `ko`); the untranslated set is recorded per run, not asserted → core-functionality/integrations/connections-a11y-i18n.spec.ts
 
+#### 24.22 The nine 1.14 providers' trigger kinds (#2502)
+
+- [x] The 17 kinds the nine providers bring (GitHub, GitLab, WhatsApp, Jira, Confluence, Salesforce, ServiceNow, Discord, Telegram) are served as components carrying their `metadata.trigger_kind` in their provider's category, and `POST /api/v1/triggers` refuses each one (`422` *"A '<kind>' trigger is created by adding its component to the flow, not through this API."*) and writes nothing → api/triggers/api-triggers-provider-kinds.spec.ts
+- [x] A saved node of each kind reconciles one `pending` row (kind, provider, `node_id`), and `enable` refuses it at the first gate it fails, leaving it `pending`: a handle no connection carries (`409 trigger_connection_not_owned`), another provider's connection (each provider's own sentence, written to `last_error` at save), a `pending` connection with background runs off and on (push: *"Push delivery requires a supported public HTTPS ingress on this deployment."*; Confluence: the unset approved-space setting; poll and gateway: `background_runs_not_allowed`, then the missing scopes or the wrong executing identity), and ServiceNow's, Discord's and Telegram's own pre-arm sentences → api/triggers/api-triggers-provider-kinds.spec.ts
+- [x] The GitHub, GitLab, Telegram and WhatsApp ingress segments answer the uniform `404` (`{"detail":"Not found"}`) for a real public id, a random one, the trigger's UUID, the provider's own headers and WhatsApp's `GET` handshake, byte-identical to an unknown provider's, beside a `202` control on the webhook segment; a provider trigger has no ingress of its own (`409` *"Only inbound webhook triggers have an owner-managed signing secret."*) → api/triggers/api-triggers-provider-kinds.spec.ts
+- [x] Lead (no upstream ticket yet, asserted as today's behaviour): a Jira or Salesforce trigger arms (`200`, `active`, no `last_error`) on a `pending` connection with no credential, background runs on and the kind's scopes declared — `check_ready` treats only `revoked` and `expired` as unusable; Google Calendar does the same (recorded, not asserted) → api/triggers/api-triggers-provider-kinds.spec.ts
+- [x] A Jira trigger node's connection picker offers its Jira connection (*Pending*) and no other provider's; consent blocks *Enabled* until it writes `allow_non_interactive` on the Jira connection, and the resume is then refused with *"Couldn't resume Jira: On Issue Created"* and the missing scopes, the row staying `pending` → core-functionality/integrations/trigger-node-controls.spec.ts
+- [x] A GitHub trigger node reads *Needs attention* from its save, with no consent switch (no connection bound), and its popover gives *"The trigger's settings are invalid. Fix them on the node and save the flow."*, the push-ingress `last_error` and the transport *Push*; a resume is refused with the same sentence → core-functionality/integrations/trigger-node-controls.spec.ts
+- [x] Approving `["jira.issue_created", "schedule"]` leaves exactly those two trigger components in the catalog and the sidebar, pauses the `pending` rows of the denied provider kinds (`policy_blocked`) while the approved one stays `pending`, refuses enabling a denied kind over its own connection with the policy's `403` and two `trigger:policy_denied` rows, and lets the approved kind reach its own first gate (`409 background_runs_not_allowed`) → governance/trigger-policy-enforcement.spec.ts
+- [ ] A provider trigger that arms and fires: a `ready` connection for any of the nine needs a provider account (#2503), and a push kind also a public HTTPS ingress; so do a provider push activation, a poll round, Discord's gateway, pausing an `active` provider trigger by policy and a dispatch refused under a provider kind
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
@@ -1896,9 +1908,9 @@
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
-| `core-functionality/templates/` | 46 | 45 | 0 | 0 | 1 |
+| `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
 | `core-functionality/a2a/` | 19 | 14 | 0 | 1 | 4 |
-| `flow-functionality/` | 57 | 52 | 1 | 3 | 1 |
+| `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1909,9 +1921,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 105 | 0 | 87 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 162 | 139 | 0 | 3 | 20 |
+| `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **935** | **801 (86%)** | **69 (7%)** | **18 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **944** | **811 (86%)** | **68 (7%)** | **18 (2%)** | **47 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1927,7 +1939,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 923 `test()` calls carrying the `@stable` tag, distributed across 324 spec
+> 933 `test()` calls carrying the `@stable` tag, distributed across 326 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2108,6 +2120,7 @@
 - [x] a branch stopped by Component.stop() never builds and is reported inactive → `graph-execution-contract.spec.ts`
 - [x] sync reports an acyclic terminal as completed with its output (attribution control) → `graph-execution-contract.spec.ts`
 - [x] sync must not report a node downstream of a regular-port cycle as completed → `graph-execution-contract.spec.ts`
+- [x] a failing run's AG-UI stream ends at RUN_ERROR, with no RUN_FINISHED after it → `graph-execution-contract.spec.ts`
 - [x] the instance under test has no serving identity header configured → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
@@ -2115,6 +2128,7 @@
 - [x] batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working → `workflows-v2-job-lifecycle.spec.ts`
 - [x] batch create refuses a duplicate endpoint_name with its own message → `workflows-v2-job-lifecycle.spec.ts`
 - [x] a completed background run reports the session it was given → `workflows-v2-job-lifecycle.spec.ts`
+- [x] a completed sync run answers its own status query with the session and outputs it returned → `workflows-v2-job-lifecycle.spec.ts`
 - [x] attribution control: the sync read-back is correct once the job's rows settle → `workflows-v2-job-lifecycle.spec.ts`
 
 #### api/instance/
@@ -2177,6 +2191,10 @@
 - [x] scope=all is superuser-only and shows every user's triggers with their owner and no actions on rows the caller does not own → `api-triggers-operator.spec.ts`
 - [x] bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused → `api-triggers-operator.spec.ts`
 - [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
+- [x] the seventeen 1.14 provider kinds are served as trigger components and cannot be created through the triggers API → `api-triggers-provider-kinds.spec.ts`
+- [x] <subject.name>: each kind's saved node reconciles one pending trigger, and enable refuses it until a <subject.name> connection could serve it → `api-triggers-provider-kinds.spec.ts`
+- [x] a delivery to a push provider's ingress answers the uniform 404, for an id that exists and one that does not → `api-triggers-provider-kinds.spec.ts`
+- [x] Lead (no upstream ticket yet): a Jira or Salesforce trigger arms on a pending connection that holds no credential → `api-triggers-provider-kinds.spec.ts`
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
 - [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
@@ -2429,6 +2447,8 @@
 - [x] the Enabled switch resumes and pauses the trigger, and a refused resume says why → `trigger-node-controls.spec.ts`
 - [x] background-run consent is the connection owner's switch, persists, and the fix path allows and resumes → `trigger-node-controls.spec.ts`
 - [x] the webhook secret is shown once, signs deliveries, and rotating it refuses the old one → `trigger-node-controls.spec.ts`
+- [x] a Jira trigger node lists only Jira connections, and shows the server's refusals one gate at a time → `trigger-node-controls.spec.ts`
+- [x] a GitHub trigger node says at save time that push delivery needs public ingress, and a resume is refused with that reason → `trigger-node-controls.spec.ts`
 - [x] the Triggers category holds Schedule and Inbound Webhook, and every trigger row is marked apart from the actions → `trigger-placement.spec.ts`
 - [x] with a trigger on the canvas every other trigger is blocked in the palette, and removing it unblocks them → `trigger-placement.spec.ts`
 - [x] pasting or duplicating a trigger leaves it out with a notice, and keeps the rest of the selection → `trigger-placement.spec.ts`
@@ -2673,6 +2693,7 @@
 - [x] should run Financial Report Parser on an uploaded report through its Parser → `templates-run-file-input.spec.ts`
 - [x] should run Portfolio Website Code Generator on an uploaded resume → `templates-run-file-input.spec.ts`
 - [x] should run Text Sentiment Analysis on an uploaded digest to both of its Chat Outputs → `templates-run-file-input.spec.ts`
+- [x] should run Image Sentiment Analysis on an attached image through its pinned vision model → `templates-run-image-input.spec.ts`
 - [x] should run Knowledge Retrieval and show the ingested sentinel in its reply → `templates-run-knowledge.spec.ts`
 - [x] should run Document Q&A with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 - [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
@@ -2738,7 +2759,7 @@
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
 - [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
-- [x] a partial failure flags the failed node and shows the completed branches on the canvas → `graph-execution-canvas.spec.ts`
+- [x] a partial failure flags the failed node on the canvas → `graph-execution-canvas.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
@@ -2753,6 +2774,7 @@
 
 #### flow-functionality/multi-edit/
 - [x] Update Current Flow writes the viewer's work and keeps the replaced version → `multi-edit-conflict-exits.spec.ts`
+- [x] Duplicate Flow puts the viewer's work in a new flow and leaves the original alone → `multi-edit-conflict-exits.spec.ts`
 - [x] Load Latest asks first, archives the viewer's canvas, and that archive restores → `multi-edit-conflict-exits.spec.ts`
 - [x] a second save while choosing is not overwritten → `multi-edit-conflict-exits.spec.ts`
 - [x] Cancel changes nothing → `multi-edit-conflict-exits.spec.ts`
@@ -2943,7 +2965,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 1 | 1 |
+| `flow-functionality/` | 0 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
-| `core-functionality/templates/` | 0 | 1 |
+| `core-functionality/templates/` | 0 | 0 |
 | `ui-ux/` — Settings | 0 | 0 |
