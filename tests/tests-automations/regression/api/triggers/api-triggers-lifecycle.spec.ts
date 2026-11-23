@@ -789,8 +789,11 @@ test.describe("Triggers — the lifecycle", () => {
       // the image ships) it is stored and fails only at dispatch. Both are the lead; a
       // 4xx naming the missing deployment would be the fix, and fails here as such.
       const row = await test.step("Create does not check that the deployment_id names a deployment", async () => {
+        // `Connection: close`: the IntegrityError is unhandled, so after its 500 the server
+        // drops the connection, and the next call on a reused keep-alive socket dies with
+        // "socket hang up" (measured on 1.14.0.dev35). Closing this one keeps it out of the pool.
         const res = await request.post("/api/v1/triggers", {
-          headers: headers(),
+          headers: { ...headers(), Connection: "close" },
           data: { flow_id: flowId, name: `lead deployment ${run}`, kind: "inbound_webhook", binding_target: "deployment", deployment_id: deploymentId },
         });
         const text = await res.text();
