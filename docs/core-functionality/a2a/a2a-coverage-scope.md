@@ -147,7 +147,9 @@ Migration `9f1d1d602aa3` adds `flow_type` (`workflow` | `agent`), `a2a_enabled`
 (bool) and `a2a_card_overrides` (JSON) to `flow`. Publishing is a `PATCH
 /api/v1/flows/{id}`. A non-owner flipping `a2a_enabled` gets
 `403 "Cannot change a2a_enabled of a flow you do not own."`
-(`api/v1/flows_helpers.py:481`).
+(`api/v1/flows_helpers.py:481`) — **on Enterprise with RBAC only**, where a
+non-owner can edit a shared flow. On OSS a non-owner cannot load the flow at all and
+gets `404 "Flow not found"` (measured on `1.14.0.dev35`, row **T10**).
 
 ### Server — UI (flow editor **Agent** tab)
 
@@ -216,6 +218,7 @@ Every path below is relative to `tests/tests-automations/regression/` (specs) an
 | **T7** | `a2a-server-auth-apikey` | With the project's `auth_type=apikey`: the card advertises the `x-api-key` scheme in `securitySchemes`; `POST …/jsonrpc` with no header → `401 "API key required"`; with a syntactically valid but wrong key → `401 "Invalid API key"`; with the owner's key → `200` + `completed`. `@regression` — this is the gate `LE-2081` lives behind |
 | **T8** | `a2a-server-hitl-pause-resume` | *Added by #2549 — this scoping did not map it.* A published flow with a **Human Input** node answers `message/send` with an `input-required` task; a reply on the same task resumes it on the chosen branch only, a reply the node does not offer re-parks it, a second Human Input parks it again, and a paused task is invisible (`-32001`) to a caller under another principal. LLM-free |
 | **T9** | `a2a-server-push-notification-config` | *Added by #2551.* `tasks/pushNotificationConfig/{set,get,list,delete}` round-trip on a completed task and answer `-32001` through another flow's endpoint; `set` refuses with `-32602` every webhook that resolves to a non-public address (naming the resolved address), storing none of them. Delivery stays out of scope |
+| **T10** | `a2a-server-non-owner-publish` | *Added by #2553.* A regular user gets `404 "Flow not found"` reading or publishing the superuser's flow, and the superuser gets the same for a regular user's flow; the flow stays unpublished (card `404`, not in discovery) while the owner's identical `PATCH` publishes it |
 | **U1** | `a2a-server-agent-tab-publish` | On a blank flow the Agent tab shows the ineligible copy and `agent-publish-switch` cannot publish; after adding Chat Input + Chat Output it can; publishing → status `Live` + an `agent-card-url` equal to the real card URL (fetched `200` in-test); editing Name/Description → `agent-save` → toast `"Agent updated"` **and** `GET …/agent-card.json` returns the new values |
 | **U3** | `a2a-server-agent-tab-try-it` | "Try it" sends a per-run sentinel over the live endpoint; the agent bubble renders the echoed sentinel, the state reaches `completed`, the turn counter increments, and `"View JSON-RPC exchange"` exposes the request/response pair |
 | **C1** | `a2a-client-agent-internal` | In a second flow, an `A2AAgent` node with `mode=Internal` lists the published agent in its dropdown; running it produces a `Response` containing the sentinel the published passthrough flow echoes — no LLM on either side |
@@ -245,7 +248,7 @@ inline improvisation.
 | Rate limiting on the public endpoints (`LE-1701`) | Relies on global v1 limits; driving it would make every parallel lane flaky |
 | SSRF prefix blocking (`LE-1898`: 6to4 `2002::/16`, NAT64 `64:ff9b::/96`) | Needs synthetic address families the runner cannot route; belongs to upstream unit tests |
 | Cross-worker durability of task state (`LE-1706`) | The lanes run `LANGFLOW_WORKERS=1` on purpose (#922/#927) |
-| Non-owner publish `403` | Needs two real users; per-test user isolation is impossible under `AUTO_LOGIN` (measured, #1010) |
+| Non-owner publish `403` | Enterprise-only: the `403` guards a *shared edit*, and on OSS a non-owner cannot load the flow at all, so the OSS contract is `404 "Flow not found"` — covered by row **T10** (#2553) with a throwaway user (#2044). The `403` belongs to the `@enterprise @authz` lane |
 | i18n coverage of the Agent tab (`LE-1796`) | Locale switching is not a surface this suite drives |
 
 ---
