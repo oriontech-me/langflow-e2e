@@ -42,7 +42,7 @@ test(
 
 test(
   "Settings Shortcuts section lists keyboard shortcuts",
-  { tag: ["@release", "@workspace", "@regression", "@settings"] },
+  { tag: ["@stable", "@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -53,8 +53,12 @@ test(
       timeout: 10000,
     });
 
-    // Navigate to Shortcuts section
-    await page.getByText("Shortcuts", { exact: true }).click();
+    // Navigate to Shortcuts section.
+    // By its sidebar link, not its text: since 1.14.0.dev33 the Settings frame also
+    // renders a mobile <select> (`settings-mobile-navigation`, hidden by CSS from the
+    // `sm` breakpoint up) whose <option> carries the same label, so an exact-text
+    // locator resolves to two elements and the click is a strict-mode violation (#2540).
+    await page.getByRole("link", { name: "Shortcuts", exact: true }).click();
     await page.waitForTimeout(500);
 
     // Shortcuts header must appear
@@ -88,7 +92,7 @@ test(
 
 test(
   "Settings Model Providers section loads with provider configuration",
-  { tag: ["@release", "@workspace", "@regression", "@settings"] },
+  { tag: ["@stable", "@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -99,8 +103,8 @@ test(
       timeout: 10000,
     });
 
-    // Navigate to Model Providers
-    await page.getByText("Model Providers", { exact: true }).click();
+    // Navigate to Model Providers, by its sidebar link (see the Shortcuts test, #2540).
+    await page.getByRole("link", { name: "Model Providers", exact: true }).click();
     await page.waitForTimeout(500);
 
     await expect(page.getByTestId("settings_menu_header").last()).toContainText(
