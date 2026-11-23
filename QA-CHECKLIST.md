@@ -1939,7 +1939,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 930 `test()` calls carrying the `@stable` tag, distributed across 325 spec
+> 932 `test()` calls carrying the `@stable` tag, distributed across 325 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2910,6 +2910,8 @@
 - [x] Settings > Messages displays sent messages in correct order with working filters → `settings-message-history.spec.ts`
 - [x] user can access Settings page from the profile menu → `settings-navigation.spec.ts`
 - [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
+- [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
+- [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
 - [x] editing the Duplicate shortcut persists and triggers the action on canvas → `settings-shortcuts-edit.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
