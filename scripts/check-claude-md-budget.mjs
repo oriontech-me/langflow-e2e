@@ -26,10 +26,15 @@
 //
 // And one prohibition: an `@path` import. Claude Code inlines the imported file
 // into every session, so one short line can load 20 KB the budget never sees.
-// An `@token` counts as an import when it names a file that exists (relative to
-// the guide, absolute, or under `~/`), so `@stable` and `@axe-core/playwright`
-// are not imports and `@README` is. Inline code spans are skipped; fenced code is
-// not (conservative: rephrase a fenced example rather than parse fences here).
+// Tokens are read the way Claude Code reads them (`(?:^|\s)@((?:[^\s\\]|\\ )+)`,
+// cut at `#`, `\ ` unescaped, resolved relative to the guide). A token is an
+// import when it is `~/…` or absolute — never a repo file, so it is flagged from
+// its syntax alone: checking existence would pass in CI and load locally — when
+// it ends in `.md` (covers an ignored `@CLAUDE.local.md` CI cannot see), or when
+// it names a file that exists next to the guide. So `@stable`, `@1.5.1` and
+// `@axe-core/playwright` are not imports. Inline code spans on one line are
+// skipped; fenced code is not (conservative: rephrase a fenced example rather
+// than parse fences here).
 //
 // Raising a budget is an edit to BUDGETS below, so it shows up in review.
 //
@@ -42,8 +47,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BUDGETS = Object.freeze({
@@ -101,37 +105,45 @@ const isFile = (p) => {
   }
 };
 
-/**
- * Where `@token` would resolve, per Claude Code's import rules: `~/` from the
- * home directory, an absolute path as is, anything else relative to the guide.
- * Returns the first existing file among the token and the token plus `.md`.
- */
-export function resolveImport(token, guideDir, home = homedir()) {
-  const base = token.startsWith("~/") ? join(home, token.slice(2)) : isAbsolute(token) ? token : resolve(guideDir, token);
-  return [base, `${base}.md`].find(isFile) ?? null;
+/** Claude Code's own import pattern: `@` at line start or after whitespace. */
+const IMPORT_TOKEN = /(?:^|\s)@((?:[^\s\\]|\\ )+)/g;
+
+/** The path Claude Code would load for a raw `@` token: cut at `#`, `\ ` unescaped. */
+export function importPath(raw) {
+  return raw.split("#")[0].replace(/\\ /g, " ");
 }
 
 /**
- * `@path` imports in a guide: an `@` at the start of a line or after whitespace,
- * outside an inline code span, naming a file that exists.
- * Returns [{ line, token }].
+ * Whether a token path is an import (see the header): `~/` or absolute from the
+ * syntax alone, a `.md` path, or a path to a file that exists next to the guide.
  */
-export function findImports(text, guideDir, exists = (t) => resolveImport(t, guideDir) !== null) {
+export function isImport(path, guideDir) {
+  if (!path) return false;
+  if (path.startsWith("~/") || isAbsolute(path)) return true;
+  if (path.endsWith(".md")) return true;
+  return isFile(resolve(guideDir, path));
+}
+
+/**
+ * `@path` imports in a guide, outside inline code spans on one line.
+ * Returns [{ line, token }], `token` being the `@path` Claude Code would load.
+ */
+export function findImports(text, guideDir, test = (p) => isImport(p, guideDir)) {
   const found = [];
   normalise(text)
     .split("\n")
     .forEach((raw, i) => {
       const prose = raw.replace(/(`+)[^`][\s\S]*?\1/g, " ");
-      for (const m of prose.matchAll(/(?:^|\s)@(\S+)/g)) {
-        const token = m[1].replace(/[.,;:!?)\]'"]+$/, "");
-        if (token && exists(token)) found.push({ line: i + 1, token: `@${token}` });
+      for (const m of prose.matchAll(IMPORT_TOKEN)) {
+        const path = importPath(m[1]);
+        if (test(path)) found.push({ line: i + 1, token: `@${path}` });
       }
     });
   return found;
 }
 
 /** Check one document. `path` is relative to the repository root. */
-export function checkDocument(path, text, budgets = BUDGETS, exists) {
+export function checkDocument(path, text, budgets = BUDGETS, isImportPath) {
   const bytes = byteLength(text);
   const budget = fileBudget(path, budgets);
   const blocks = splitBlocks(text);
@@ -142,7 +154,7 @@ export function checkDocument(path, text, budgets = BUDGETS, exists) {
     budget,
     overFile: bytes > budget,
     overBlocks: blocks.filter((b) => b.bytes > budgets.block),
-    imports: exists ? findImports(text, ".", exists) : [],
+    imports: isImportPath ? findImports(text, ".", isImportPath) : [],
     largest,
   };
 }
@@ -233,7 +245,7 @@ function main(argv) {
       return 2;
     }
     const guideDir = dirname(abs);
-    results.push(checkDocument(p, text, BUDGETS, (t) => resolveImport(t, guideDir) !== null));
+    results.push(checkDocument(p, text, BUDGETS, (t) => isImport(t, guideDir)));
   }
   console.log(render(results));
   return results.some(failed) ? 1 : 0;

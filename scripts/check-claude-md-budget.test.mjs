@@ -12,7 +12,8 @@ import {
   fileBudget,
   findImports,
   render,
-  resolveImport,
+  importPath,
+  isImport,
   splitBlocks,
   toRepoPath,
 } from "./check-claude-md-budget.mjs";
@@ -76,6 +77,10 @@ test("indented lines stay with their bullet: nested items, tables, headings, fen
   assert.equal(blocks[0].bytes, bytesOf(...lines));
 });
 
+test("a marker glued to text does not start a block: **bold**, ---, #2542", () => {
+  assert.deepEqual(starts(["- item", "**bold** wraps", "---", "#2542 continues", "-x", "1.5 too"].join("\n")), [1]);
+});
+
 test("a blank or whitespace-only line ends a block", () => {
   assert.deepEqual(starts(["- one", "  ", "  continuation", "\t", "- two"].join("\n")), [1, 3, 5]);
 });
@@ -107,45 +112,50 @@ test("the shape of the 171 KB file: oversized bullets, one long line each, no bl
 
 // --- imports -----------------------------------------------------------------
 
-test("findImports reports @tokens that name an existing file, and nothing else", () => {
-  const exists = new Set(["docs/infra/x.md", "README", "~/notes.md", "/abs/file.md"]);
+test("findImports reads tokens as Claude Code does and keeps only imports", () => {
+  const exists = new Set(["docs/infra/x.md", "README", "notes/plain"]);
   const text = [
     "@docs/infra/x.md",
-    "See @README for the overview.",
+    "See @README for the overview, and @docs/infra/x.md#section for one part.",
     "Tag with @stable, install @axe-core/playwright, pin @1.5.1, mail a@b.c.",
     "Inline `cat @docs/infra/x.md | wc` is code.",
     "- (@docs/infra/x.md) has no whitespace before @.",
-    "\t@~/notes.md and @/abs/file.md.",
+    "\t@~/.claude/notes.md and @/abs/file and @CLAUDE.local.md and @my\\ file.md",
+    "@notes/plain",
   ].join("\n");
-  assert.deepEqual(findImports(text, ".", (t) => exists.has(t)), [
+  const isImp = (p) => p.startsWith("~/") || p.startsWith("/") || p.endsWith(".md") || exists.has(p);
+  assert.deepEqual(findImports(text, ".", isImp), [
     { line: 1, token: "@docs/infra/x.md" },
     { line: 2, token: "@README" },
-    { line: 6, token: "@~/notes.md" },
-    { line: 6, token: "@/abs/file.md" },
+    { line: 2, token: "@docs/infra/x.md" },
+    { line: 6, token: "@~/.claude/notes.md" },
+    { line: 6, token: "@/abs/file" },
+    { line: 6, token: "@CLAUDE.local.md" },
+    { line: 6, token: "@my file.md" },
+    { line: 7, token: "@notes/plain" },
   ]);
 });
 
-test("trailing punctuation is not part of the import token", () => {
-  const seen = [];
-  findImports("Read @README.md. Then @a.md, @b.md; @c.md) @d.md! @e.md?", ".", (t) => (seen.push(t), false));
-  assert.deepEqual(seen, ["README.md", "a.md", "b.md", "c.md", "d.md", "e.md"]);
+test("importPath cuts at # and unescapes spaces; trailing punctuation stays, as in Claude Code", () => {
+  assert.equal(importPath("docs/x.md#section"), "docs/x.md");
+  assert.equal(importPath("my\\ file.md"), "my file.md");
+  assert.equal(importPath("README.md."), "README.md.");
 });
 
-test("resolveImport: relative to the guide, ~/ from home, absolute as is, with or without .md", () => {
+test("isImport: ~/ and absolute by syntax, .md by name, anything else only if the file exists", () => {
   const dir = makeTempDir("claude-md-budget-imp-");
-  mkdirSync(join(dir, "guide", "docs"), { recursive: true });
-  mkdirSync(join(dir, "home"), { recursive: true });
-  writeFileSync(join(dir, "guide", "docs", "a.md"), "");
-  writeFileSync(join(dir, "guide", "README.md"), "");
-  writeFileSync(join(dir, "home", "n.md"), "");
-  const guide = join(dir, "guide");
-  const home = join(dir, "home");
-  assert.equal(resolveImport("docs/a.md", guide, home), join(guide, "docs", "a.md"));
-  assert.equal(resolveImport("README", guide, home), join(guide, "README.md"));
-  assert.equal(resolveImport("~/n.md", guide, home), join(home, "n.md"));
-  assert.equal(resolveImport(join(home, "n.md"), "/elsewhere", home), join(home, "n.md"));
-  assert.equal(resolveImport("stable", guide, home), null);
-  assert.equal(resolveImport("docs", guide, home), null, "a directory is not an import");
+  mkdirSync(join(dir, "docs"), { recursive: true });
+  writeFileSync(join(dir, "docs", "plain"), "");
+  // ~/ and absolute never depend on the machine: CI has no such file, a laptop may.
+  assert.equal(isImport("~/.claude/missing.md", dir), true);
+  assert.equal(isImport("/nonexistent/file", dir), true);
+  // A .md path is an import even when absent here (an ignored local file).
+  assert.equal(isImport("CLAUDE.local.md", dir), true);
+  assert.equal(isImport("docs/plain", dir), true);
+  assert.equal(isImport("docs", dir), false, "a directory is not an import");
+  assert.equal(isImport("stable", dir), false);
+  assert.equal(isImport("README", dir), false, "no .md fallback: Claude Code never appends it");
+  assert.equal(isImport("", dir), false);
 });
 
 test("an import fails the check even when every budget is met", () => {
@@ -220,6 +230,28 @@ test("CLI: an import of a file next to the guide fails; an @tag does not", () =>
   assert.equal(res.status, 1, res.stderr);
   assert.match(res.stdout, /import: CLAUDE\.md:2 {2}@docs\/x\.md/);
   assert.doesNotMatch(res.stdout, /@stable/);
+});
+
+test("CLI: an area guide's import resolves next to that guide, not at the repo root", () => {
+  const dir = repo({ "CLAUDE.md": "- root\n", "a/CLAUDE.md": "- see @notes\n", "a/notes": "x\n" });
+  const res = spawnSync("node", [SCRIPT], { cwd: dir, encoding: "utf8" });
+  assert.equal(res.status, 1, res.stderr);
+  assert.match(res.stdout, /import: a\/CLAUDE\.md:1 {2}@notes/);
+});
+
+test("CLI: a #fragment import and a ~/ import fail, whatever this machine holds", () => {
+  const dir = repo({ "CLAUDE.md": "- see @docs/x#part\n- mine: @~/.claude/never-there-2542.md\n", "docs/x": "x\n" });
+  const res = spawnSync("node", [SCRIPT], { cwd: dir, encoding: "utf8", env: { ...process.env, HOME: "/nonexistent" } });
+  assert.equal(res.status, 1, res.stderr);
+  assert.match(res.stdout, /import: CLAUDE\.md:1 {2}@docs\/x —/);
+  assert.match(res.stdout, /import: CLAUDE\.md:2 {2}@~\/\.claude\/never-there-2542\.md/);
+});
+
+test("CLI: only files named exactly CLAUDE.md are guides", () => {
+  const dir = repo({ "CLAUDE.md": "- root\n", "NOT-CLAUDE.md": `- ${"f".repeat(BUDGETS.block + 10)}\n` });
+  const res = spawnSync("node", [SCRIPT], { cwd: dir, encoding: "utf8" });
+  assert.equal(res.status, 0, res.stdout);
+  assert.doesNotMatch(res.stdout, /NOT-CLAUDE/);
 });
 
 test("CLI: from a subdirectory it checks every guide, with root-relative paths and budgets", () => {
