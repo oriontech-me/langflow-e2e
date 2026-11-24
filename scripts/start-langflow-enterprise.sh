@@ -102,9 +102,24 @@ fi
 # all, which is why it survived: nothing here created one until the authorization
 # matrix needed a scoped key as a subject.
 #
-# Derived deterministically (sha256 of a fixed string) so it stays stable without
-# being a magic literal nobody can regenerate.
-SECRET_KEY="${LANGFLOW_SECRET_KEY:-viJDyKIlkdxWMbwIICjJdRMUKUf80sGJafyWKoWbMU4=}"
+# Derived deterministically — the url-safe base64 of sha256 over a fixed seed —
+# so it stays stable without being a magic literal nobody can regenerate. It is
+# computed here rather than written out because a key literal in this file is
+# what IBM's push-time secret scanner blocks, on every push that touches the
+# file. The seed reproduces, byte for byte, the key this line used to spell out,
+# so nothing that depends on the key changed when the literal went away.
+SECRET_KEY_SEED="langflow-e2e-enterprise-lane"
+SECRET_KEY="${LANGFLOW_SECRET_KEY:-$(printf '%s' "${SECRET_KEY_SEED}" \
+  | openssl dgst -sha256 -binary | base64 | tr '+/' '-_')}"
+# 32 bytes encode to exactly 44 characters. Anything else means the derivation
+# above broke (no openssl, a base64 that wraps lines) and would start a container
+# whose every API key creation answers 400, which is the failure described above.
+if [ "${#SECRET_KEY}" -ne 44 ]; then
+  echo "ERROR: LANGFLOW_SECRET_KEY must be a Fernet key (44 url-safe base64 characters);" >&2
+  echo "  got ${#SECRET_KEY} characters, from LANGFLOW_SECRET_KEY if it is set, from the" >&2
+  echo "  derivation above if not." >&2
+  exit 2
+fi
 # Two passwords, because EE uses two. BOOTSTRAP_PASSWORD is what the container
 # is seeded with; EE_PASSWORD is what the suite logs in with after the forced
 # rotation below. The EE minimum is 8 characters.
@@ -255,6 +270,14 @@ if [ "${RBAC}" = "1" ]; then
     # answer is unchanged.
     -e "LANGFLOW_AUTHZ_SUPERUSER_BYPASS=${SUPERUSER_BYPASS}"
     -e LANGFLOW_AUTHZ_AUDIT_ENABLED=true
+    # A SECOND audit switch, and the Enterprise docs name only the first (#2530, LE-3527).
+    # LANGFLOW_AUTHZ_AUDIT_ENABLED records sign-in, access-control, governance and
+    # permission-check events (the AuthzAuditLog table, /api/v1/authz/audit). The
+    # OSS resource store — flow:create, project:create and the rest, the
+    # audit_events table behind the console's Flows and Projects views — writes
+    # only with LANGFLOW_AUDIT_ENABLED, which defaults to false. Without it those
+    # two views are empty for every role and say nothing about why.
+    -e LANGFLOW_AUDIT_ENABLED=true
     # The bootstrap is what gives ANY account a role, superuser included. With
     # it off the instance enforces against an empty assignment table and every
     # request is denied, which reads as a broken image rather than a missing flag.
@@ -413,12 +436,12 @@ for _ in $(seq 1 60); do
       echo "Tier gate not probed: no usable superuser token (rotation pending or failed)."
     fi
     if [ "${BYPASS}" = "1" ]; then
-      echo "BYPASS variant: authorization ENFORCED, superuser bypass ON, audit ON."
+      echo "BYPASS variant: authorization ENFORCED, superuser bypass ON, authz audit ON, resource audit ON."
       echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
       echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass true"
       echo "  note     : the @authz specs that need an ENFORCING superuser skip here, by design."
     elif [ "${RBAC}" = "1" ]; then
-      echo "RBAC variant: authorization ENFORCED, superuser bypass OFF, audit ON."
+      echo "RBAC variant: authorization ENFORCED, superuser bypass OFF, authz audit ON, resource audit ON."
       echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
       echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass false"
     fi

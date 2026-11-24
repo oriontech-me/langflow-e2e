@@ -245,6 +245,67 @@ async function seedDenialAsSharedSubject(
   return subject;
 }
 
+/** A project the superuser creates this run, so the feed holds its `project:create`. */
+async function createProject(request: APIRequestContext, auth: string): Promise<string> {
+  const response = await request.post("/api/v1/projects/", {
+    headers: { Authorization: auth },
+    data: { name: `audit-view-project-${Date.now()}`, description: "" },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  return (await response.json()).id;
+}
+
+/** A flow the superuser creates this run inside `projectId`, for its `flow:create`. */
+async function createFlowIn(
+  request: APIRequestContext,
+  auth: string,
+  projectId: string,
+): Promise<string> {
+  const response = await request.post("/api/v1/flows/", {
+    headers: { Authorization: auth },
+    data: {
+      name: `audit-view-flow-${Date.now()}`,
+      data: { nodes: [], edges: [] },
+      folder_id: projectId,
+    },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  return (await response.json()).id;
+}
+
+/**
+ * The id of the `action` event a write of this run left in the unified feed.
+ *
+ * Read by `resource_id`, which the feed filters on, so earlier runs' rows cannot
+ * push it out of the response. Flow and project events are recorded only with
+ * `LANGFLOW_AUDIT_ENABLED=true` — a second switch beside the authz one, which the
+ * Enterprise docs do not name (#2530, LE-3527). Without it the screen shows its
+ * ordinary empty state, so the missing event fails HERE, naming the switch,
+ * rather than later as a row that is not visible, which reads as a screen defect.
+ */
+async function createEventId(
+  request: APIRequestContext,
+  auth: string,
+  resourceId: string,
+  action: string,
+): Promise<string> {
+  const response = await request.get(AUDIT_PATH, {
+    headers: { Authorization: auth },
+    params: { resource_id: resourceId },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  const body = await response.json();
+  const items: { id: string; action: string }[] = Array.isArray(body) ? body : body.items;
+  const event = items.find((item) => item.action === action);
+  expect(
+    event,
+    `no ${action} event for ${resourceId} in ${AUDIT_PATH}. Flow and project events are ` +
+      "recorded only with LANGFLOW_AUDIT_ENABLED=true; recreate the instance with " +
+      "scripts/start-langflow-enterprise.sh, which sets it (#2530, LE-3527)",
+  ).toBeDefined();
+  return (event as { id: string }).id;
+}
+
 test.describe("Enterprise — the audit-log screen sends the filter it displays", () => {
   test.beforeEach(async ({ page, request }) => {
     const auth = await getEnterpriseAuthToken(request);
@@ -380,90 +441,116 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
   );
 
   test(
-    "Flows and Projects read the unified feed, not the sources the superuser is refused",
+    "Flows and Projects list this run's flow and project from the unified feed, not from the sources the superuser is refused",
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
-    async ({ page }) => {
-      // Every read of the per-resource sources, armed before the screen mounts
-      // because the probes fire during the load.
-      const sourceReads: URLSearchParams[] = [];
-      page.on("request", (request) => {
-        const url = new URL(request.url());
-        if (request.method() === "GET" && AUDIT_SOURCE_PROBES.includes(url.pathname)) {
-          sourceReads.push(url.searchParams);
-        }
-      });
-      const probes = AUDIT_SOURCE_PROBES.map((pathname) =>
-        page.waitForResponse(
-          (response) =>
-            new URL(response.url()).pathname === pathname &&
-            response.request().method() === "GET",
-          { timeout: 30_000 },
-        ),
-      );
+    async ({ page, request }) => {
+      const auth = await getEnterpriseAuthToken(request);
+      const projectId = await createProject(request, auth);
+      try {
+        const flowId = await createFlowIn(request, auth, projectId);
+        try {
+          // Asserted in the feed BEFORE the screen opens, so a store that is off
+          // fails naming its switch instead of as a missing row (#2530, LE-3527).
+          const eventIds: Record<string, string> = {};
 
-      await openAuditScreen(page);
+          await test.step("this run's flow and project each left a create event in the feed", async () => {
+            eventIds.project = await createEventId(request, auth, projectId, "project:create");
+            eventIds.flow = await createEventId(request, auth, flowId, "flow:create");
+          });
 
-      await test.step("the per-resource probes are refused to the superuser, by design", async () => {
-        // The contract #2263 settled: `audit_read` comes only from a custom role,
-        // so the built-in `admin` the superuser holds does not carry it. A build
-        // that hands it to a built-in role changes who can read a flow's audit
-        // trail, and should be noticed rather than absorbed.
-        for (const [index, probe] of (await Promise.all(probes)).entries()) {
-          const body = await probe.text();
-          expect(probe.status(), `${AUDIT_SOURCE_PROBES[index]}: ${body}`).toBe(403);
-          expect(body).toContain("Permission denied");
-        }
-      });
-
-      for (const { label, resourceType } of SOURCE_OPTIONS) {
-        await test.step(`${label} is still offered, and reads the unified feed`, async () => {
-          // Armed before the click: the next listing read is the one this pick causes.
-          const listing = page.waitForResponse(
-            (response) => {
-              const url = new URL(response.url());
-              return (
-                url.pathname === AUDIT_PATH &&
-                response.request().method() === "GET" &&
-                url.searchParams.get("limit") !== "1"
-              );
-            },
-            { timeout: 15_000 },
+          // Every read of the per-resource sources, armed before the screen mounts
+          // because the probes fire during the load.
+          const sourceReads: URLSearchParams[] = [];
+          page.on("request", (sent) => {
+            const url = new URL(sent.url());
+            if (sent.method() === "GET" && AUDIT_SOURCE_PROBES.includes(url.pathname)) {
+              sourceReads.push(url.searchParams);
+            }
+          });
+          const probes = AUDIT_SOURCE_PROBES.map((pathname) =>
+            page.waitForResponse(
+              (response) =>
+                new URL(response.url()).pathname === pathname &&
+                response.request().method() === "GET",
+              { timeout: 30_000 },
+            ),
           );
 
-          await panel(page).getByTestId("audit-filter-type").click();
-          const option = page.getByRole("option", { name: label, exact: true });
-          // A refused probe still means "the route exists": only a missing route
-          // hides the option. Hiding it here would hide the superuser's own
-          // flow and project history, which the unified feed serves.
-          await expect(option, `the Resource filter no longer offers ${label}`).toBeVisible();
-          // Chosen by keyboard, not by pointer. The listbox has no max height and
-          // hides its overflow, so at the default 1280x720 viewport these two
-          // options sit at y ~715-777, below the window, and a click retries
-          // "element is outside of the viewport" until it times out. Focus + Enter
-          // is the same selection a keyboard user makes; the clipping is a
-          // separate observation, not what this test is about.
-          await option.focus();
-          await page.keyboard.press("Enter");
+          await openAuditScreen(page);
 
-          const response = await listing;
-          const url = new URL(response.url());
-          expect(url.searchParams.getAll("resource_type")).toEqual([resourceType]);
-          // The view is built from a read the superuser is allowed, not from the
-          // refused source: a 403 here is the empty-without-a-reason view #2263
-          // was afraid of.
-          expect(response.status(), `${url}: ${await response.text()}`).toBe(200);
-        });
+          await test.step("the per-resource probes are refused to the superuser, by design", async () => {
+            // The contract #2263 settled: `audit_read` comes only from a custom role,
+            // so the built-in `admin` the superuser holds does not carry it. A build
+            // that hands it to a built-in role changes who can read a flow's audit
+            // trail, and should be noticed rather than absorbed.
+            for (const [index, probe] of (await Promise.all(probes)).entries()) {
+              const body = await probe.text();
+              expect(probe.status(), `${AUDIT_SOURCE_PROBES[index]}: ${body}`).toBe(403);
+              expect(body).toContain("Permission denied");
+            }
+          });
+
+          for (const { label, resourceType } of SOURCE_OPTIONS) {
+            await test.step(`${label} is still offered, reads the unified feed and lists this run's event`, async () => {
+              // Armed before the click: the next listing read is the one this pick causes.
+              const listing = page.waitForResponse(
+                (response) => {
+                  const url = new URL(response.url());
+                  return (
+                    url.pathname === AUDIT_PATH &&
+                    response.request().method() === "GET" &&
+                    url.searchParams.get("limit") !== "1"
+                  );
+                },
+                { timeout: 15_000 },
+              );
+
+              await panel(page).getByTestId("audit-filter-type").click();
+              const option = page.getByRole("option", { name: label, exact: true });
+              // A refused probe still means "the route exists": only a missing route
+              // hides the option. Hiding it here would hide the superuser's own
+              // flow and project history, which the unified feed serves.
+              await expect(option, `the Resource filter no longer offers ${label}`).toBeVisible();
+              // Chosen by keyboard, not by pointer. The listbox has no max height and
+              // hides its overflow, so at the default 1280x720 viewport these two
+              // options sit at y ~715-777, below the window, and a click retries
+              // "element is outside of the viewport" until it times out. Focus + Enter
+              // is the same selection a keyboard user makes; the clipping is a
+              // separate observation, not what this test is about.
+              await option.focus();
+              await page.keyboard.press("Enter");
+
+              const response = await listing;
+              const url = new URL(response.url());
+              expect(url.searchParams.getAll("resource_type")).toEqual([resourceType]);
+              // The view is built from a read the superuser is allowed, not from the
+              // refused source: a 403 here is the empty-without-a-reason view #2263
+              // was afraid of.
+              expect(response.status(), `${url}: ${await response.text()}`).toBe(200);
+              // And it shows what the feed holds: the event this run's write left,
+              // newest first, so on the first page whatever earlier runs recorded.
+              await expect(
+                panel(page).getByTestId(`audit-row-${eventIds[resourceType]}`),
+                `the ${label} view does not list this run's ${resourceType}:create event`,
+              ).toBeVisible();
+            });
+          }
+
+          await test.step("and the refused sources are never read for the listing", async () => {
+            const listingReads = sourceReads.filter((params) => params.get("limit") !== "1");
+            expect(
+              listingReads.map((params) => params.toString()),
+              "the screen read a per-resource source the superuser is refused",
+            ).toEqual([]);
+            // The two probes did fire: an empty record proves nothing.
+            expect(sourceReads.length).toBeGreaterThanOrEqual(AUDIT_SOURCE_PROBES.length);
+          });
+        } finally {
+          await request.delete(`/api/v1/flows/${flowId}`, { headers: { Authorization: auth } });
+        }
+      } finally {
+        await request.delete(`/api/v1/projects/${projectId}`, { headers: { Authorization: auth } });
       }
-
-      await test.step("and the refused sources are never read for the listing", async () => {
-        const listingReads = sourceReads.filter((params) => params.get("limit") !== "1");
-        expect(
-          listingReads.map((params) => params.toString()),
-          "the screen read a per-resource source the superuser is refused",
-        ).toEqual([]);
-        // The two probes did fire: an empty record proves nothing.
-        expect(sourceReads.length).toBeGreaterThanOrEqual(AUDIT_SOURCE_PROBES.length);
-      });
     },
   );
 
