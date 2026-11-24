@@ -50,10 +50,33 @@ What made #2263 look like a screen defect does not hold, and this spec pins why:
   refused source is never read for the listing. With the resource event store on, the superuser
   filtering *Flows* sees its own `flow:create` — measured.
 
-The store itself is off on this lane: flow and project events are written only with
-`LANGFLOW_AUDIT_ENABLED=true`, which neither the Enterprise docs nor
-`start-langflow-enterprise.sh` set (#2530). So this spec asserts the **read**, not a row; #2530
-owns adding the row once the lane turns the store on.
+### The Flows and Projects views list this run's flow and project
+
+Flow and project events come from a **second** audit switch. `LANGFLOW_AUTHZ_AUDIT_ENABLED`
+records sign-in, access-control, governance and permission-check events (the table behind
+`/api/v1/authz/audit`). The flow and project events (`flow:create`, `project:create`, …) are
+written to OSS's resource store only with `LANGFLOW_AUDIT_ENABLED=true`, default `false`. The
+Enterprise audit-log docs name only the first switch, so an instance configured from them shows
+*Flows* and *Projects* empty for every role, in the screen's ordinary empty state (#2530, LE-3527).
+
+`start-langflow-enterprise.sh` now sets both on the RBAC and bypass variants. Measured on the
+same container with only that variable changed: unset, `GET /api/v1/audits?resource_type=flow`
+answers `200` with `total: 0` after the superuser creates a flow; set, the superuser's own
+`flow:create` is listed (`kind: action`, `result: succeeded`), and the same for `project`. The
+listing reads with the screen's own defaults (`kind=action`, the seven-day window, the
+`audit:read` exclusion) return it, so it is on the first page the screen shows.
+
+So the test seeds a project and a flow inside it **this run**, reads their `create` events' ids
+from the feed, and asserts each one is listed as an `audit-row-<event id>` after picking
+*Flows* and *Projects*. Before the screen opens it asserts both events exist in the feed, and
+says which switch is missing when they do not: without that, an instance with the store off
+fails as "row not visible", which reads as a screen defect.
+
+Turning the store on was measured against the rest of the `@enterprise` lane before it was
+committed. Every flow and project write now adds a row to the unified feed, so the export was
+re-measured with more than 400 rows in it: since 1.13 the export is a browser download of
+`/api/v1/audits/export`, outside the request layer whose duplicate-request guard aborted the
+1.12 export past 400 rows (LE-2792), and it downloads the whole set.
 
 ### The default view narrows three times, and states two
 
@@ -136,11 +159,15 @@ never run (#1010).
    or *Failed* (a denied action), and this run's subject is among them.
 5. **The label mapping.** Pick *Connections & sign-in* under `Resource` and assert the read
    carries `resource_type=sso_connection`.
-6. **Flows and Projects despite the refused probes.** Arm a recorder for the per-resource sources
-   before opening the screen. Assert each probe answered `403` with `Permission denied`, then pick
-   *Flows* and *Projects* in turn: each is offered, each causes a unified-feed read carrying
-   exactly that `resource_type` and answering `200`, and the per-resource sources receive no read
-   other than the `limit=1` probes.
+6. **Flows and Projects despite the refused probes.** As the superuser, create a project and a
+   flow inside it, and read their `flow:create` / `project:create` event ids from
+   `GET /api/v1/audits` — failing with the name of `LANGFLOW_AUDIT_ENABLED` when either is
+   missing. Arm a recorder for the per-resource sources before opening the screen. Assert each
+   probe answered `403` with `Permission denied`, then pick *Flows* and *Projects* in turn: each
+   is offered, each causes a unified-feed read carrying exactly that `resource_type` and
+   answering `200`, the row for this run's event (`audit-row-<event id>`) is listed, and the
+   per-resource sources receive no read other than the `limit=1` probes. The flow and the
+   project are deleted at the end.
 7. **The export.** Seed a denial as the shared subject, pick `Deny`, assert `Export` is enabled,
    click it and wait for the download: its URL is `/api/v1/audits/export` carrying `result=deny`
    and no `limit`; the file has the name and header above, every row is a deny, and the shared
@@ -152,15 +179,18 @@ Fails when a control displays one filter and sends another, when the default vie
 stops matching what the controls report, when a filter is accepted and ignored, or when the export
 downloads anything but the filtered set — or nothing at all. Also fails when *Flows* or *Projects*
 stops being offered, when picking one reads anything but the unified feed (in particular the
-per-resource source the superuser is refused), or when the built-in `admin` role stops being
-refused `audit_read` — a contract change worth noticing either way.
+per-resource source the superuser is refused), when the view does not list the flow or project
+this run created, or when the built-in `admin` role stops being refused `audit_read` — a
+contract change worth noticing either way.
 
 ## External dependencies *(required)*
 
 - A Langflow **Enterprise** instance on the RBAC variant:
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`. On the 1.13 line the script sets
   `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`; without it the user creation the seed
-  needs answers `503` (#2259).
+  needs answers `503` (#2259). It also sets `LANGFLOW_AUDIT_ENABLED=true`, without which no flow
+  or project event is recorded and the Flows/Projects test fails naming the variable (#2530).
+  A container started before that change has to be recreated with the script.
 - A browser that accepts downloads (Playwright's default).
 - No LLM provider, no network egress, no licence. **One** unit of the per-IP login budget on a warm
   instance, two on a cold one. The Result-filter test creates a subject unique to this run, which is

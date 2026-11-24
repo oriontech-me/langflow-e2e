@@ -270,6 +270,14 @@ if [ "${RBAC}" = "1" ]; then
     # answer is unchanged.
     -e "LANGFLOW_AUTHZ_SUPERUSER_BYPASS=${SUPERUSER_BYPASS}"
     -e LANGFLOW_AUTHZ_AUDIT_ENABLED=true
+    # A SECOND audit switch, and the Enterprise docs name only the first (#2530, LE-3527).
+    # LANGFLOW_AUTHZ_AUDIT_ENABLED records sign-in, access-control, governance and
+    # permission-check events (the AuthzAuditLog table, /api/v1/authz/audit). The
+    # OSS resource store — flow:create, project:create and the rest, the
+    # audit_events table behind the console's Flows and Projects views — writes
+    # only with LANGFLOW_AUDIT_ENABLED, which defaults to false. Without it those
+    # two views are empty for every role and say nothing about why.
+    -e LANGFLOW_AUDIT_ENABLED=true
     # The bootstrap is what gives ANY account a role, superuser included. With
     # it off the instance enforces against an empty assignment table and every
     # request is denied, which reads as a broken image rather than a missing flag.
@@ -428,12 +436,12 @@ for _ in $(seq 1 60); do
       echo "Tier gate not probed: no usable superuser token (rotation pending or failed)."
     fi
     if [ "${BYPASS}" = "1" ]; then
-      echo "BYPASS variant: authorization ENFORCED, superuser bypass ON, audit ON."
+      echo "BYPASS variant: authorization ENFORCED, superuser bypass ON, authz audit ON, resource audit ON."
       echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
       echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass true"
       echo "  note     : the @authz specs that need an ENFORCING superuser skip here, by design."
     elif [ "${RBAC}" = "1" ]; then
-      echo "RBAC variant: authorization ENFORCED, superuser bypass OFF, audit ON."
+      echo "RBAC variant: authorization ENFORCED, superuser bypass OFF, authz audit ON, resource audit ON."
       echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
       echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass false"
     fi
