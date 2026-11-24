@@ -1926,7 +1926,7 @@
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 16 | 0 | 0 | 0 |
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
-| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 109 | 0 | 91 | 5 | 13 |
+| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 110 | 0 | 92 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
