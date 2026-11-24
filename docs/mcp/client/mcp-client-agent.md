@@ -131,7 +131,7 @@ Measured on `1.14.0.dev35`, with the check instrumented to record which conditio
 
 So the outcome depended on how long the model kept retrying, which is why it read as an anthropic-only failure. It was not a Langflow version regression: `1.14.0.dev26`, which passed on 2026-11-13, failed the same way on 2026-11-23. That the model's retry behaviour is what changed between those dates is the likeliest reading, not a measured one.
 
-The wait checks the node, its tool mode and the edge to the Agent's `tools` input, the conditions measured to deny. It does not check the node's `tools_metadata` row (tag, name, status, approval actions), which `validate_tool_call` also matches when the field exists; no run denied on it. A refusal with this step green would point there.
+The wait checks the node (the only condition measured to deny), its tool mode (also checked by `validate_tool_call`) and the edge to the Agent's `tools` input. The edge is not an authorization condition; it is checked because it is the last canvas edit, so the save that carries it carries the others. The wait does not check the node's `tools_metadata` row (tag, name, status, approval actions), which `validate_tool_call` also matches when the field exists or the caller reports metadata configured; no run denied on it. A refusal with this step green would point there.
 
 The wait reads the **API**, unlike `node-config-guard.ts`, which reads the widget because the run executes the in-memory graph. The question here is what the *authorization* reads, and that is the stored flow.
 

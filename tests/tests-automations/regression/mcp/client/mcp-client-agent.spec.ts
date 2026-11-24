@@ -205,11 +205,12 @@ type ToolsetPersistState = "persisted" | "no-mcp-node" | "tool-mode-off" | "no-e
 function readToolsetPersistState(flow: any): ToolsetPersistState {
   const nodes: any[] = flow?.data?.nodes ?? [];
   const edges: any[] = flow?.data?.edges ?? [];
-  // The component's `name` is `MCPTools`, but the sidebar adds it under the catalog
-  // key `MCP`: the stored node measured on `1.14.0.dev35` was `MCP-8tf5p`, and the
-  // frontend derives the id from `data.type` (`getNodeId`). Both spellings are
-  // accepted, bare or namespaced (`ext:<vendor>:MCPTools@official`), and the id
-  // prefix stays as a fallback, so a key rename cannot turn into `no-mcp-node`.
+  // The component's `name` is `MCPTools`, but the MCP sidebar group adds it with the
+  // hardcoded item name `MCP` (`McpSidebarGroup.tsx`): the stored node measured on
+  // `1.14.0.dev35` was `MCP-8tf5p`, and the frontend derives the id from `data.type`
+  // (`getNodeId`). Both spellings are accepted, bare or namespaced
+  // (`ext:<vendor>:MCPTools@official`). The id prefix only helps a type rewritten
+  // after creation; a rename to any other key misses both and reads `no-mcp-node`.
   const mcp = nodes.find(
     (n) =>
       /(^|:)MCP(Tools)?(@|$)/.test(String(n?.data?.type ?? "")) ||
@@ -244,9 +245,9 @@ function readToolsetPersistState(flow: any): ToolsetPersistState {
  * anthropic `claude-haiku-4-5` gave up after three refusals within ~3 s and
  * answered "the tool is unavailable". With this wait: 5/5 passed, zero refusals.
  *
- * Scope: the wait covers what was measured to deny, the node, its tool mode, and
- * the edge (the last canvas edit, so its save carries the others). It does not
- * check the `tools_metadata` row (tag, name, status, approval actions) that
+ * Scope: the wait covers the node (the only condition measured to deny), its tool
+ * mode, and the edge (not checked by `validate_tool_call`, but the last canvas
+ * edit, so its save carries the others). It does not check the `tools_metadata` row (tag, name, status, approval actions) that
  * `validate_tool_call` also matches; no run denied on it. If one ever does, the
  * refusal comes back with the wait green, and this predicate is what to extend.
  *
