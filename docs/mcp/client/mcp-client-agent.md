@@ -127,9 +127,11 @@ Measured on `1.14.0.dev35`, with the check instrumented to record which conditio
 |---|---|---|
 | anthropic `claude-haiku-4-5`, no wait | 3, all "MCP node not in the stored flow" | failed: the agent gave up within ~3 s |
 | openai `gpt-4o-mini`, no wait | 2, same reason, before the save landed | passed: its third call came after the save |
-| anthropic `claude-haiku-4-5`, with the wait | 0, in 3 of 3 runs (flow settled after ~5.3 s) | passed |
+| anthropic `claude-haiku-4-5`, with the wait | 0, in 5 of 5 runs (flow settled after ~5.3 s) | passed |
 
 So the outcome depended on how long the model kept retrying, which is why it read as an anthropic-only failure. It was not a Langflow version regression: `1.14.0.dev26`, which passed on 2026-11-13, failed the same way on 2026-11-23. That the model's retry behaviour is what changed between those dates is the likeliest reading, not a measured one.
+
+The wait checks the node, its tool mode and the edge to the Agent's `tools` input, the conditions measured to deny. It does not check the node's `tools_metadata` row (tag, name, status, approval actions), which `validate_tool_call` also matches when the field exists; no run denied on it. A refusal with this step green would point there.
 
 The wait reads the **API**, unlike `node-config-guard.ts`, which reads the widget because the run executes the in-memory graph. The question here is what the *authorization* reads, and that is the stored flow.
 

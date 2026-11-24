@@ -205,8 +205,15 @@ type ToolsetPersistState = "persisted" | "no-mcp-node" | "tool-mode-off" | "no-e
 function readToolsetPersistState(flow: any): ToolsetPersistState {
   const nodes: any[] = flow?.data?.nodes ?? [];
   const edges: any[] = flow?.data?.edges ?? [];
+  // The component's `name` is `MCPTools`, but the sidebar adds it under the catalog
+  // key `MCP`: the stored node measured on `1.14.0.dev35` was `MCP-8tf5p`, and the
+  // frontend derives the id from `data.type` (`getNodeId`). Both spellings are
+  // accepted, bare or namespaced (`ext:<vendor>:MCPTools@official`), and the id
+  // prefix stays as a fallback, so a key rename cannot turn into `no-mcp-node`.
   const mcp = nodes.find(
-    (n) => n?.data?.type === "MCPTools" || /^MCP(Tools)?-/.test(String(n?.id ?? "")),
+    (n) =>
+      /(^|:)MCP(Tools)?(@|$)/.test(String(n?.data?.type ?? "")) ||
+      /^MCP(Tools)?-/.test(String(n?.id ?? "")),
   );
   if (!mcp) return "no-mcp-node";
   if (mcp.data?.node?.tool_mode !== true) return "tool-mode-off";
@@ -235,7 +242,13 @@ function readToolsetPersistState(flow: any): ToolsetPersistState {
  * name, status or approval actions. openai `gpt-4o-mini` was refused twice too
  * and passed only because its third call came after the save landed;
  * anthropic `claude-haiku-4-5` gave up after three refusals within ~3 s and
- * answered "the tool is unavailable". With this wait: 3/3 passed, zero refusals.
+ * answered "the tool is unavailable". With this wait: 5/5 passed, zero refusals.
+ *
+ * Scope: the wait covers what was measured to deny, the node, its tool mode, and
+ * the edge (the last canvas edit, so its save carries the others). It does not
+ * check the `tools_metadata` row (tag, name, status, approval actions) that
+ * `validate_tool_call` also matches; no run denied on it. If one ever does, the
+ * refusal comes back with the wait green, and this predicate is what to extend.
  *
  * Reads the API on purpose, unlike `node-config-guard.ts`, which reads the
  * widget because the RUN executes the in-memory graph. Here the question is what
@@ -253,7 +266,7 @@ async function waitForToolsetPersisted(page: Page, flowId: string): Promise<void
     await expect(async () => {
       try {
         const res = await page.request.get(`/api/v1/flows/${flowId}`, { headers });
-        expect(res.ok()).toBe(true);
+        expect(res.ok(), `GET /api/v1/flows/${flowId} -> ${res.status()}`).toBe(true);
         state = readToolsetPersistState(await res.json());
         lastReadError = undefined;
       } catch (e: any) {
