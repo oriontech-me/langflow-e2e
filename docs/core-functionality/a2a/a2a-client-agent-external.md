@@ -1,7 +1,9 @@
 # A2A Client — the `A2AAgent` component in External mode: calling an agent by its URL
 
-**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev25`, #2412), 1.13.x
-(nightly `1.13.0.dev34`) and 1.12.x (`1.12.5`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev38`, #2548). Earlier validations
+(`1.14.0.dev25`, `1.13.0.dev34`, `1.12.5`) predate the authorized agent card, and the
+restricted half of this spec no longer applies to those builds (see *External
+dependencies*).
 
 **Issue:** #1855 (toolbar under the app header: #2182) · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C2**) ·
 **Follows:** #1354 (C1, Internal mode) · **Jira:** epic `LE-1588`, regression `LE-1845`
@@ -33,11 +35,13 @@ four things that fail independently:
    session minted by the **A2A server** (`<uuid>:<contextId>`), never under the
    Internal-mode namespace (`<caller session>:a2a:<target id>`). This is what makes
    the spec about External mode rather than about "an A2A call happened".
-4. **The card's security surfaces, and the key reaches a restricted agent** — once
-   the target moves into an `auth_type=apikey` project, the refreshed card carries
-   `Requires an API key`, and a run with the owner's key in the component's
-   `api_key` still returns a sentinel. The **same flow id** crosses the boundary, so
-   the chip cannot be attributed to anything but the project.
+4. **A restricted card is withheld from an anonymous fetch, and the key opens it** —
+   once the target moves into an `auth_type=apikey` project, a refetch **without** a
+   key on the node renders **no** card (the server answers the anonymous request with
+   404, langflow-ai/langflow#16538); with the owner's key in the component's
+   `api_key`, the refetched card renders and carries `Requires an API key`; and a run
+   with that key still returns a sentinel. The **same flow id** crosses the boundary,
+   so both the missing card and the chip can only come from the project.
 
 **Why this was out of reach until now.** The scope doc parked this row on "a loopback
 self-call is refused by Langflow's SSRF layer (`LE-1904` class)". On the 1.13 nightly
@@ -71,8 +75,9 @@ holding an `A2AAgent` node in External mode:
 | 1 | the card viewer, after `agent_url` is set to A's card URL | dialog text contains **A's exact name**, and does **not** contain `Requires an API key` |
 | 2 | the flow B run, via the playground | `chat-message-AI-<sentinel>` |
 | 3 | `GET /api/v1/monitor/messages?flow_id=<A>` | a `User` message whose text is the sentinel, with a `session_id` that is two UUIDs joined by `:` — the A2A server's composite — and does **not** contain `:a2a:` |
-| 4 | the card viewer, after A moves into an `auth_type=apikey` project and `agent_url` is re-pointed at A's base URL | dialog text contains `Requires an API key` |
-| 5 | the flow B run with the owner's key in `api_key` | `chat-message-AI-<sentinel2>`, and A stored `sentinel2` |
+| 4 | the node, after A moves into an `auth_type=apikey` project and `agent_url` is re-pointed at A's base URL with a trailing slash and **no** key on the node | the node update answers 2xx, and `data_display_data_display_agent_card` — visible just before — is **hidden**; and, outside the browser session, `GET /api/v1/a2a/<A>/.well-known/agent-card.json` answers **404** with no credential and **200** with the owner's `x-api-key` |
+| 5 | the card viewer, after the owner's key is set in `api_key` and `agent_url` is re-pointed at A's plain base URL | the display is visible again, and the dialog text contains A's name **and** `Requires an API key` |
+| 6 | the flow B run with the owner's key in `api_key` | `chat-message-AI-<sentinel2>`, and A stored `sentinel2` |
 
 Before assertion 5 can be reached, the spec opens the node's Parameters panel, and that
 step carries a precondition of its own (#2182): with the canvas fitted and the node
@@ -80,8 +85,17 @@ selected, the top of `parameters-button` is **at or below the bottom of
 `app-header`**. It is not a product assertion — it names the cause when the node's
 toolbar would render under the header, instead of a 20 s click timeout.
 
-Assertions 1 and 4 are the same flow, one project apart: 1 is the negative control
-that makes 4 mean something.
+Assertions 1, 4 and 5 are the same flow, so only the project and the key differ
+between them. 1 (public, no key) renders the card with no chip. 4 (restricted, no key)
+renders none. 5 (restricted, key) renders it with the chip. A hidden display alone
+only says the component's `_fetch_card` returned nothing, which an SSRF refusal or a
+timeout would cause too. That is why 4 also asks the endpoint directly, from a
+request context that carries no session: 404 anonymous, 200 with the key, so the
+server's refusal is shown, not inferred. 5 is the positive counterpart, and it goes
+through the **base** URL form: a render there shows the component's own fetch both
+derives the card URL from a base URL (`_agent_base_url`) and carries the key. The
+card URL form is covered positively by 1. The probe cannot rule out a broken
+base-URL derivation on its own; 5 does.
 
 ---
 
@@ -112,6 +126,24 @@ that makes 4 mean something.
   already reads `Requires an API key` and assertion 1 fails. That is an intended
   policy change, not a regression; the full account is in
   `a2a-server-jsonrpc-message-send.md`.
+- **The authorized agent card (langflow-ai/langflow#16538, #2548).** `get_agent_card`
+  (`src/backend/base/langflow/api/v1/a2a.py`) now takes the optional current user, and
+  serves a card anonymously only when the flow's project is `auth_type: "none"`; for
+  any other project an anonymous request gets **404** and a request carrying a valid
+  credential gets the card. The component's `_fetch_card`
+  (`src/lfx/src/lfx/components/models_and_agents/a2a_agent.py`) sends its `api_key`
+  input as `x-api-key` on the card fetch too. Assertion 4 depends on the first,
+  assertion 5 on both. The
+  change shipped in `release-1.13.4` (merged 2026-11-20) and reached `release-1.14.0`
+  on 2026-11-24 (`1.14.0.dev38` is the first daily image with it). Before it, the card
+  was anonymous for every enabled agent, a refetch without a key rendered the card
+  with the chip, and assertion 4 fails on those builds (`1.13.3` and earlier,
+  `1.14.0.dev37` and earlier). The spec does not branch on the version: both release
+  lines now carry one contract.
+- **The card is refetched only when `agent_url` (or the mode) changes.**
+  `update_build_config` calls `_apply_external_card` on those two fields alone, so
+  setting `api_key` does not refresh the display by itself; the spec re-points the
+  URL after the key is in place.
 - Auto-login superuser: the two flows, the project and the API key share one owner,
   which is the only owner whose key the A2A gate accepts.
 
@@ -162,19 +194,26 @@ One test. Every flow, key and project it creates is deleted in `finally`.
 11. Poll `GET /api/v1/monitor/messages?flow_id=<A>` for assertion 3.
 12. Close the playground (`playground-close-button`), `PATCH` A's `folder_id` into the
     restricted project and assert the move.
-13. Re-point `agent_url` at A's **base** URL `<self>/api/v1/a2a/<A>`. The component
-    accepts both forms (`_agent_base_url` normalises them); the value change is what
-    makes it fetch the card again.
-14. Open the viewer and assert assertion 4; close it.
-15. Fit the canvas (`adjustScreenView`, no zoom-out), **then** select the node and
+13. Assert the card display is still visible (the card fetched in step 7), then
+    re-point `agent_url` at A's **base** URL with a trailing slash,
+    `<self>/api/v1/a2a/<A>/`, with no key on the node. The component accepts the card
+    URL and the base URL, with or without the slash (`_agent_base_url` normalises
+    them); the value change is what makes it fetch the card again. The slash keeps
+    this value distinct from step 15's. Wait for that node update
+    to answer 2xx, then assert assertion 4: the display is hidden. Then probe the
+    card endpoint from a fresh request context (no auto-login cookie, unlike
+    `page.request`): 404 with no credential, 200 with the owner's `x-api-key`.
+14. Fit the canvas (`adjustScreenView`, no zoom-out), **then** select the node and
     assert the toolbar precondition above. Fit first because the wiring in step 9
     pans the canvas by a timing-dependent amount (see *Measurements*), and fit before
     selecting because fitting after it drops the selection and unmounts the toolbar
     (#867). Open its Parameters panel (`parameters-button`), add the advanced
     `api_key` field to the node (`inspector-add-api_key`) and fill
-    `popover-anchor-input-api_key` with the owner's key. Fill
-    `textarea_str_input_value` with a second sentinel.
-16. Run from the playground and assert assertion 5.
+    `popover-anchor-input-api_key` with the owner's key.
+15. Re-point `agent_url` at A's plain **base** URL `<self>/api/v1/a2a/<A>`, so the
+    card is fetched again, now with the key, and derived from the base form. Assert the display is visible, open the viewer and assert
+    assertion 5; close it. Fill `textarea_str_input_value` with a second sentinel.
+16. Run from the playground and assert assertion 6.
 17. `finally`, each guarded: leave the editor; delete B, then A and its public
     project (`cleanup()`), then the API key, then the restricted project — after its
     flow is gone, since a project holding flows is a different delete path and
@@ -190,8 +229,9 @@ One test. Every flow, key and project it creates is deleted in `finally`.
 | 1 | card viewer (public) | A's unique name; no `Requires an API key` |
 | 2 | run | `chat-message-AI-<sentinel>` |
 | 3 | monitor | the sentinel under an A2A-server session (`<uuid>:<uuid>`, no `:a2a:`) |
-| 4 | card viewer (restricted) | `Requires an API key` |
-| 5 | keyed run | `chat-message-AI-<sentinel2>`, and A stored it |
+| 4 | node (restricted, no key) + direct probe | no card display; the endpoint answers 404 anonymous, 200 with the key |
+| 5 | card viewer (restricted, key) | A's name and `Requires an API key` |
+| 6 | keyed run | `chat-message-AI-<sentinel2>`, and A stored it |
 
 ---
 
@@ -218,9 +258,12 @@ instance, none invented.
   (`Requires an API key` only when restricted, then `Streaming`, `Push
   notifications`, `JSONRPC`, `A2A 0.3.0`), then *Description*, *Sends*
   (`input_value`, `session_id`) and *Skills*. Hence text assertions on the dialog.
-- **The restricted chip needs a refetch.** Moving A does not update an
-  already-rendered display; changing `agent_url` (card URL → base URL) did, and the
-  chip appeared.
+- **The restricted card needs a refetch.** Moving A does not update an
+  already-rendered display; changing `agent_url` (card URL → base URL) does, and so
+  does every later change of its value. Before
+  langflow-ai/langflow#16538 that refetch rendered the card with the chip; from
+  `1.14.0.dev38` it renders nothing without a key (#2548: the daily `20261125T080016Z`
+  and the PR lane both timed out waiting for the viewer button at this point).
 - **`api_key` is an advanced field.** It is not on the node until added from the
   Parameters panel (`inspector-param-api_key` → `inspector-add-api_key`), after which
   `title-api key` and `popover-anchor-input-api_key` render on the node.
@@ -269,10 +312,10 @@ instance, none invented.
 
 ### A negative control measured and deliberately not asserted
 
-With A restricted and **no** key on the node, the run renders `error-card` →
+With A restricted and **no** key on the node, the RUN (as opposed to the card fetch) renders `error-card` →
 *"Failed to call A2A agent at http://localhost:7860/api/v1/a2a/<A>: HTTP Error: 401"*
 and A stores nothing. It is not asserted: the gate is `a2a-server-auth-apikey`'s
-subject; the keyed run (assertion 5) already fails if the component stops forwarding
+subject; the keyed run (assertion 6) already fails if the component stops forwarding
 the key; and provoking it would need `page.allowFlowErrors()`, which switches the
 fixture's run-stream gate off for every later run in the test.
 

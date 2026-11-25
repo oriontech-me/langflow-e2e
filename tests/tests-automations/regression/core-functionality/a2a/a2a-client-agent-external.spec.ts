@@ -40,6 +40,10 @@ import { separateOverlappingNodes } from "../../../../helpers/ui/separate-overla
 // public card is the negative control for the restricted one. Since 1.14.0.dev23
 // (#16186) the default project is "apikey" under AUTO_LOGIN, so a target left there
 // already reads "Requires an API key" (#2412).
+//
+// Once restricted, the card is no longer anonymous (langflow-ai/langflow#16538, from
+// 1.14.0.dev38): a fetch with no key renders no card, and the card with its "Requires
+// an API key" chip only comes back once the owner's key is on the node (#2548).
 
 const A2A_SEARCH_TERM = "A2A";
 const A2A_ADD_BUTTON = "add-component-button-a2a-agent";
@@ -189,6 +193,31 @@ async function expectToolbarClearOfHeader(page: Page): Promise<void> {
   ).toBeGreaterThanOrEqual(headerBottom);
 }
 
+/**
+ * Status of a card request made OUTSIDE the browser session.
+ *
+ * A fresh request context carries no auto-login cookie, so with no `apiKey` the
+ * request is anonymous, which `page.request` (it shares the browser's storage) would
+ * not be. Retried once on a dropped socket: a GET is safe to repeat.
+ */
+async function cardStatusOutsideSession(
+  newContext: () => Promise<APIRequestContext>,
+  flowId: string,
+  apiKey?: string,
+): Promise<number> {
+  const context = await newContext();
+  try {
+    const res = await retryOnDroppedConnection(() =>
+      context.get(`/api/v1/a2a/${flowId}/.well-known/agent-card.json`, {
+        headers: apiKey ? { "x-api-key": apiKey } : {},
+      }),
+    );
+    return res.status();
+  } finally {
+    await context.dispose();
+  }
+}
+
 async function readTargetMessages(
   request: APIRequestContext,
   headers: Record<string, string>,
@@ -243,9 +272,11 @@ async function runFromPlayground(page: Page, sentinel: string): Promise<void> {
 
 test.describe("A2A Client — A2AAgent component in External mode", () => {
   test("External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires",
-    { tag: ["@regression", "@components", "@workspace", "@a2a"] },
-    async ({ page }) => {
+    { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a"] },
+    async ({ page, playwright }) => {
       const headers = { Authorization: await getAuthToken(page.request) };
+      const newSessionlessContext = () =>
+        playwright.request.newContext({ baseURL: test.info().project.use.baseURL ?? "http://localhost:7860" });
       await requireA2aEnabled(page.request, headers);
 
       const self = selfBaseUrl();
@@ -361,17 +392,44 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
           expect(moved.folder_id).toBe(project!.projectId);
         });
 
-        await test.step("re-pointed at the base URL, the refreshed card requires an API key", async () => {
-          // The component accepts the base URL as well as the card URL; changing the
-          // value is what makes it fetch the card again — an already-rendered display
-          // does not follow the move on its own.
-          await pointAgentAt(page, `${self}/api/v1/a2a/${target.flowId}`);
-          await inspectCard(page, agentName, async (dialog) => {
-            await expect(dialog).toContainText(RESTRICTED_CHIP);
-          });
+        await test.step("re-pointed at the base URL with no key, the node gets no card", async () => {
+          // The display fetched from the public card is still there: the move alone
+          // does not refresh it. Asserted so the hide below is a transition, not a
+          // display that was never rendered.
+          await expect(page.getByTestId(AGENT_CARD_DISPLAY)).toBeVisible();
+
+          // The component accepts the base URL, with or without a trailing slash, as
+          // well as the card URL; changing the value is what makes it fetch the card
+          // again. The slash keeps this value distinct from the keyed step's plain
+          // base URL, so that step changes the value too. With no key on the node the
+          // request is anonymous, and since langflow-ai/langflow#16538 a protected
+          // project's card answers it with 404 — which `_fetch_card` turns into no
+          // display (#2548). pointAgentAt waits for that update to come back 2xx, so
+          // the absence below is read after the refetch, never before it.
+          await pointAgentAt(page, `${self}/api/v1/a2a/${target.flowId}/`);
+          await expect(
+            page.getByTestId(AGENT_CARD_DISPLAY),
+            "an anonymous fetch of a card in an apikey project should be refused, so the " +
+              "node should render no card. A card here means the server served it with no " +
+              "credential.",
+          ).toBeHidden({ timeout: 10_000 });
+
+          // A hidden display only says `_fetch_card` returned None, which an SSRF
+          // refusal or a timeout would do too. Ask the endpoint directly, so the
+          // server's refusal is shown, not inferred: the anonymous request is refused
+          // with 404, and the owner's key opens it. Whether the node derives the card
+          // URL from a base URL is proven by the keyed step, which renders from one.
+          expect(
+            await cardStatusOutsideSession(newSessionlessContext, target.flowId),
+            "an anonymous request for a card in an apikey project",
+          ).toBe(404);
+          expect(
+            await cardStatusOutsideSession(newSessionlessContext, target.flowId, apiKey!.key),
+            "the same card requested with the owner's x-api-key",
+          ).toBe(200);
         });
 
-        await test.step("give the node the owner's key and a second sentinel", async () => {
+        await test.step("give the node the owner's key", async () => {
           // The wiring above ends its drags at the bottom edge of the pane, where
           // React Flow auto-pans for as long as the pointer stays there. The amount
           // depends on timing, and it lifts this tall node and its toolbar towards
@@ -391,6 +449,24 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
 
           await page.getByTestId(API_KEY_INPUT).fill(apiKey!.key);
           await page.getByTestId(API_KEY_INPUT).press("Tab");
+        });
+
+        await test.step("re-pointed at the base URL with the key, the card requires an API key", async () => {
+          // Setting the key does not refetch the card: only an `agent_url` (or mode)
+          // change does. The plain base URL changes the value, and the fetch now
+          // carries the key as `x-api-key`. Rendering from the base form is also the
+          // positive proof that the node derives the card URL from it; the card URL
+          // form was proven at the start.
+          await pointAgentAt(page, `${self}/api/v1/a2a/${target.flowId}`);
+          await expect(
+            page.getByTestId(AGENT_CARD_DISPLAY),
+            "with the owner's key on the node, the restricted card should be served. No " +
+              "card here means the key did not reach the card fetch.",
+          ).toBeVisible({ timeout: 10_000 });
+          await inspectCard(page, agentName, async (dialog) => {
+            await expect(dialog).toContainText(RESTRICTED_CHIP);
+          });
+
           await page.getByTestId(MESSAGE_INPUT).fill(keyedSentinel);
         });
 
