@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-11-24",
+ "refreshed": "2026-11-25",
  "refreshWindow": {
-  "testHealthSince": "2026-10-10",
+  "testHealthSince": "2026-10-11",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 844,
-  "bulletsAutomatedUnwatched": 138,
-  "residualRiskTotal": 97.4
+  "bullets": 845,
+  "bulletsAutomatedUnwatched": 139,
+  "residualRiskTotal": 97.6
  },
  "areas": [
   {
@@ -182,9 +182,9 @@
     "weightedChurn": 0.27
    },
    "bullets": {
-    "total": 109,
+    "total": 110,
     "validated": 0,
-    "automatedUnwatched": 91,
+    "automatedUnwatched": 92,
     "partial": 2,
     "flaky": 3,
     "empty": 13
@@ -437,11 +437,11 @@
    "key": "a2a",
    "label": "16 A2A",
    "rank": 8,
-   "residualRisk": 4.8,
+   "residualRisk": 5,
    "inherentRisk": 12,
    "probability": 3,
    "impact": 4,
-   "mitigation": 0.6,
+   "mitigation": 0.58,
    "mitigationBulletDerived": 0.62,
    "mitigationOverride": null,
    "axes": {
@@ -464,10 +464,10 @@
     "stable": 14
    },
    "testHealth": {
-    "chronicHardFailures": 1,
+    "chronicHardFailures": 2,
     "chronicFlaky": 0,
     "stableSpecs": 14,
-    "penalty": 0.022
+    "penalty": 0.044
    },
    "upstreamBugsByYear": {
     "2026": 4
@@ -479,7 +479,7 @@
     "mitigation": 0.21
    },
    "delta": {
-    "residualRisk": -1.5,
+    "residualRisk": -1.3,
     "rank": -2,
     "direction": "improved"
    },

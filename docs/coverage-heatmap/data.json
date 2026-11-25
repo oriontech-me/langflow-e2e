@@ -199,10 +199,10 @@
     "penalty": 0
    },
    "mitigation": 0.35,
-   "checklistBullets": 109,
+   "checklistBullets": 110,
    "bulletStates": {
     "!": 3,
-    "-": 91,
+    "-": 92,
     " ": 13,
     "~": 2
    },
@@ -389,7 +389,7 @@
   },
   {
    "area": "16 A2A",
-   "residualRisk": 4.8,
+   "residualRisk": 5,
    "inherentRisk": 12,
    "probability": 3,
    "impact": 4,
@@ -403,12 +403,12 @@
    "mitigationBulletDerived": 0.62,
    "mitigationOverride": null,
    "testHealth": {
-    "chronicHardFailures": 1,
+    "chronicHardFailures": 2,
     "chronicFlaky": 0,
     "stableSpecs": 14,
-    "penalty": 0.022
+    "penalty": 0.044
    },
-   "mitigation": 0.6,
+   "mitigation": 0.58,
    "checklistBullets": 21,
    "bulletStates": {
     "x": 16,
@@ -1214,9 +1214,9 @@
    }
   }
  ],
- "refreshed": "2026-11-24",
+ "refreshed": "2026-11-25",
  "refreshWindow": {
-  "testHealthSince": "2026-10-10",
+  "testHealthSince": "2026-10-11",
   "days": 45
  }
 }
