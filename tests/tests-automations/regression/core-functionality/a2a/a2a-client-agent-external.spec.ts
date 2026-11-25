@@ -243,7 +243,7 @@ async function runFromPlayground(page: Page, sentinel: string): Promise<void> {
 
 test.describe("A2A Client — A2AAgent component in External mode", () => {
   test("External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires",
-    { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a"] },
+    { tag: ["@regression", "@components", "@workspace", "@a2a"] },
     async ({ page }) => {
       const headers = { Authorization: await getAuthToken(page.request) };
       await requireA2aEnabled(page.request, headers);
