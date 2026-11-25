@@ -276,7 +276,7 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
     async ({ page, playwright }) => {
       const headers = { Authorization: await getAuthToken(page.request) };
       const newSessionlessContext = () =>
-        playwright.request.newContext({ baseURL: test.info().project.use.baseURL });
+        playwright.request.newContext({ baseURL: test.info().project.use.baseURL ?? "http://localhost:7860" });
       await requireA2aEnabled(page.request, headers);
 
       const self = selfBaseUrl();
@@ -398,13 +398,15 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
           // display that was never rendered.
           await expect(page.getByTestId(AGENT_CARD_DISPLAY)).toBeVisible();
 
-          // The component accepts the base URL as well as the card URL; changing the
-          // value is what makes it fetch the card again. With no key on the node the
+          // The component accepts the base URL, with or without a trailing slash, as
+          // well as the card URL; changing the value is what makes it fetch the card
+          // again. The slash keeps this value distinct from the keyed step's plain
+          // base URL, so that step changes the value too. With no key on the node the
           // request is anonymous, and since langflow-ai/langflow#16538 a protected
           // project's card answers it with 404 — which `_fetch_card` turns into no
           // display (#2548). pointAgentAt waits for that update to come back 2xx, so
           // the absence below is read after the refetch, never before it.
-          await pointAgentAt(page, `${self}/api/v1/a2a/${target.flowId}`);
+          await pointAgentAt(page, `${self}/api/v1/a2a/${target.flowId}/`);
           await expect(
             page.getByTestId(AGENT_CARD_DISPLAY),
             "an anonymous fetch of a card in an apikey project should be refused, so the " +
@@ -413,9 +415,10 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
           ).toBeHidden({ timeout: 10_000 });
 
           // A hidden display only says `_fetch_card` returned None, which an SSRF
-          // refusal, a timeout or a broken base-URL normalisation would do too. Ask
-          // the endpoint directly, so the absence is pinned to its cause: the
-          // anonymous request is refused with 404, and the owner's key opens it.
+          // refusal or a timeout would do too. Ask the endpoint directly, so the
+          // server's refusal is shown, not inferred: the anonymous request is refused
+          // with 404, and the owner's key opens it. Whether the node derives the card
+          // URL from a base URL is proven by the keyed step, which renders from one.
           expect(
             await cardStatusOutsideSession(newSessionlessContext, target.flowId),
             "an anonymous request for a card in an apikey project",
@@ -448,14 +451,13 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
           await page.getByTestId(API_KEY_INPUT).press("Tab");
         });
 
-        await test.step("re-pointed at the card URL with the key, the card requires an API key", async () => {
+        await test.step("re-pointed at the base URL with the key, the card requires an API key", async () => {
           // Setting the key does not refetch the card: only an `agent_url` (or mode)
-          // change does. Back to the card URL, so the value changes and the fetch now
-          // carries the key as `x-api-key`.
-          await pointAgentAt(
-            page,
-            `${self}/api/v1/a2a/${target.flowId}/.well-known/agent-card.json`,
-          );
+          // change does. The plain base URL changes the value, and the fetch now
+          // carries the key as `x-api-key`. Rendering from the base form is also the
+          // positive proof that the node derives the card URL from it; the card URL
+          // form was proven at the start.
+          await pointAgentAt(page, `${self}/api/v1/a2a/${target.flowId}`);
           await expect(
             page.getByTestId(AGENT_CARD_DISPLAY),
             "with the owner's key on the node, the restricted card should be served. No " +

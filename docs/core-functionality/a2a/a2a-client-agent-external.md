@@ -75,8 +75,8 @@ holding an `A2AAgent` node in External mode:
 | 1 | the card viewer, after `agent_url` is set to A's card URL | dialog text contains **A's exact name**, and does **not** contain `Requires an API key` |
 | 2 | the flow B run, via the playground | `chat-message-AI-<sentinel>` |
 | 3 | `GET /api/v1/monitor/messages?flow_id=<A>` | a `User` message whose text is the sentinel, with a `session_id` that is two UUIDs joined by `:` — the A2A server's composite — and does **not** contain `:a2a:` |
-| 4 | the node, after A moves into an `auth_type=apikey` project and `agent_url` is re-pointed at A's base URL with **no** key on the node | the node update answers 2xx, and `data_display_data_display_agent_card` — visible just before — is **hidden**; and, outside the browser session, `GET /api/v1/a2a/<A>/.well-known/agent-card.json` answers **404** with no credential and **200** with the owner's `x-api-key` |
-| 5 | the card viewer, after the owner's key is set in `api_key` and `agent_url` is re-pointed at A's card URL | the display is visible again, and the dialog text contains A's name **and** `Requires an API key` |
+| 4 | the node, after A moves into an `auth_type=apikey` project and `agent_url` is re-pointed at A's base URL with a trailing slash and **no** key on the node | the node update answers 2xx, and `data_display_data_display_agent_card` — visible just before — is **hidden**; and, outside the browser session, `GET /api/v1/a2a/<A>/.well-known/agent-card.json` answers **404** with no credential and **200** with the owner's `x-api-key` |
+| 5 | the card viewer, after the owner's key is set in `api_key` and `agent_url` is re-pointed at A's plain base URL | the display is visible again, and the dialog text contains A's name **and** `Requires an API key` |
 | 6 | the flow B run with the owner's key in `api_key` | `chat-message-AI-<sentinel2>`, and A stored `sentinel2` |
 
 Before assertion 5 can be reached, the spec opens the node's Parameters panel, and that
@@ -88,11 +88,14 @@ toolbar would render under the header, instead of a 20 s click timeout.
 Assertions 1, 4 and 5 are the same flow, so only the project and the key differ
 between them. 1 (public, no key) renders the card with no chip. 4 (restricted, no key)
 renders none. 5 (restricted, key) renders it with the chip. A hidden display alone
-only says the component's `_fetch_card` returned nothing, which an SSRF refusal, a
-timeout or a broken base-URL normalisation would cause too. That is why 4 also asks
-the endpoint directly, from a request context that carries no session: 404
-anonymous, 200 with the key, so the absence on the node is pinned to the server's
-refusal. 5 then shows the component's own fetch carries the key.
+only says the component's `_fetch_card` returned nothing, which an SSRF refusal or a
+timeout would cause too. That is why 4 also asks the endpoint directly, from a
+request context that carries no session: 404 anonymous, 200 with the key, so the
+server's refusal is shown, not inferred. 5 is the positive counterpart, and it goes
+through the **base** URL form: a render there shows the component's own fetch both
+derives the card URL from a base URL (`_agent_base_url`) and carries the key. The
+card URL form is covered positively by 1. The probe cannot rule out a broken
+base-URL derivation on its own; 5 does.
 
 ---
 
@@ -129,7 +132,8 @@ refusal. 5 then shows the component's own fetch carries the key.
   any other project an anonymous request gets **404** and a request carrying a valid
   credential gets the card. The component's `_fetch_card`
   (`src/lfx/src/lfx/components/models_and_agents/a2a_agent.py`) sends its `api_key`
-  input as `x-api-key` on the card fetch too. Assertions 4 and 5 depend on both. The
+  input as `x-api-key` on the card fetch too. Assertion 4 depends on the first,
+  assertion 5 on both. The
   change shipped in `release-1.13.4` (merged 2026-11-20) and reached `release-1.14.0`
   on 2026-11-24 (`1.14.0.dev38` is the first daily image with it). Before it, the card
   was anonymous for every enabled agent, a refetch without a key rendered the card
@@ -191,9 +195,11 @@ One test. Every flow, key and project it creates is deleted in `finally`.
 12. Close the playground (`playground-close-button`), `PATCH` A's `folder_id` into the
     restricted project and assert the move.
 13. Assert the card display is still visible (the card fetched in step 7), then
-    re-point `agent_url` at A's **base** URL `<self>/api/v1/a2a/<A>` with no key on
-    the node. The component accepts both forms (`_agent_base_url` normalises them);
-    the value change is what makes it fetch the card again. Wait for that node update
+    re-point `agent_url` at A's **base** URL with a trailing slash,
+    `<self>/api/v1/a2a/<A>/`, with no key on the node. The component accepts the card
+    URL and the base URL, with or without the slash (`_agent_base_url` normalises
+    them); the value change is what makes it fetch the card again. The slash keeps
+    this value distinct from step 15's. Wait for that node update
     to answer 2xx, then assert assertion 4: the display is hidden. Then probe the
     card endpoint from a fresh request context (no auto-login cookie, unlike
     `page.request`): 404 with no credential, 200 with the owner's `x-api-key`.
@@ -204,8 +210,8 @@ One test. Every flow, key and project it creates is deleted in `finally`.
     (#867). Open its Parameters panel (`parameters-button`), add the advanced
     `api_key` field to the node (`inspector-add-api_key`) and fill
     `popover-anchor-input-api_key` with the owner's key.
-15. Re-point `agent_url` back at A's **card** URL, so the card is fetched again, now
-    with the key. Assert the display is visible, open the viewer and assert
+15. Re-point `agent_url` at A's plain **base** URL `<self>/api/v1/a2a/<A>`, so the
+    card is fetched again, now with the key, and derived from the base form. Assert the display is visible, open the viewer and assert
     assertion 5; close it. Fill `textarea_str_input_value` with a second sentinel.
 16. Run from the playground and assert assertion 6.
 17. `finally`, each guarded: leave the editor; delete B, then A and its public
@@ -253,7 +259,8 @@ instance, none invented.
   notifications`, `JSONRPC`, `A2A 0.3.0`), then *Description*, *Sends*
   (`input_value`, `session_id`) and *Skills*. Hence text assertions on the dialog.
 - **The restricted card needs a refetch.** Moving A does not update an
-  already-rendered display; changing `agent_url` (card URL → base URL) does. Before
+  already-rendered display; changing `agent_url` (card URL → base URL) does, and so
+  does every later change of its value. Before
   langflow-ai/langflow#16538 that refetch rendered the card with the chip; from
   `1.14.0.dev38` it renders nothing without a key (#2548: the daily `20261125T080016Z`
   and the PR lane both timed out waiting for the viewer button at this point).
