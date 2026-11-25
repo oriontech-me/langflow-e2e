@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-24
+> **Last updated:** 2026-11-25
 
 ---
 
@@ -1946,7 +1946,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 938 `test()` calls carrying the `@stable` tag, distributed across 327 spec
+> 937 `test()` calls carrying the `@stable` tag, distributed across 326 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2355,7 +2355,6 @@
 
 #### core-functionality/a2a/
 - [x] an approved send_to_agent call resumes the run and executes the published agent → `a2a-client-agent-as-tool.spec.ts`
-- [x] External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires → `a2a-client-agent-external.spec.ts`
 - [x] the Internal dropdown lists a locally published agent and calling it runs that flow → `a2a-client-agent-internal.spec.ts`
 - [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
 - [x] card overrides change exactly what the card advertises → `a2a-server-agent-card.spec.ts`
