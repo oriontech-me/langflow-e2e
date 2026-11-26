@@ -57,7 +57,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 4. Add MCPTools component to canvas
 5. Enable tool mode on MCPTools (`tool-mode-button`) — verify "toolset" label appears
 6. Connect MCPTools toolset output handle → Agent tools input handle
-7. Poll `GET /api/v1/flows/{id}` until the **stored** flow holds the MCPTools node with `tool_mode: true` and an edge from it to the Agent's `tools` input — see *Why the test waits for the stored flow* below (#2541)
+7. Poll `GET /api/v1/flows/{id}` (`waitForToolsetPersisted`) until the **stored** flow holds exactly one MCPTools node with `tool_mode: true` and an edge from it to the Agent's `tools` input — see *Why the test waits for the stored flow* below (#2541)
 8. Open Playground and send: `"Use the 'echo' tool to echo: hello mcp"`
 9. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option): the turn mounts, then `button-stop` clears and `button-send` returns
 10. **Proof #1** — the Playground shows a **completed tool step** (`tool-status-done`): the agent actually called a tool, it did not hallucinate a text-only answer
@@ -89,6 +89,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 - `src/backend/base/langflow/services/auth/service.py` — `AuthService.validate_tool_call`, which authorizes every tool call against the **stored** flow (#2541)
 - `src/frontend/src/hooks/flows/use-autosave-flow.ts` — the debounced autosave that carries the canvas edits to the stored flow, `auto_saving_interval` after the last edit
 - `tests/helpers/flows/autosave-interval.ts` — the run's resolved autosave interval and save budgets, which size the wait in step 7
+- `tests/helpers/mcp/wait-for-toolset-persisted.ts` — the wait in step 7 and its stored-flow predicate, shared with `mcp-client-agent-gemini-tool-regression.spec.ts` (#2576)
 - `tests/helpers/flows/load-template-by-name.ts` — loads the Simple Agent template and returns the created flow id
 - `tests/helpers/provider-setup/` — provider env key validation and model parameterization
 
