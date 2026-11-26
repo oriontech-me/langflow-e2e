@@ -14,6 +14,7 @@ import {
   toolOutputText,
 } from "../../../../helpers/flows/describe-agent-reply-loss";
 import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
+import { waitForToolsetPersisted } from "../../../../helpers/mcp/wait-for-toolset-persisted";
 
 /**
  * MCP Client – Gemini tool-calling regression (upstream Langflow #440).
@@ -154,7 +155,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
   // 2026-10-05 (1.13.0.dev33). That was a Langflow defect, not a test one: `lfx`
   // dropped the plain-string items of a mixed list content when it kept a round's
   // text (LE-2919). langflow-ai/langflow#15650 fixed it in 1.13.0.dev37, and
-  // `@stable` was restored under #2176 with no test-side change. Step 8 still
+  // `@stable` was restored under #2176 with no test-side change. Step 9 (spec doc numbering) still
   // names the cause if the defect returns. See the spec doc's "Known product defect".
   test(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
@@ -288,6 +289,15 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
         await expect(page.locator(".react-flow__edge").last()).toBeVisible({
           timeout: 5000,
         });
+      });
+
+      // Tool calls are authorized against the STORED flow, and the three canvas edits
+      // above reach it only through the debounced autosave (#2576, same race as
+      // #2541). Without this wait the first calls are refused, and the test passed
+      // only because Gemini kept retrying until the save landed.
+      await test.step("Wait for the MCP toolset to reach the stored flow", async () => {
+        expect(createdFlowId, "the template load must have returned the flow id").toBeTruthy();
+        await waitForToolsetPersisted(page, createdFlowId!);
       });
 
       await test.step("Open Playground and send echo prompt", async () => {

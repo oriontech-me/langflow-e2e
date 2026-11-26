@@ -1,6 +1,6 @@
 # MCP Client – Gemini Tool-Calling Regression (#440)
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev42`, #2176)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev39`, #2576)
 **Tracking issue:** oriontech-me/langflow-e2e #858 · **Upstream bug:** langflow-ai/langflow #440
 **Fixed product defect:** #2176, filed upstream as
 [LE-2919](https://datastax.jira.com/browse/LE-2919) and fixed by
@@ -117,12 +117,22 @@ check encodes the expected #440 state.
 4. Add MCPTools to canvas; enable tool mode (`tool-mode-button`) — verify a new
    "toolset" badge appears.
 5. Connect MCPTools toolset output handle → Agent tools input handle.
-6. Open Playground and send `"Use the 'echo' tool to echo: hello mcp (<nonce>)"`
+6. Wait until the stored flow (`GET /api/v1/flows/{id}`) holds exactly one MCP node
+   with `tool_mode: true` and an edge from it to the Agent's `tools` input
+   (`waitForToolsetPersisted`; deadline = the run's autosave interval + 1.5 s +
+   10 s, 16.5 s at the default 5 s). Tool calls are authorized by
+   `AuthService.validate_tool_call` against the **stored** flow, and the canvas
+   edits of steps 4–5 reach it only through the debounced autosave; a prompt sent
+   earlier gets its calls refused (*"Tool settings changed or are unavailable…"*).
+   On timeout the test fails naming the last state read (`no-mcp-node`,
+   `tool-mode-off`, `no-edge-to-agent-tools`), and the prompt is never sent
+   (#2576, the same race #2541 fixed in `mcp-client-agent.spec.ts`).
+7. Open Playground and send `"Use the 'echo' tool to echo: hello mcp (<nonce>)"`
    (atomic set-value + send, per the #226 prefill-race hardening).
-7. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option), which
+8. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option), which
    waits for the turn to mount and `button-stop` to clear; then poll `GET /api/v1/monitor/messages` until the
    agent turn for this session (keyed by the nonce) is persisted.
-8. Assert (pipeline ran): the final reply contains the echoed payload
+9. Assert (pipeline ran): the final reply contains the echoed payload
    (`hello mcp`). When it does not, the failure message must say why. It
    carries the persisted reply, the `echo` tool output persisted in the same
    message's `tool_use` block, and whether the reply is a strict prefix of that
@@ -137,27 +147,33 @@ check encodes the expected #440 state.
    tracing off there are no spans, and the message says so instead of
    omitting the line. The diagnostic adds evidence to the failure and never
    changes the verdict: the assertion is the same `toMatch(/hello mcp/i)`.
-9. Assert (**the #440 fix**): the count of persisted `tool_use` blocks named
+10. Assert (**the #440 fix**): the count of persisted `tool_use` blocks named
    `/echo/i` for the session is **> 0** — Gemini invoked the `echo` MCP tool.
 
 ---
 
 ## Validation criterion *(required)*
 
-- **#440 fixed (current):** step 8 passes (a reply with `hello mcp` is produced)
-  **and** step 9's `echoToolUseCount > 0` holds → the test **passes**, proving
-  Gemini invoked the `echo` MCP tool. A false pass is prevented by step 8 (the
+- **#440 fixed (current):** step 9 passes (a reply with `hello mcp` is produced)
+  **and** step 10's `echoToolUseCount > 0` holds → the test **passes**, proving
+  Gemini invoked the `echo` MCP tool. A false pass is prevented by step 9 (the
   persisted reply proves the agent completed a turn) and by the loud setup asserts
-  (a broken bootstrap / MCP registration fails before reaching step 9).
+  (a broken bootstrap / MCP registration fails before reaching step 10).
+- **Precondition for step 10 (#2576):** step 6 has seen the toolset in the stored
+  flow, so a tool call is authorized from the first attempt. Before #2576 the prompt
+  was sent inside the autosave window: the first calls were refused, and the test
+  passed only because Gemini kept retrying until the save landed. A model that gave
+  up sooner would have reported no `echo` call, which reads as #440 when it is the
+  race. Step 6 failing means the save never landed; it is not a #440 signal.
 - **If #440 regresses:** no `echo` `tool_use` block is persisted →
-  `echoToolUseCount === 0` → step 9 **fails loudly**, signalling Gemini × MCP
+  `echoToolUseCount === 0` → step 10 **fails loudly**, signalling Gemini × MCP
   tool-calling has regressed to the #440 state.
 - **If the #2176 defect returns** (fixed in `1.13.0.dev37`): the persisted reply is a strict prefix of the
   `echo` tool output. The observed case was `"Echo: hello m"` against
   `"Echo: hello mcp (<nonce>)"`. Step 8 **fails**, never passes, and its message
-  names the #2176 signature with the observables from step 8: the persisted
+  names the #2176 signature with the observables from step 9: the persisted
   reply, the tool output, and each LLM call's text and `model_name`. A failure
-  of step 8 that is **not** a strict prefix is reported as a different cause.
+  of step 9 that is **not** a strict prefix is reported as a different cause.
 
 ---
 
@@ -169,7 +185,7 @@ mid-word, and the rest of the streamed text was gone from the stored message.
 **Fixed upstream** by langflow-ai/langflow#15650. `_coerce_ai_message_blocks`
 now treats a plain-string item as text and joins adjacent text pieces into one
 block. It is on `release-1.13.0` from `v1.13.0.dev37`, on `main`, and in
-`v1.12.6`. The record below stays because step 8's diagnostic still keys on it:
+`v1.12.6`. The record below stays because step 9's diagnostic still keys on it:
 if the defect returns, the failure names it.
 
 **Mechanism, proven against `lfx` `1.13.0.dev33`.**
@@ -201,7 +217,7 @@ on both the local nightly and the QA VM venv: `gemini-flash-latest` reported
 `model_version` `gemini-3.8-flash` on every chunk, and 0 of about 175 runs
 truncated. Those runs covered the UI spec, the API, the bare round two after the
 tool call, and tracing on and off. The trigger is intermittent and comes from the
-provider. That is why step 8 records each LLM call's text and `model_name`
+provider. That is why step 9 records each LLM call's text and `model_name`
 when it fails: the next occurrence then carries its own evidence.
 
 **Ruled out by measurement:** the test reading early (the persisted text was the
@@ -217,13 +233,18 @@ lanes.
 - `tests/pages/SimpleAgentTemplatePage.ts` — loads Simple Agent template with configured provider/model
 - `tests/helpers/provider-setup/resolve-gemini-model.ts` — pins a deterministic Gemini flash model
 - `tests/helpers/provider-setup/` — provider env-key validation (`hasProviderEnvKeys`)
+- `tests/helpers/mcp/wait-for-toolset-persisted.ts` — step 6's wait and its stored-flow predicate, shared with `mcp-client-agent.spec.ts`
+- `tests/helpers/flows/autosave-interval.ts` — the run's resolved autosave interval and save budgets, which size step 6's deadline
+- `src/backend/base/langflow/services/auth/service.py` — `AuthService.validate_tool_call`, which authorizes every tool call against the **stored** flow
+- `src/frontend/src/hooks/flows/use-autosave-flow.ts` — the debounced autosave that carries the canvas edits to the stored flow
+- `GET /api/v1/flows/{flow_id}` — the stored flow step 6 polls
 - `tests/helpers/ui/playground-turn.ts` — `sendAndAwaitPlaygroundTurn`, the completion gate before the monitor poll
 - `src/frontend/src/modals/addMcpServerModal/index.tsx` — JSON tab; testids `json-tab`, `json-input`, `add-mcp-server-button`
 - `src/backend/base/langflow/api/v2/mcp.py` — `GET /api/v2/mcp/servers?action_count=true`, `DELETE /api/v2/mcp/servers/{name}`
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle
 - `GET /api/v1/monitor/messages` — persisted session messages; `content_blocks[].contents[]` with `type: "tool_use"` is the #440 observable
 - `src/lfx/src/lfx/base/agents/events.py` — `handle_on_chat_model_end` / `_coerce_ai_message_blocks`, where the #2176 defect dropped plain-string content items until langflow-ai/langflow#15650
-- `src/backend/base/langflow/api/v1/monitor.py` — `GET /api/v1/monitor/traces` and `/traces/{trace_id}`, the source of each LLM call's text and `model_name` in step 8's failure message
+- `src/backend/base/langflow/api/v1/monitor.py` — `GET /api/v1/monitor/traces` and `/traces/{trace_id}`, the source of each LLM call's text and `model_name` in step 9's failure message
 - PyPI `langchain-google-genai` (`_parse_response_candidate`) — decides per chunk whether Gemini text arrives as a string or a dict, the #2176 trigger
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx` (provides `echo`)
 - **Upstream bug #440** — Langflow: Gemini does not invoke MCP tools (the behavior under guard)
