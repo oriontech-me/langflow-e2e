@@ -90,8 +90,12 @@ only user the UI can be under on this lane.
 - **The Source cell of a provider with no catalog entry shows the raw key** `triggers.provider.<id>`
   (`TriggerSourceCell` passes no default). Reachable only through the synthetic provider; every real
   provider has a key.
-- **`config_invalid` offers *Resume*, and the route refuses it** (`409 invalid_cron`) — recorded in the
-  API spec doc.
+- **Before `1.14.0.dev32`, `config_invalid` offered *Resume*, and the route refused it** (`409
+  invalid_cron`) — LE-3454, recorded in the API spec doc. Upstream #16450 (first in `1.14.0.dev32`)
+  makes the server list `resume` as blocked by `config_invalid` instead; the API spec asserts that
+  (`api-triggers-operator`, test 3, step 6, #2525). The page renders the server's action list
+  (upstream #15786's server-driven actions), so it should no longer offer *Resume* there, but that
+  was not re-checked in the UI.
 
 ### What is not covered here, and why
 

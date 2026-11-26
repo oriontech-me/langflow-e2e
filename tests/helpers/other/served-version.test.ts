@@ -27,3 +27,16 @@ test("an unreadable version throws instead of picking a side", () => {
 test("a version tied with the floor's release but unorderable throws", () => {
   assert.throws(() => versionAtLeast("1.14.0qa1", FLOOR), /cannot be ordered/);
 });
+
+test("dev serials compare as numbers, not strings (#2525: the LE-3454 gate sits at dev32)", () => {
+  assert.equal(versionAtLeast("1.14.0.dev32", "1.14.0.dev4"), true, "dev32 >= dev4");
+  assert.equal(versionAtLeast("1.14.0.dev4", "1.14.0.dev32"), false, "dev4 < dev32");
+  assert.equal(versionAtLeast("1.14.0.dev100", "1.14.0.dev32"), true, "dev100 >= dev32");
+  assert.equal(versionAtLeast("1.14.0.dev31", "1.14.0.dev32"), false, "dev31 < dev32");
+  assert.equal(versionAtLeast("1.14.0.dev32", "1.14.0.dev32"), true, "dev32 >= dev32");
+});
+
+test("a final release is above every dev build of it", () => {
+  assert.equal(versionAtLeast("1.14.0", "1.14.0.dev32"), true);
+  assert.equal(versionAtLeast("1.14.0.dev32", "1.14.0"), false);
+});

@@ -2,14 +2,15 @@
 
 **File:** `tests/tests-automations/regression/api/triggers/api-triggers-operator.spec.ts`
 
-**Last validated:** Langflow 1.14.x (`1.14.0.dev31`)
+**Last validated:** Langflow 1.14.x (`1.14.0.dev32`)
 
 Owning issue: #2448 (the 1.14 triggers and connectors batch). The page that renders this API is
 `docs/core-functionality/integrations/triggers-settings-page.md`, from the same issue. The trigger
 lifecycle (CRUD, the state machine, flow-save reconciliation) is #2303's, a trigger whose runs fail
 still reading `active` is recorded and not pinned (#2328, `api-triggers-webhook-ingress.md` → *Not
 pinned*), and the audit rows these actions write are #2451's. This file asserts what TRG-7 (upstream LE-2485,
-API #15786) added on top of them. #2464 added the declared-failing pin for LE-3454 (test 3, step 6).
+API #15786) added on top of them. #2464 added the declared-failing pin for LE-3454 (test 3, step 6); #2525 turned it into a plain
+assertion once upstream #16450 fixed it in `1.14.0.dev32`.
 #2476 set the Schedule node's `schedule_type` after upstream #16322 made it decide whether the cron is read.
 
 ---
@@ -211,14 +212,21 @@ triggers with it.
 5. `POST …/enable` on that row answers `409`
    `{"detail": {"code": "invalid_cron", "message": "Invalid cron expression: a valid five-field cron expression is required."}}`,
    and a re-read shows the row unchanged (`pending`, `config_invalid`).
-6. **Declared failing — [LE-3454](https://datastax.jira.com/browse/LE-3454) (#2464).** The row's
-   `allowed_actions` do not hold `resume`, and `blocked_actions.resume` is `"config_invalid"`. Today the
-   server lists `resume` as allowed, against `capabilities.py`'s own rule that an action listed as allowed is
-   one the route accepts. In `_decide()`, `resume` is blocked by its reason on a `needs_reconnect` row but
-   never on a `pending` one. Steps 1–5 run before the declaration, so a broken setup or a changed refusal
-   still fails the test. Only this step is declared failing (`test.fail(true, "LE-3454: …")`). When the fix
-   ships, Playwright reports *"expected to fail, but passed"*, and that is the signal to delete the
-   declaration.
+6. The row's `allowed_actions` do not hold `resume`, and `blocked_actions.resume` is
+   `"config_invalid"`: the action list agrees with the refusal in step 5. This was
+   [LE-3454](https://datastax.jira.com/browse/LE-3454) (#2464): the server listed `resume` as allowed
+   on a `pending` row, against `capabilities.py`'s own rule that an allowed action is one the route
+   accepts, and the step was declared failing. Upstream fixed it in langflow-ai/langflow#16450
+   (*block resume while the trigger config is invalid*, first in `1.14.0.dev32`), the declaration then
+   failed as *"expected to fail, but passed"*, and #2525 made the step a plain assertion.
+   The fix is newer than this file's `1.14.0.dev16` floor, so the step is gated by build, like
+   that floor (`OPERATOR_SINCE`; #16322's `schedule_type` in step 4 is feature-detected
+   instead). A source build of `release-1.14.0` reports the final `1.14.0` whether or not it
+   contains #16450, so a red here on a source build cut before 2026-11-18 is not a regression.
+   From `1.14.0.dev32` it asserts the corrected listing above;
+   before it, it asserts the old one (`resume` in `allowed_actions`, no `blocked_actions.resume`).
+   Neither side skips. Measured for #2525: `1.14.0.dev31` takes the old branch and passes,
+   `1.14.0.dev32` takes the new one and passes.
 
 ### 4. Bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused
 
@@ -251,8 +259,9 @@ triggers with it.
 
 ## Validation criterion *(required)*
 
-Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1.14.0.dev29`, and once at
-`--workers=2` together with `api/triggers/`, with:
+Tests 1–5 pass three consecutive times at `--retries=0` against `1.14.0.dev32` (re-measured for #2525;
+originally `1.14.0.dev29` at `--workers=1`), and once at `--workers=2` together with `api/triggers/`,
+with:
 
 - the exact 28-key set and the action table, row by row;
 - every refusal asserted by its status and its exact detail, or its `type` and `loc`;
@@ -265,10 +274,8 @@ Tests 1–5 pass three consecutive times at `--retries=0 --workers=1` against `1
   `POST /api/v1/triggers/bulk/pause`, `POST /api/v1/triggers/bulk/resume`,
   `GET /api/v1/triggers/sessions`, `POST /api/v1/flows/`, `POST /api/v1/connections`.
 
-Until LE-3454 ships, test 3 passes as an **expected failure**: its steps 1–5 must pass, and the failure
-must come from step 6's `resume` assertion. A pass of step 6 turns the test red ("expected to fail, but
-passed"). That is the fix arriving, and the response is to delete the `test.fail()` line, not to weaken
-the assertion.
+Test 3 passes only when all six steps pass. On `1.14.0.dev32` or later, step 6 failing means the
+server lists `resume` as allowed on a `config_invalid` row again, which is LE-3454 regressing.
 
 The file drives only the `request` fixture, so the fixture's HTTP-error monitor sees none of the
 deliberate `403`s, `404`s, `409`s and `422`s. After the run the instance holds no flow, user or trigger left by
@@ -279,7 +286,8 @@ this file.
 ## External dependencies *(required)*
 
 - A running Langflow **1.14** instance (`1.14.0.dev16` or later) at `PLAYWRIGHT_BASE_URL`, auto-login or
-  superuser.
+  superuser. Test 3's step 6 asserts LE-3454's fix from `1.14.0.dev32` (upstream #16450) and the old
+  listing before it.
 - `src/backend/base/langflow/api/v1/triggers.py` — list, `scope=all`, sessions and the bulk routes.
 - `src/backend/base/langflow/api/v1/triggers_helpers.py` — `list_visible_triggers`, `list_all_triggers`,
   `present` and the per-flow caller probe.

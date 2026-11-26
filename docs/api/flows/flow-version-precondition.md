@@ -75,6 +75,15 @@ by `api-flows-versions.spec.ts`, so this spec only reads the one entry that
 
 This was found by test 5 on `1.14.0.dev7`. It is **not filed yet**.
 
+**Owner: #2577.** Still reproduces on `1.14.0.dev32`: the declared test failed as expected
+in each #2525 run. No upstream report exists — a search of `langflow-ai/langflow` issues finds
+none, and no Jira key is cited anywhere in this repo. #2341 is this spec's own (closed)
+authoring issue, not a tracker for the defect, so #2525 opened #2577 to own the declaration
+until an upstream report is filed; when it is, cite that ticket in the `test.fail()`
+description, here, and in the QA-CHECKLIST bullet. On the VM daily of 2026-11-25
+(`1.14.0.dev38`) the declared body passed on 1 of 2 attempts before failing as declared: the
+defect now reproduces intermittently, so a single pass is not a fix.
+
 **What fails.** When two or more writers race with the same token, the winner
 answers `200` and every loser answers `409` with a correct `expected_version_token`.
 The loser's `current_version_token`, however, is a UUID that **never was the row's
@@ -83,9 +92,14 @@ token**:
 - none of them equals what `version-state` reports afterwards;
 - the loser's `modified_at` is not the row's `updated_at` either.
 
-**How it was measured.** Raw `curl`, no Playwright:
+**How it was measured.** Raw `curl`, no Playwright, on `1.14.0.dev7`:
 - with 2 parallel writers, 10 of 10 races produced the phantom token;
 - with 6 writers, 4 to 5 of the 5 losers per round.
+
+Re-measured for #2525 on `1.14.0.dev32`: under Playwright the declared test failed as expected
+in 4 of 4 runs (the #2525 review saw 20 of 20), but raw `curl` races produced a phantom token far
+less often than on `dev7` (the review saw 1 of 23 and 1 of 6). The defect stands; how often a
+bare race shows it has dropped, so the `dev7` rates are not today's.
 
 **Impact.** The frontend stores `detail.current_version_token` as the conflict's
 `currentToken`. *Keep my version* / *Update Current Flow* sends that value as the
@@ -112,14 +126,24 @@ guarantee that holds is not hidden behind the one that does not:
   present. It **turns red the day upstream fixes it**, which is the signal to
   remove the `test.fail()`. Because Playwright fails a `test.fail()` test that
   unexpectedly passes, the assertion stays falsifiable in both directions.
-  One phantom token is enough for the expected failure. Measured with `curl`, in
-  three six-writer rounds, 4, 5 and 5 of the 5 losers carried one. The assertion
-  also failed in all four Playwright runs of the original combined test.
+  One phantom token is enough for the expected failure. Measured with `curl` on
+  `1.14.0.dev7`, in three six-writer rounds, 4, 5 and 5 of the 5 losers carried
+  one. The assertion also failed in all four Playwright runs of the original
+  combined test.
 
   One case `test.fail()` cannot tell apart: a race where every loser happens to
-  report the right token. That has not been observed (0 of 10 two-writer races,
-  0 of those six-writer runs). If it appears, the test reports an unexpected
-  pass, and the response is to re-measure, not to retry.
+  report the right token. On `1.14.0.dev7` that was never observed (0 of 10
+  two-writer races, 0 of those six-writer runs). **On `1.14.0.dev32` it is the
+  common outcome of a bare race**: under raw `curl` the #2525 review saw a phantom
+  token in only 1 of 23 and 1 of 6 races. The Playwright test reproduced the
+  defect in every local run (20 of 20 in the review, 4 of 4 for #2525; the VM daily on
+  `1.14.0.dev38` then missed it once, see the owner paragraph above), presumably because
+  its writers fire from one `request` context in the same tick, which keeps the
+  race tighter than separate `curl` processes; that is inferred, not measured.
+  **The risk:** if the harness ever races the way bare `curl` does (a slower host,
+  a change in how `race()` dispatches), the test sees a clean race, `test.fail()`
+  reports an unexpected pass, and the VM daily auto-removes `@stable` with the
+  defect still live. If that happens, re-measure before treating it as a fix.
 
 ---
 

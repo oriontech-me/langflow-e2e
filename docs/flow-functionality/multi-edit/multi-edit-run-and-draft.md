@@ -83,10 +83,19 @@ Measured on `1.14.0.dev10` and `1.14.0.dev14`:
   puts the key back.
 - With a hyphenated key, the same flow is scrubbed.
 
-Test 6 asserts the **correct** behaviour for this key and is marked `test.fail()`, citing
-the upstream defect. While the defect stands, the test is expected to fail. When upstream
-fixes it, Playwright reports the test as passing unexpectedly, which turns the run red.
-That is the signal to remove `test.fail()` and close the reference.
+Test 6 asserts the **correct** behaviour for this key and is marked `test.fail()`, naming the
+defect and #2345, where it was found. While the defect stands, the test is expected to fail.
+When upstream fixes it, Playwright reports the test as passing unexpectedly, which turns the
+run red. That is the signal to remove `test.fail()`.
+
+**Owner: #2578.** Still reproduces on `1.14.0.dev32`: the declared test failed as expected,
+with the key found in the draft. `looksLikeVariableName` in
+`src/frontend/src/utils/reactflowUtils.ts` still reads `/^[A-Z][A-Z0-9_]*$/i` on
+`release-1.14.0` and on `main`. No upstream report exists — a search of `langflow-ai/langflow`
+issues finds none — as the test's annotation now says. #2345, where it was found, is this
+spec's own (closed) authoring issue, not a tracker for the defect, so the declaration cites
+#2578, opened for #2525 to own it. When an upstream report is filed, cite it in the `test.fail()` description and annotation,
+here, and in the QA-CHECKLIST bullet.
 
 ---
 
