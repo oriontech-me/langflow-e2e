@@ -133,10 +133,14 @@ Two things must be true, and the alarm tells them apart:
 An installation token pasted in by hand, wherever git and the API read it, passes both
 checks, because it is valid when they run, and is refused within the hour: the next
 daily would then die in its credential preflight with temporary mode already gone
-(#2519). The API check shows it: such a token comes back `EXPIRING`, with an expiry an
-hour away.
+(#2519). Do not read the API check's answer as proof of a lasting credential either: its
+`EXPIRING` verdict comes only from the `github-authentication-token-expiration` response
+header, and nothing here shows that the destination sends it for an installation token.
+Without the header, a token that dies within the hour reads
+`ok: the credential works, and carries no expiry date`.
 
-When both hold, undo step 2 before the next daily. On the VM, as root:
+When the network is back and the VM mints its own token, undo step 2 before the next
+daily. On the VM, as root:
 
 ```bash
 cd /root/e2e-qa
