@@ -1922,7 +1922,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 106 | 99 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 113 | 106 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1947,7 +1947,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **950** | **820 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **957** | **827 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1963,7 +1963,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 947 `test()` calls carrying the `@stable` tag, distributed across 330 spec
+> 954 `test()` calls carrying the `@stable` tag, distributed across 331 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2053,6 +2053,15 @@
 - [x] a provider's enabled flag and connection count are derived from its connections, and only its own → `api-integrations-manifest.spec.ts`
 - [x] the manifest and the effective policy agree that the instance is unrestricted → `api-integrations-manifest.spec.ts`
 - [x] every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared → `api-integrations-manifest.spec.ts`
+
+#### api/evals/
+- [x] creates, reads, lists, renames and deletes a dataset → `api-datasets.spec.ts`
+- [x] items keep their order, edits and deletions, and the dataset counts them → `api-datasets.spec.ts`
+- [x] CSV import previews without writing, imports trimmed rows and skips empty inputs → `api-datasets.spec.ts`
+- [x] bundled examples create a dataset and append to one → `api-datasets.spec.ts`
+- [x] duplicates a dataset into an independent copy → `api-datasets.spec.ts`
+- [x] exports a spreadsheet-safe CSV that round-trips everything else → `api-datasets.spec.ts`
+- [x] another user can neither see nor change the dataset → `api-datasets.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
