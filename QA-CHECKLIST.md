@@ -1920,7 +1920,7 @@
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
-| `core-functionality/a2a/` | 21 | 16 | 0 | 1 | 4 |
+| `core-functionality/a2a/` | 21 | 17 | 0 | 1 | 3 |
 | `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
@@ -1934,7 +1934,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **950** | **818 (86%)** | **68 (7%)** | **18 (2%)** | **46 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **950** | **819 (86%)** | **68 (7%)** | **18 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1950,7 +1950,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 943 `test()` calls carrying the `@stable` tag, distributed across 328 spec
+> 945 `test()` calls carrying the `@stable` tag, distributed across 329 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2382,6 +2382,8 @@
 - [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
 - [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
+- [x] a regular user cannot read or publish the superuser's flow → `a2a-server-non-owner-publish.spec.ts`
+- [x] the superuser cannot publish a regular user's flow → `a2a-server-non-owner-publish.spec.ts`
 - [x] push notification configs round-trip on a task, through its own flow only → `a2a-server-push-notification-config.spec.ts`
 - [x] a webhook that resolves to a non-public address is refused and nothing is stored → `a2a-server-push-notification-config.spec.ts`
 - [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
