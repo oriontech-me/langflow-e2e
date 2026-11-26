@@ -1,6 +1,6 @@
 # MCP Client – Agent Using MCPTools
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev35`, #2541)
 
 ---
 
@@ -45,7 +45,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 ## Tags *(required)*
 
-`@mcp` `@agents` `@regression`
+`@stable` `@mcp` `@agents` `@regression`
 
 ---
 
@@ -57,11 +57,12 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 4. Add MCPTools component to canvas
 5. Enable tool mode on MCPTools (`tool-mode-button`) — verify "toolset" label appears
 6. Connect MCPTools toolset output handle → Agent tools input handle
-7. Open Playground and send: `"Use the 'echo' tool to echo: hello mcp"`
-8. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option): the turn mounts, then `button-stop` clears and `button-send` returns
-9. **Proof #1** — the Playground shows a **completed tool step** (`tool-status-done`): the agent actually called a tool, it did not hallucinate a text-only answer
-10. **Proof #2** — the row carrying that step names `echo`
-11. **Proof #3** — the last AI chat message (`[data-testid^="chat-message-AI-"]`) contains `"hello mcp"` — the echoed payload made the full round-trip and was surfaced to the user
+7. Poll `GET /api/v1/flows/{id}` until the **stored** flow holds the MCPTools node with `tool_mode: true` and an edge from it to the Agent's `tools` input — see *Why the test waits for the stored flow* below (#2541)
+8. Open Playground and send: `"Use the 'echo' tool to echo: hello mcp"`
+9. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option): the turn mounts, then `button-stop` clears and `button-send` returns
+10. **Proof #1** — the Playground shows a **completed tool step** (`tool-status-done`): the agent actually called a tool, it did not hallucinate a text-only answer
+11. **Proof #2** — the row carrying that step names `echo`
+12. **Proof #3** — the last AI chat message (`[data-testid^="chat-message-AI-"]`) contains `"hello mcp"` — the echoed payload made the full round-trip and was surfaced to the user
 
 ---
 
@@ -69,6 +70,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 - The Playground renders a tool-invocation block for the `echo` tool (Proofs #1–#2) AND the agent's final response contains `"hello mcp"` (Proof #3) — together confirming the MCP echo tool was called and its result returned to the user.
 - **Precondition, asserted rather than assumed:** before the Playground is opened, the persisted Agent node names the **provider** of the requested model. A failure here is reported with the shared verdict taxonomy (`settled` / `default-provider` / `no-model` / `read-failed` / …) rather than a bare mismatch, so a run that never managed to read the flow is not reported as a wrong binding (#1371, the `read-failed` distinction #1261 needed).
+- **Second precondition, also asserted (#2541):** before the prompt is sent, the stored flow carries the MCP toolset (node in tool mode, wired to the Agent's `tools`). A failure here names the last state read (`no-mcp-node` / `tool-mode-off` / `no-edge-to-agent-tools`) and the autosave interval, and the prompt is never sent.
 
 > **1.12 rendering (why the locators changed).** Through ~1.11 the tool call surfaced as a `.cursor-pointer` accordion row reading `"Called tool ECHO"`; on 1.12 the Playground renders it as a **testid** `tool_echo` inside `div-tools_tools_metadata` under an **"Agent Steps"** block, and the AI message container moved from `div-chat-message` to `chat-message-AI-<text>`. The tool round-trip itself is unchanged and healthy — verified on `1.12.0.dev0` via `GET /api/v1/monitor/messages` (`content_blocks: ["tool_use|text|text"]`, `tool_use name=echo`, `text="Echo: hello mcp"`). The old text-based selectors were stale drift (#894), not a product regression.
 
@@ -84,6 +86,9 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 - `src/frontend/src/components/core/chatComponents/toolStatus.ts` — derives `error | done | running`, with `error` winning over a duration; only `done` satisfies Proof #1
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx`
 - `tests/helpers/flows/agent-credential-settle.ts` — the shared probe, verdict taxonomy and failure formatter this spec's load guard settles on (#1274/#1371). Only the pure functions are shared; the wait loop is this spec's own
+- `src/backend/base/langflow/services/auth/service.py` — `AuthService.validate_tool_call`, which authorizes every tool call against the **stored** flow (#2541)
+- `src/frontend/src/hooks/flows/use-autosave-flow.ts` — the debounced autosave that carries the canvas edits to the stored flow, `auto_saving_interval` after the last edit
+- `tests/helpers/flows/autosave-interval.ts` — the run's resolved autosave interval and save budgets, which size the wait in step 7
 - `tests/helpers/flows/load-template-by-name.ts` — loads the Simple Agent template and returns the created flow id
 - `tests/helpers/provider-setup/` — provider env key validation and model parameterization
 
@@ -109,6 +114,26 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 - MCP server registration happens after the template loads; server data lives in a separate DB table and survives flow teardown.
 - The test is parameterized: one describe block is generated per active provider in `models.json`. Run with `--workers=1` to prevent parallel workers from deleting each other's flows.
+
+### Why the test waits for the stored flow before sending (#2541)
+
+The Playground runs the frontend's in-memory graph, but each tool call is authorized against the flow **in the database**: `AuthService.validate_tool_call` re-reads it and refuses the call when the tool's node is not there. The refusal reaches the agent as `Tool settings changed or are unavailable. Start a new run before calling this tool.`, and the Playground shows `Tool error — ERROR USING ECHO`.
+
+Steps 4–6 change the canvas only. They reach the database through the debounced autosave, `auto_saving_interval` after the last edit (`5000` ms on `1.14.0.dev35`), and the prompt used to be sent inside that window.
+
+Measured on `1.14.0.dev35`, with the check instrumented to record which condition denied and the stored flow polled every 0.5 s:
+
+| Run | Refused calls | Outcome |
+|---|---|---|
+| anthropic `claude-haiku-4-5`, no wait | 3, all "MCP node not in the stored flow" | failed: the agent gave up within ~3 s |
+| openai `gpt-4o-mini`, no wait | 2, same reason, before the save landed | passed: its third call came after the save |
+| anthropic `claude-haiku-4-5`, with the wait | 0, in 5 of 5 runs (flow settled after ~5.3 s) | passed |
+
+So the outcome depended on how long the model kept retrying, which is why it read as an anthropic-only failure. It was not a Langflow version regression: `1.14.0.dev26`, which passed on 2026-11-13, failed the same way on 2026-11-23. That the model's retry behaviour is what changed between those dates is the likeliest reading, not a measured one.
+
+The wait checks the node (the only condition measured to deny), its tool mode (also checked by `validate_tool_call`) and the edge to the Agent's `tools` input. The edge is not an authorization condition; it is checked because it is the last canvas edit, so the save that carries it carries the others. The wait does not check the node's `tools_metadata` row (tag, name, status, approval actions), which `validate_tool_call` also matches when the field exists or the caller reports metadata configured; no run denied on it. A refusal with this step green would point there.
+
+The wait reads the **API**, unlike `node-config-guard.ts`, which reads the widget because the run executes the in-memory graph. The question here is what the *authorization* reads, and that is the stored flow.
 
 ### Why this spec loads the agent itself, and what its guard settles on (#1371)
 
