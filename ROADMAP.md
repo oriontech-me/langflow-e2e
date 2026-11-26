@@ -402,7 +402,7 @@ Review (2026-10-08): re-read `dashboard-feed.json` and compare the Memory Base a
 Agents rows against this wave's baseline, then coin the next wave from the refreshed
 ranking.
 
-### Wave 11 — Multi-edit, instance migration & integrations  ·  2026-10-27 → 2026-11-10 ◀ **NEXT**
+### Wave 11 — Multi-edit, instance migration & integrations  ·  2026-10-27 → 2026-11-10
 
 **Feature-driven** wave, like Wave 5: three surfaces that reached the nightly from
 upstream's 1.13/1.14 lines and that no spec touches. Two are new. **Multi-edit
@@ -440,6 +440,51 @@ Exit:
 
 Review (2026-11-10): record what landed per tracker, then decide whether the
 `@instance-migration` lane earns a scheduled run.
+
+### Wave 12 — 1.14 OSS features  ·  2026-11-30 → 2026-12-14 ◀ **NEXT**
+
+**Feature-driven** wave, like Waves 5 and 11: the OSS features upstream's
+`release-1.14.0` adds over `release-1.13.5` that no spec touches. Measured 2026-11-26
+on the range `release-1.14.0 ^release-1.13.5` (tip `3ee6f98a20`): 55 `feat` commits,
+none shipped in a 1.13.x release. 16 are already covered (Dedicated Integrations and
+triggers, Wave 11 and its follow-ups). 21 are outside OSS scope: authorization-plugin
+hooks, wxO deployments behind `feature_flags.wxo_deployments: false`, bundles the
+nightly does not install, and CLI-only or telemetry changes. This wave owns the other
+18. The largest is **evals** (datasets and flow evaluations), which upstream #16591
+turned on by default: `feature_flags.evals` is `true` on nightly `1.14.0.dev38`.
+
+Requires (GitHub milestone *Wave 12 — 1.14 OSS features*):
+- **Create** (`[ ]` → `[x]`, new Part II sections):
+  - evals: #2563 → #2564 → #2565. The API helpers come first, and #2563 also
+    decides the new `@evals` functional tag;
+  - protected flow versions: #2566, after #2564;
+  - upgrade reports and repairs: #2567; maintenance mode: #2568;
+  - the Schedule trigger's picker: #2569;
+  - the v2 Workflow API's GA transport rule: #2570;
+  - decision models and Smart Router's decision mode: #2571;
+  - Batch Run: #2572;
+  - scoped API keys, the OSS degradation only: #2573.
+- **Decide** (no coverage bullet): whether 1.14's opt-in execution backends — the
+  database-backed worker, DAG scheduling, snapshot retention — get a lane (#2574).
+
+Notes: OSS only. The enforced half of scoped API keys and the authorization hooks
+belong to the `@enterprise` lane. Each issue marks which premises were measured on
+`1.14.0.dev38` and which were read from upstream code (`release-1.14.0`,
+`3ee6f98a20`), and each spec doc measures the latter first. Two items carry a
+decision of their own: #2571's runtime half depends on whether the suite's OpenAI key
+reaches a decision model, and #2572's rate-limit retry needs a `429` on demand.
+#2568 freezes the whole instance, so it runs under `@destructive` and cannot carry
+`@stable` until that lane is scheduled (#1010, #2142). Off-band on purpose:
+11 creation issues plus 1 decision.
+
+Convergence: directional. The new Part II sections add both numerator and denominator.
+Exit:
+- #2563, #2564 and #2570 are `@stable` (keyless API specs).
+- Evals has a Part II section with every bullet `[x]` or parked with its reason.
+- #2574 records a decision.
+
+Review (2026-12-14): record what landed, re-run the 1.14 range for features merged
+after 2026-11-26, and decide whether the remainder is a second 1.14 wave.
 
 ---
 
