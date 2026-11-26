@@ -1932,9 +1932,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 110 | 0 | 92 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
+| `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **950** | **819 (86%)** | **68 (7%)** | **18 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **950** | **820 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1950,7 +1950,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 946 `test()` calls carrying the `@stable` tag, distributed across 330 spec
+> 947 `test()` calls carrying the `@stable` tag, distributed across 330 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2200,6 +2200,7 @@
 - [x] one trigger and no trigger are accepted, and an edit without data still saves → `api-triggers-one-per-flow.spec.ts`
 - [x] lists the caller's own triggers across flows, newest first, filtered by provider and state → `api-triggers-operator.spec.ts`
 - [x] scope=all is superuser-only and shows every user's triggers with their owner and no actions on rows the caller does not own → `api-triggers-operator.spec.ts`
+- [x] computes each trigger's actions on the server, by state and by kind → `api-triggers-operator.spec.ts`
 - [x] bulk pause and resume are superuser-only, select by provider and ids, and re-arm only what an operator paused → `api-triggers-operator.spec.ts`
 - [x] labels the sessions a trigger on the flow started, and nothing else → `api-triggers-operator.spec.ts`
 - [x] the seventeen 1.14 provider kinds are served as trigger components and cannot be created through the triggers API → `api-triggers-provider-kinds.spec.ts`
