@@ -61,6 +61,8 @@ check encodes the expected #440 state.
 
 `@stable` `@mcp` `@agents` `@regression` `@model-provider`
 
+> Step numbers below follow the current *Step by step* (renumbered under #2576).
+>
 > **`@stable` — promoted under #947** after #440 was confirmed fixed on
 > 1.12.0.dev5 and the positive assertion (Gemini invokes `echo`) ran clean
 > `--workers=1 --retries=0` with a per-test force-failure check.
@@ -76,18 +78,18 @@ check encodes the expected #440 state.
 > was re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with Google configured.
 >
 > **Quarantined and restored under #2095.** The guard-tripped VM daily of
-> 2026-09-29 (`1.13.0.dev27`) failed step 8 on every attempt with
+> 2026-09-29 (`1.13.0.dev27`) failed step 9 on every attempt with
 > `turn.replyText` received `""`, and PR #2101 removed `@stable` and added
 > `test.fixme`. The run had not finished when the reply was read. The Stop-button
 > probe that preceded the monitor poll ignored its timeout (`locator.isVisible()`
 > does not wait), so the poll started while the turn was still in flight and
 > accepted the first AI row of the session, whose text was still empty. #2123
-> moved the send into `sendAndAwaitPlaygroundTurn` (step 7), so the poll now
+> moved the send into `sendAndAwaitPlaygroundTurn` (step 8), so the poll now
 > starts only after the turn has finished. #2095 re-measured the test on
 > `1.13.0.dev30` with a live Google key and lifted the quarantine.
 >
 > **Quarantined under #2176, `test.fixme` lifted with `@stable` still off.** The
-> VM daily failed step 8 on its first attempt twice, on 2026-09-10
+> VM daily failed step 9 on its first attempt twice, on 2026-09-10
 > (`1.13.0.dev8`) and on 2026-10-05 (`1.13.0.dev33`). Both times `turn.replyText`
 > was exactly `"Echo: hello m"` and the retry passed. PR #2180 removed `@stable`
 > and added `test.fixme`. #2176 traced it to a Langflow defect, not to the test
@@ -100,7 +102,7 @@ check encodes the expected #440 state.
 > ships in `v1.12.6`. The test was re-validated on `1.13.0.dev42` with a live
 > Google key (`gemini-flash-latest`), 5/5 clean with `--workers=1 --retries=0`,
 > each persisted reply equal to the full `echo` tool output, with a
-> force-failure of steps 8 and 9. `@stable` came back with no test-side change.
+> force-failure of steps 9 and 10. `@stable` came back with no test-side change.
 
 ---
 
@@ -120,7 +122,7 @@ check encodes the expected #440 state.
 6. Wait until the stored flow (`GET /api/v1/flows/{id}`) holds exactly one MCP node
    with `tool_mode: true` and an edge from it to the Agent's `tools` input
    (`waitForToolsetPersisted`; deadline = the run's autosave interval + 1.5 s +
-   10 s, 16.5 s at the default 5 s). Tool calls are authorized by
+   10 s: 16.5 s at a 5 s interval, 21.5 s on the 10 s fallback). Tool calls are authorized by
    `AuthService.validate_tool_call` against the **stored** flow, and the canvas
    edits of steps 4–5 reach it only through the debounced autosave; a prompt sent
    earlier gets its calls refused (*"Tool settings changed or are unavailable…"*).
@@ -160,7 +162,9 @@ check encodes the expected #440 state.
   persisted reply proves the agent completed a turn) and by the loud setup asserts
   (a broken bootstrap / MCP registration fails before reaching step 10).
 - **Precondition for step 10 (#2576):** step 6 has seen the toolset in the stored
-  flow, so a tool call is authorized from the first attempt. Before #2576 the prompt
+  flow, so the node-presence and tool-mode conditions `validate_tool_call` checks
+  hold from the first attempt (the `tools_metadata` row it also matches is not
+  waited on; see the helper's scope note). Before #2576 the prompt
   was sent inside the autosave window: the first calls were refused, and the test
   passed only because Gemini kept retrying until the save landed. A model that gave
   up sooner would have reported no `echo` call, which reads as #440 when it is the
@@ -170,7 +174,7 @@ check encodes the expected #440 state.
   tool-calling has regressed to the #440 state.
 - **If the #2176 defect returns** (fixed in `1.13.0.dev37`): the persisted reply is a strict prefix of the
   `echo` tool output. The observed case was `"Echo: hello m"` against
-  `"Echo: hello mcp (<nonce>)"`. Step 8 **fails**, never passes, and its message
+  `"Echo: hello mcp (<nonce>)"`. Step 9 **fails**, never passes, and its message
   names the #2176 signature with the observables from step 9: the persisted
   reply, the tool output, and each LLM call's text and `model_name`. A failure
   of step 9 that is **not** a strict prefix is reported as a different cause.

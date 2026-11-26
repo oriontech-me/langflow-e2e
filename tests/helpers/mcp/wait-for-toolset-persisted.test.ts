@@ -23,7 +23,7 @@ const toolsEdge = (source = "MCP-8tf5p", target = "Agent-abc12", fieldName = "to
 });
 const flow = (nodes: unknown[], edges: unknown[]) => ({ data: { nodes, edges } });
 
-test("the stored flow measured on 1.14.0.dev35 reads as persisted", () => {
+test("the minimal stored-flow shape (MCP node id as measured on 1.14.0.dev35) reads as persisted", () => {
   assert.equal(readToolsetPersistState(flow([agent, mcp()], [toolsEdge()])), "persisted");
 });
 
@@ -31,6 +31,27 @@ test("a namespaced MCPTools type is recognised", () => {
   const node = mcp({ id: "ext-node-1", data: { type: "ext:langflow:MCPTools@official", node: { tool_mode: true } } });
   const edge = toolsEdge("ext-node-1");
   assert.equal(readToolsetPersistState(flow([agent, node], [edge])), "persisted");
+});
+
+test("a bare MCPTools type is recognised", () => {
+  const node = mcp({ data: { type: "MCPTools", node: { tool_mode: true } } });
+  assert.equal(readToolsetPersistState(flow([agent, node], [toolsEdge()])), "persisted");
+});
+
+test("the id prefix is a fallback for a type rewritten after creation", () => {
+  const node = mcp({ data: { type: "SomethingElse", node: { tool_mode: true } } });
+  assert.equal(readToolsetPersistState(flow([agent, node], [toolsEdge()])), "persisted");
+});
+
+test("a near-miss type or id is not an MCP node", () => {
+  for (const [id, type] of [
+    ["MCPServer-1", "MCPServer"],
+    ["X-1", "MyMCPTools"],
+    ["X-2", "ext:vendor:MCPToolsExtra@official"],
+  ]) {
+    const node = { id, data: { type, node: { tool_mode: true } } };
+    assert.equal(readToolsetPersistState(flow([agent, node], [toolsEdge(id)])), "no-mcp-node", type);
+  }
 });
 
 test("a namespaced Agent type is recognised", () => {
