@@ -210,6 +210,7 @@ Lane precedence when several flags are set: `@enterprise` > `@instance-migration
 | `@authz` | Enterprise **authorization** (roles, assignments, shares, teams, audit log). Always with `@enterprise`. Needs the RBAC container variant (`LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`); specs gate on `authz_enabled: true` **and** `superuser_bypass: false` |
 | `@governance` | Catalog and model-provider policy, as shipped in OSS. Always with `@destructive` (the policy is instance-global). RBAC is out of scope |
 | `@integrations` | **Dedicated Integrations**: the `Connection` entity, the capability manifest and effective policy, `/settings/connections`, and connector reachability. Not a lane selector. Lanes and starters set fake OAuth registrations and fake deployment sites (`scripts/lib/fake-oauth-registrations.json`, `scripts/lib/fake-integration-sites.json`) |
+| `@evals` | **Evaluations** (Langflow 1.14): datasets, flow evaluations and their runs (`/api/v1/datasets`, `/api/v1/evaluations`, `/api/v1/evaluation-runs`) and the evals UI. On by default (`feature_flags.evals`). Not a lane selector |
 
 Details for the specialised functional tags: [`docs/infra/tags.md`](docs/infra/tags.md).
 

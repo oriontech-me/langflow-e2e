@@ -1,5 +1,5 @@
 {
-  "version": "1.13.0.dev19",
+  "version": "1.14.0.dev39",
   "exclusions": [
     {
       "prefix": "/api/v1/authz/",
@@ -76,7 +76,22 @@
     },
     {
       "method": "DELETE",
+      "path": "/api/v1/connections/oauth/registrations/saved/{registration_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
       "path": "/api/v1/connections/{connection_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/datasets/{dataset_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/evaluations/{evaluation_id}",
       "inSchema": true
     },
     {
@@ -181,6 +196,11 @@
     },
     {
       "method": "DELETE",
+      "path": "/api/v1/users/me/deletion-request",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
       "path": "/api/v1/users/{user_id}",
       "inSchema": true
     },
@@ -243,6 +263,21 @@
       "method": "GET",
       "path": "/api/v1/api_key/",
       "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/api_key/permission-options",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audits",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audits/export",
+      "inSchema": true
     },
     {
       "method": "GET",
@@ -351,7 +386,107 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/connections/oauth/registrations/saved",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/connections/oauth/{provider}/browser",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/connections/oauth/{provider}/callback",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-subjects/end-users",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-subjects/requests",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-subjects/requests/{request_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-subjects/requests/{request_id}/dry-run",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-subjects/requests/{request_id}/export",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/examples",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/{dataset_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/{dataset_id}/export",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/{dataset_id}/items",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluation-runs/{run_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluation-runs/{run_id}/export",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluation-runs/{run_id}/results",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluation-runs/{run_id}/results/{result_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluations",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluations/check",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluations/{evaluation_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evaluations/{evaluation_id}/runs",
       "inSchema": true
     },
     {
@@ -391,6 +526,11 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/flows/audits",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/flows/basic_examples/",
       "inSchema": true
     },
@@ -412,6 +552,11 @@
     {
       "method": "GET",
       "path": "/api/v1/flows/{flow_id}/note_translations",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/{flow_id}/version-state",
       "inSchema": true
     },
     {
@@ -451,6 +596,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/knowledge-base-storage/inventory",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge-base-storage/migrations",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge-base-storage/pending-cleanup",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge-base-storage/status",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/knowledge_bases",
       "inSchema": false
     },
@@ -483,6 +648,11 @@
       "method": "GET",
       "path": "/api/v1/knowledge_bases/{kb_name}/runs/{run_id}",
       "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/maintenance/status",
+      "inSchema": true
     },
     {
       "method": "GET",
@@ -656,12 +826,27 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/projects/audits",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/projects/download/{project_id}",
       "inSchema": true
     },
     {
       "method": "GET",
       "path": "/api/v1/projects/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/{project_id}/deployment-snapshot",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/{project_id}/replacement-operations/{operation_id}",
       "inSchema": true
     },
     {
@@ -716,6 +901,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/triggers/ingress/{provider}/{public_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/triggers/sessions",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/triggers/{trigger_id}",
       "inSchema": true
     },
@@ -726,7 +921,47 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/triggers/{trigger_id}/ingress",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/upgrade-reports",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/upgrade-reports/checks/releases",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/upgrade-reports/{report_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/upgrade-reports/{report_id}/export",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/upgrade-reports/{report_id}/repairs",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/users/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/me/data-export",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/me/deletion-request",
       "inSchema": true
     },
     {
@@ -781,6 +1016,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/v2/policy-bundle",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/policy-bundle/history",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v2/registration/",
       "inSchema": false
     },
@@ -826,6 +1071,11 @@
     },
     {
       "method": "PATCH",
+      "path": "/api/v1/api_key/{api_key_id}/permissions",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
       "path": "/api/v1/authz/roles/{role_id}",
       "inSchema": true
     },
@@ -842,6 +1092,21 @@
     {
       "method": "PATCH",
       "path": "/api/v1/connections/{connection_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/datasets/{dataset_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/datasets/{dataset_id}/items/{item_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/evaluations/{evaluation_id}",
       "inSchema": true
     },
     {
@@ -1041,6 +1306,11 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/connections/{connection_id}/token",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/custom_component",
       "inSchema": false
     },
@@ -1048,6 +1318,96 @@
       "method": "POST",
       "path": "/api/v1/custom_component/update",
       "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-subjects/erase",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-subjects/find",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-subjects/requests",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-subjects/requests/{request_id}/approve",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-subjects/requests/{request_id}/refuse",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-subjects/requests/{request_id}/retry",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/examples/{key}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_id}/duplicate",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_id}/examples/{key}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_id}/import",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_id}/import/preview",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_id}/items",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_id}/items/delete",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/evaluation-runs/{run_id}/cancel",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/evaluations",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/evaluations/estimate",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/evaluations/{evaluation_id}/runs",
+      "inSchema": true
     },
     {
       "method": "POST",
@@ -1091,6 +1451,16 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/flows/{flow_id}/fork",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/{flow_id}/overwrite",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/flows/{flow_id}/versions/",
       "inSchema": false
     },
@@ -1108,6 +1478,26 @@
       "method": "POST",
       "path": "/api/v1/folders/upload/",
       "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge-base-storage/attention/{kb_id}/detach",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge-base-storage/inventory/retry",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge-base-storage/migrations/{migration_id}/retry",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge-base-storage/pending-cleanup/{kb_id}/retry",
+      "inSchema": true
     },
     {
       "method": "POST",
@@ -1153,6 +1543,16 @@
       "method": "POST",
       "path": "/api/v1/logout",
       "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/maintenance/off",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/maintenance/on",
+      "inSchema": true
     },
     {
       "method": "POST",
@@ -1281,6 +1681,26 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/triggers/bulk/pause",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/bulk/resume",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/ingress/slack/apps/{registration_id}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/ingress/{provider}/{public_id}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/triggers/{trigger_id}/disable",
       "inSchema": true
     },
@@ -1301,7 +1721,32 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/triggers/{trigger_id}/signing-secret",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/triggers/{trigger_id}/test",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upgrade-repairs/apply",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upgrade-repairs/preview",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upgrade-reports",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upgrade-reports/checks",
       "inSchema": true
     },
     {
@@ -1312,6 +1757,11 @@
     {
       "method": "POST",
       "path": "/api/v1/users/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/me/deletion-request",
       "inSchema": true
     },
     {
@@ -1356,6 +1806,11 @@
     },
     {
       "method": "POST",
+      "path": "/api/v2/policy-bundle/rollback/{revision}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
       "path": "/api/v2/registration/",
       "inSchema": false
     },
@@ -1391,6 +1846,11 @@
     },
     {
       "method": "PUT",
+      "path": "/api/v1/connections/oauth/registrations/saved/{registration_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
       "path": "/api/v1/flows/{flow_id}",
       "inSchema": true
     },
@@ -1421,12 +1881,27 @@
     },
     {
       "method": "PUT",
+      "path": "/api/v1/projects/{project_id}/replacement-operations/{operation_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
       "path": "/api/v2/files/{file_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/policy-bundle",
       "inSchema": true
     }
   ],
   "liveness": {
-    "probed": 60,
-    "dead": []
+    "probed": 84,
+    "dead": [
+      "GET /api/v1/data-subjects/end-users",
+      "GET /api/v1/data-subjects/requests",
+      "GET /api/v1/users/me/data-export",
+      "GET /api/v1/users/me/deletion-request"
+    ]
   }
 }

@@ -242,6 +242,19 @@
 - [x] `POST /api/v1/run/{id}` behaves identically (4 / 0 / 0) — asserted because #14550's phase 1 extends the v2-only scoping to *all* serving APIs, making v1 the surface a partial rollout would honour first, and the one deployed integrations actually call → `api/flows/serving-end-user-identity-default.spec.ts`
 - [x] Non-vacuity control: one identity-less run on a **different** `session_id` persists its 2 messages there. Without it, "the header did nothing" and "chat memory is broken outright" give identical readings — both leave the scoped sessions empty → `api/flows/serving-end-user-identity-default.spec.ts`
 
+
+#### 1.16 Evals API — datasets (1.14)
+
+> Langflow 1.14's evaluations (`langflow-ai/langflow` #15999) run a flow over a **dataset** and score each row; on by default since #16591 (`feature_flags.evals: true`). This section is the dataset layer, all **16** `/api/v1/datasets` operations, every one in the schema and declared through the API coverage gauge (#2563). Evaluations (#2564) and the evals UI (#2565) build on the same helper. Contract and measurements: `docs/api/evals/api-datasets.md`.
+
+- [x] Dataset CRUD: create answers `201` with exactly seven keys, `revision: 1`, `item_count: 0`; a name the caller already uses is `409` naming it, an empty one `422` at `body.name`; a rename applies and leaves `revision` alone; delete is `204` and the id then `404 "Dataset not found"` → `api/evals/api-datasets.spec.ts`
+- [x] Items keep insertion order and identity through an input edit, `clear_expected_output` (→ `null`) and a subset delete (`{"deleted": 2}`, exactly the survivors by id); `item_count` follows, `revision` moves on every content write, and an unknown item (`404`), an unknown delete id (`{"deleted": 0}`) and an empty input (`422`) change nothing → `api/evals/api-datasets.spec.ts`
+- [x] CSV import: the preview returns cells verbatim (first 5 rows, `total_rows` counts all) and writes nothing; the import trims cells, maps a blank expected cell to `null` and skips an empty input with its 1-based line (`{"row": 4, "reason": "Input is empty"}`); a wrong column, a non-UTF-8 file and an empty file are each refused with their own `422` reason and write nothing → `api/evals/api-datasets.spec.ts`
+- [x] Bundled examples: the list is well formed; creating from one yields a dataset named after it with all its rows; appending keeps a dataset's own description and fills an empty one from the example; an unknown key is `404` naming it → `api/evals/api-datasets.spec.ts`
+- [x] Duplicate: `"<name> (copy)"`, then `"(copy) 2"`, the same rows under new ids, and an independent copy (editing it leaves the source whole) → `api/evals/api-datasets.spec.ts`
+- [x] Export: a UTF-8 CSV attachment with a BOM, CRLF lines and formula-leading cells prefixed with `'` (CSV injection); re-importing it reproduces commas, quotes, embedded newlines, non-ASCII text and `null` exactly, and the formula row with its apostrophe (lossy by design) → `api/evals/api-datasets.spec.ts`
+- [x] Ownership: another user gets `404 "Dataset not found"` on all eight per-id operations and an empty list, the owner's dataset is unchanged, and the other user may reuse the same name (unique per user) → `api/evals/api-datasets.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components

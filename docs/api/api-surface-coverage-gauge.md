@@ -145,7 +145,7 @@ registers from one the build actually serves, and it is cheap.
 
 ## Scope
 
-**227 operations in scope** on `1.13.0.dev19` — 137 in the schema, 90 hidden.
+**321 operations in scope** on `1.14.0.dev39` — 231 in the schema, 90 hidden.
 Excluded: 50, each with a reason that is not "hard".
 
 | Excluded | Ops | Why |
@@ -175,6 +175,23 @@ diff is additions only:
   but they are why the gate's `ADDED` list on `1.13.0.dev19` read **39** lines for 23
   new operations: it compares the schema-visible half only, so a hidden route that
   becomes visible reads as an addition.
+- **No removals.**
+
+**Refreshed from `1.13.0.dev19` (227) to `1.14.0.dev39` (321)** (#2563, when the first
+evals spec needed its family in the denominator) — additions only again:
+
+- **94 new operations, all in scope and all in the schema**, none moving from hidden:
+  `datasets` (16, all driven by `api/evals/api-datasets.spec.ts`), `data-subjects` (11),
+  `evaluations` (9) and `evaluation-runs` (5), `knowledge-base-storage` (8), `triggers`
+  (8), `upgrade-reports` (7) and `upgrade-repairs` (2), `connections` (5), `users` (4),
+  `flows` (4), `projects` (4), `policy-bundle` (4), `maintenance` (3), `api_key` (2),
+  `audits` (2). Most of them are the 1.14 OSS surface Wave 12 owns (#2563–#2574).
+- **Four registered GETs the build does not serve**: `data-subjects/end-users`,
+  `data-subjects/requests`, `users/me/data-export` and `users/me/deletion-request`
+  answer `404` on the liveness probe — upstream's `require_data_subject_feature()`
+  answers `404` "so the routes look unmounted" while `feature_flags.data_subject_requests`
+  is off, and it is `false` on the nightly. They stay in the baseline and count as
+  uncovered rather than being hidden.
 - **No removals.**
 
 ---
