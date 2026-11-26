@@ -175,20 +175,22 @@ spec would call healthy.
 - **A public attacker-controlled endpoint.** The module's own scope note: the policy blocks
   *internal* destinations and "cannot decide whether an arbitrary *public* host is a legitimate
   OpenAI-compatible provider, so pointing a provider component at an attacker-controlled public
-  endpoint still forwards the configured credential". Restricting which hosts a stored credential
-  may reach is a separate, additive control upstream — asserting it here would assert a product
-  decision that has not been made.
+  endpoint still forwards the configured credential". Upstream has since made that decision as a
+  separate control: `ensure_credential_endpoint_allowed` refuses to send a credential from the
+  **server environment** to a non-default endpoint unless `LANGFLOW_PROVIDER_CREDENTIAL_ALLOWED_HOSTS`
+  names it (langflow-ai/langflow#15211, #15587, #16537, #16565). A tenant's own key is unaffected,
+  and observing the refusal needs a provider credential in the Langflow process environment, which
+  no lane sets, so it is not asserted here (#2561).
 - **DNS rebinding / TOCTOU.** `provider_httpx_clients` returns DNS-**pinned** clients precisely so
   the connection cannot drift from the validated IP, and `validate_provider_base_url` is documented
   as being only for paths that do **not** later connect. Proving the pin needs a DNS server that
   answers differently on the second lookup; out of scope, named so it reads as a decision.
-- **The unified `LanguageModelComponent`.** Its `ollama_base_url` and `base_url_ibm_watsonx` fields,
-  and the Ollama and Watsonx components' own `base_url`, are **measured as outside this seam** — the
-  grep for `provider_ssrf` returns three component files and none of them is these. Consistent with
-  the scoping (Ollama is keyless and its default *is* loopback, so a strict guard would break it out
-  of the box), but recorded rather than assumed: the most-used model component carries two
-  unguarded base-URL fields, and a future change that makes one of them credential-bearing would
-  need this seam.
+- **The Ollama and watsonx fields, and the unified `LanguageModelComponent`.** Recorded here on
+  `1.12.0.dev38` as outside this seam. On the 1.14 line every one of them is guarded, but not all by
+  this seam's strict policy: the watsonx components joined it (langflow-ai/langflow#15587), while
+  the Ollama fields and the Language Model's watsonx field apply the connector policy, which admits
+  loopback. Which policy each field applies is pinned in
+  `security/ollama-watsonx-base-url-ssrf.spec.ts` (#2561).
 - **The status code.** The refusal is a `500`, wrapped as
   `Error running graph: Error building Component OpenAI: … SSRF Protection: …`, so a caller cannot
   tell "your URL is blocked by policy" from "the server broke" by status alone. The spec pins the

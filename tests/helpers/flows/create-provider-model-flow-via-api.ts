@@ -89,7 +89,7 @@ interface TemplateField {
   [key: string]: unknown;
 }
 
-interface ComponentTemplate {
+export interface ComponentTemplate {
   template: Record<string, TemplateField>;
   [key: string]: unknown;
 }
@@ -130,7 +130,7 @@ export interface BuildProviderModelFlowOptions {
  * missing per image (`docs/component-distribution-policy.md`), and an undefined
  * template reaching `POST /api/v1/flows/` surfaces as an unattributable 422.
  */
-function findComponentTemplate(
+export function findComponentTemplate(
   catalog: Record<string, unknown>,
   componentType: string,
 ): ComponentTemplate {
