@@ -75,12 +75,14 @@ by `api-flows-versions.spec.ts`, so this spec only reads the one entry that
 
 This was found by test 5 on `1.14.0.dev7`. It is **not filed yet**.
 
-**Owner (#2525).** Still reproduces on `1.14.0.dev32`: the declared test failed as expected
-in each run. No upstream report exists — a search of `langflow-ai/langflow` issues finds
-none, and no Jira key is cited anywhere in this repo. #2341, which the declaration cites, is
-this spec's own (closed) authoring issue, not a tracker for the defect. So the declaration has
-no open owner until an upstream report is filed; when it is, cite that ticket in the
-`test.fail()` description, here, and in the QA-CHECKLIST bullet.
+**Owner: #2577.** Still reproduces on `1.14.0.dev32`: the declared test failed as expected
+in each #2525 run. No upstream report exists — a search of `langflow-ai/langflow` issues finds
+none, and no Jira key is cited anywhere in this repo. #2341 is this spec's own (closed)
+authoring issue, not a tracker for the defect, so #2525 opened #2577 to own the declaration
+until an upstream report is filed; when it is, cite that ticket in the `test.fail()`
+description, here, and in the QA-CHECKLIST bullet. On the VM daily of 2026-11-25
+(`1.14.0.dev38`) the declared body passed on 1 of 2 attempts before failing as declared: the
+defect now reproduces intermittently, so a single pass is not a fix.
 
 **What fails.** When two or more writers race with the same token, the winner
 answers `200` and every loser answers `409` with a correct `expected_version_token`.
@@ -133,8 +135,9 @@ guarantee that holds is not hidden behind the one that does not:
   report the right token. On `1.14.0.dev7` that was never observed (0 of 10
   two-writer races, 0 of those six-writer runs). **On `1.14.0.dev32` it is the
   common outcome of a bare race**: under raw `curl` the #2525 review saw a phantom
-  token in only 1 of 23 and 1 of 6 races. The Playwright test still reproduces the
-  defect every time (20 of 20 in the review, 4 of 4 for #2525), presumably because
+  token in only 1 of 23 and 1 of 6 races. The Playwright test reproduced the
+  defect in every local run (20 of 20 in the review, 4 of 4 for #2525; the VM daily on
+  `1.14.0.dev38` then missed it once, see the owner paragraph above), presumably because
   its writers fire from one `request` context in the same tick, which keeps the
   race tighter than separate `curl` processes; that is inferred, not measured.
   **The risk:** if the harness ever races the way bare `curl` does (a slower host,

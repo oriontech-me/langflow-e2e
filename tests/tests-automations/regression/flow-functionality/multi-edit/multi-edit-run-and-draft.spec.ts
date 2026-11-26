@@ -456,11 +456,11 @@ test.describe("Multi-edit safety — a run on a stale canvas, and the local draf
         type: "known defect",
         description:
           "removeApiKeys treats a key matching /^[A-Z][A-Z0-9_]*$/i as a variable name and keeps it " +
-          "(found in #2345; no upstream report yet, re-checked for #2525 on 1.14.0.dev32)",
+          "(found in #2345; owned by #2578 until an upstream report is filed; re-checked for #2525 on 1.14.0.dev32)",
       },
     },
     async ({ page, request }) => {
-      test.fail(true, "Known defect, no upstream report yet (#2345): an alphanumeric api_key is stored in plain text in the draft");
+      test.fail(true, "Known defect, no upstream report yet (#2578): an alphanumeric api_key is stored in plain text in the draft");
       const ctx = await secretIsNotKept(page, request, `a${randomHex(31)}`);
       expect(await serverValue(request, ctx, SA, "api_key"), "the server never received the key").toBe("");
     },

@@ -473,7 +473,8 @@ test.describe("Triggers — the operator API", () => {
       // 1.14.0.dev32): a config_invalid row no longer lists `resume` as allowed,
       // so the action list agrees with the refusal above. Declared failing until
       // #2525. The fix is newer than this file's floor (OPERATOR_SINCE), so the
-      // step is gated by build like #16322 above: from dev32 the corrected listing
+      // step is gated by build, like the file's OPERATOR_SINCE floor (#16322 above is
+      // feature-detected instead): from dev32 the corrected listing
       // is asserted; before it the old listing is asserted, so neither side skips
       // and a build that moves either way turns the test red.
       if (await servedVersionAtLeast(request, LE_3454_FIXED_IN)) {

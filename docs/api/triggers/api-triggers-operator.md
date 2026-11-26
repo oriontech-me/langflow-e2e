@@ -220,7 +220,10 @@ triggers with it.
    (*block resume while the trigger config is invalid*, first in `1.14.0.dev32`), the declaration then
    failed as *"expected to fail, but passed"*, and #2525 made the step a plain assertion.
    The fix is newer than this file's `1.14.0.dev16` floor, so the step is gated by build, like
-   #16322's `schedule_type` in step 4: from `1.14.0.dev32` it asserts the corrected listing above;
+   that floor (`OPERATOR_SINCE`; #16322's `schedule_type` in step 4 is feature-detected
+   instead). A source build of `release-1.14.0` reports the final `1.14.0` whether or not it
+   contains #16450, so a red here on a source build cut before 2026-11-18 is not a regression.
+   From `1.14.0.dev32` it asserts the corrected listing above;
    before it, it asserts the old one (`resume` in `allowed_actions`, no `blocked_actions.resume`).
    Neither side skips. Measured for #2525: `1.14.0.dev31` takes the old branch and passes,
    `1.14.0.dev32` takes the new one and passes.
