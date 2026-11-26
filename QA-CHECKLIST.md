@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-25
+> **Last updated:** 2026-11-26
 
 ---
 
@@ -1926,7 +1926,7 @@
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 30 | 26 | 0 | 0 | 4 |
+| `security/` — Validation, SSRF, Secrets | 34 | 31 | 0 | 0 | 3 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 16 | 0 | 0 | 0 |
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
@@ -1934,7 +1934,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 146 | 0 | 3 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **946** | **813 (86%)** | **68 (7%)** | **18 (2%)** | **47 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **950** | **818 (86%)** | **68 (7%)** | **18 (2%)** | **46 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1950,7 +1950,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 938 `test()` calls carrying the `@stable` tag, distributed across 327 spec
+> 943 `test()` calls carrying the `@stable` tag, distributed across 328 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2882,6 +2882,11 @@
 - [x] the same policy guards the Anthropic component through its differently-named field → `model-provider-base-url-ssrf.spec.ts`
 - [x] an allow-listed private base URL is admitted through the provider seam → `model-provider-base-url-ssrf.spec.ts`
 - [x] the provider's own endpoint skips the policy on both components → `model-provider-base-url-ssrf.spec.ts`
+- [x] the watsonx components refuse loopback, the metadata address and a non-http scheme → `ollama-watsonx-base-url-ssrf.spec.ts`
+- [x] the Ollama fields refuse the metadata address and a non-http scheme → `ollama-watsonx-base-url-ssrf.spec.ts`
+- [x] the Ollama chat fields admit loopback, where Ollama runs by default → `ollama-watsonx-base-url-ssrf.spec.ts`
+- [x] the Language Model's watsonx field applies the connector policy, not the strict one → `ollama-watsonx-base-url-ssrf.spec.ts`
+- [x] an allow-listed private address is admitted on every field that connects → `ollama-watsonx-base-url-ssrf.spec.ts`
 - [x] a loopback address is refused, and the refusal names the allow-list → `ssrf-url-validation.spec.ts`
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
