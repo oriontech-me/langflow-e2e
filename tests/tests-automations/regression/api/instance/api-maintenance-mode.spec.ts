@@ -98,6 +98,16 @@ test.describe("Instance API — database maintenance mode", () => {
     await expectStatus(off, 200, "POST /api/v1/maintenance/off (cleanup)");
   }
 
+  /**
+   * The in-test turn-off, for a `finally`: a failure here is recorded, not thrown, so it
+   * never replaces the test's own error. `afterAll` turns it off again and does fail.
+   */
+  async function liftInFinally(request: APIRequestContext): Promise<void> {
+    await turnOffIfOn(request).catch((e: unknown) =>
+      test.info().annotations.push({ type: "cleanup", description: `maintenance off in finally: ${String(e)}` }),
+    );
+  }
+
   async function regularUser(
     request: APIRequestContext,
     newContext: () => Promise<APIRequestContext>,
@@ -124,7 +134,19 @@ test.describe("Instance API — database maintenance mode", () => {
         const read = await status(user.request, user.headers);
         expect(read.maintenance, "maintenance is off in the normal lane").toBe(false);
         expect(read.paused).toBe(false);
-        expect(read.set_by, "set_by is a superuser detail").toBeNull();
+        // The migration seeds the row with set_by NULL, so on an instance where nobody has
+        // toggled maintenance yet the hiding cannot be told apart from an empty field.
+        // Test 2 (destructive) pins the hiding after setting it; here it is asserted only
+        // when the superuser's own read shows there is something to hide.
+        const admin = await status(request);
+        if (admin.set_by === null) {
+          test.info().annotations.push({
+            type: "unevaluated",
+            description: "set_by is null for the superuser too (maintenance never toggled): its hiding is not evaluated here",
+          });
+        } else {
+          expect(read.set_by, "set_by is a superuser detail").toBeNull();
+        }
       });
 
       for (const route of ["on", "off"] as const) {
@@ -246,7 +268,7 @@ test.describe("Instance API — database maintenance mode", () => {
         await test.step("turning it off lifts it", async () => {
           const off = await call(() => request.post("/api/v1/maintenance/off", { headers }));
           const body = JSON.parse(await expectStatus(off, 200, "POST /api/v1/maintenance/off")) as MaintenanceRead;
-          expect(body).toMatchObject({ maintenance: false, paused: false, reason: null });
+          expect(body).toMatchObject({ maintenance: false, paused: false, reason: null, set_by: adminId });
           expect(await status(user.request, user.headers)).toMatchObject({ maintenance: false, paused: false });
         });
 
@@ -266,7 +288,7 @@ test.describe("Instance API — database maintenance mode", () => {
           await expectStatus(variable, 201, "POST /api/v1/variables/ after off");
         });
       } finally {
-        await turnOffIfOn(request);
+        await liftInFinally(request);
       }
       // The user's flow and variable go with the user, in afterAll.
     },
@@ -333,8 +355,8 @@ test.describe("Instance API — database maintenance mode", () => {
           expect(await status(request)).toMatchObject({ maintenance: false, paused: false });
         });
       } finally {
-        await page.goto("about:blank");
-        await turnOffIfOn(request);
+        await liftInFinally(request);
+        await page.goto("about:blank").catch(() => undefined);
       }
     },
   );

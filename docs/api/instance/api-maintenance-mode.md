@@ -62,7 +62,9 @@ Settings page, hence `@settings`.
 **Test 1 — a regular user can read the status but cannot turn maintenance on or off.**
 
 1. A throwaway regular user (`createThrowawayUser`) reads `GET /api/v1/maintenance/status` → `200`,
-   `maintenance: false`, `paused: false`, `set_by: null`.
+   `maintenance: false`, `paused: false`, and `set_by: null` — the last only when the superuser's own read shows a
+   `set_by` to hide. The migration seeds the row with `set_by` NULL, so on an instance where maintenance was never
+   toggled the hiding is recorded as an `unevaluated` annotation instead; test 2 step 2 pins it either way.
 2. `POST /api/v1/maintenance/on` (with a reason) and `POST /api/v1/maintenance/off` as that user → `403`,
    `"The user doesn't have enough privileges"`.
 3. Maintenance is still off.
@@ -80,10 +82,12 @@ superuser can still write.** A throwaway user creates a flow of their own before
 6. Reads work: the user's flow reads `200` with its original name, and is in `GET /api/v1/flows/`.
 7. Sign-in works: `POST /api/v1/login` as the user → `200` with an access token.
 8. The superuser creates a flow (`201`) and renames it (`200`).
-9. `POST /maintenance/off` → `200`, `maintenance: false`, `paused: false`, `reason: null`; the user reads it off.
+9. `POST /maintenance/off` → `200`, `maintenance: false`, `paused: false`, `reason: null`, `set_by` the superuser;
+   the user reads it off.
 10. The user's rename now succeeds (`200`) and a variable create is `201`.
 
-Maintenance is turned off in a `finally`, whatever happened.
+Maintenance is turned off in a `finally`, whatever happened. A failure of that turn-off is recorded as an annotation
+rather than thrown, so it never hides the test's own error; `afterAll` turns it off again and does fail.
 
 **Test 3 (`@destructive`) — turning maintenance on and off from the upgrade reports page shows and removes the
 paused notice.**
@@ -107,7 +111,8 @@ throwaway users (their flows and variables go with them).
 
 ## Validation criterion *(required)*
 
-- **Superuser gate:** the exact `403` on both routes with maintenance off, and the status readable without `set_by`.
+- **Superuser gate:** the exact `403` on both routes with maintenance off, and the status readable without `set_by`
+  (evaluated when there is a `set_by` to hide; see test 1).
 - **On:** the reason and the superuser's id recorded and echoed by `status`.
 - **Refusal:** `503` with the exact body on the three writes, the run and `off`, for a regular user; a refused
   rename leaves the stored name unchanged. A maintenance mode that stopped refusing would return `200`/`201` here.
@@ -121,12 +126,14 @@ throwaway users (their flows and variables go with them).
 
 ## Notes
 
-- The notice polls the status every 30 s (`useMigrationPauseQuery`); the page's own mutation refreshes it at once,
-  and the editor reads it on load, so the spec never waits on the poll.
+- The notice reads the status through `useMigrationPauseQuery` (every 30 s); on the upgrade reports page
+  `useUpgradeMaintenance` polls the same query every 5 s, and the page's own mutation writes the new status into it
+  at once (`setQueryData`). The editor reads it on load. The spec never waits on a poll.
 - The imported report stays in the instance's report history: report rows have no delete route (see
   `api-upgrade-reports.md`). It holds no flow, and its source identity is a container path, not this instance's.
-- Every call to the API is re-dialled once if the server's 2 s keep-alive closed its socket
-  (`retryOnDroppedConnection`); a refusal answered twice still fails as it should.
+- Every call this spec makes directly is re-dialled once if the server's 2 s keep-alive closed its socket
+  (`retryOnDroppedConnection`); a refusal answered twice still fails as it should. The shared helpers (the throwaway
+  user, `postLogin`, `deleteFlow`) and the setup's `whoami` make their own calls.
 
 ---
 
@@ -161,5 +168,10 @@ throwaway users (their flows and variables go with them).
 - `src/frontend/src/components/common/changesPausedNotice/index.tsx` — the notice and its test id
 - `src/frontend/src/pages/SettingsPage/pages/UpgradeReportsPage/MaintenanceControls.tsx` — the controls, the dialogs and the reason
 - `src/frontend/src/pages/SettingsPage/pages/UpgradeReportsPage/RepairControls.tsx` — where the controls render (inside a report)
+- `src/frontend/src/pages/SettingsPage/pages/UpgradeReportsPage/ReportView.tsx` — renders the repair controls in every report
+- `src/frontend/src/pages/AppAuthenticatedPage/index.tsx` — mounts the notice on every signed-in page, the editor included
+- `src/frontend/src/controllers/API/queries/migration/use-migration.ts` — `useMigrationPauseQuery`, the status the notice reads
+- `src/frontend/src/controllers/API/queries/upgrade-reports/index.ts` — `useUpgradeMaintenance` and `useSetUpgradeMaintenance`
+- `src/frontend/src/locales/en.json` — every string asserted: the notice, the dialog copy, the on/off text, *Reason (optional)*, *Maintenance status*
 - `tests/assets/api/upgrade-report-empty.json` — the empty checker report
 - `tests/helpers/auth/throwaway-user.ts` — the regular user
