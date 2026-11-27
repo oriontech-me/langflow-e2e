@@ -1,5 +1,5 @@
 {
-  "version": "1.13.0.dev19",
+  "version": "1.14.0.dev39",
   "categories": {
     "agentics": [
       "AMapComponent",
@@ -28,6 +28,14 @@
       "ext:cohere:CohereComponent@official",
       "ext:cohere:CohereEmbeddingsComponent@official",
       "ext:cohere:CohereRerankComponent@official"
+    ],
+    "confluence_integrations": [
+      "ext:confluence_integrations:ConfluenceCreatePageComponent@official",
+      "ext:confluence_integrations:ConfluenceOnPageCreatedTriggerComponent@official",
+      "ext:confluence_integrations:ConfluenceOnPageUpdatedTriggerComponent@official",
+      "ext:confluence_integrations:ConfluenceReadPageComponent@official",
+      "ext:confluence_integrations:ConfluenceSearchPagesComponent@official",
+      "ext:confluence_integrations:ConfluenceUpdatePageComponent@official"
     ],
     "crewai": [
       "CrewAIAgentComponent",
@@ -62,6 +70,12 @@
       "ext:datastax:Dotenv@official",
       "ext:datastax:GraphRAGComponent@official",
       "ext:datastax:HCDVectorStoreComponent@official"
+    ],
+    "discord": [
+      "ext:discord:DiscordOnMentionTriggerComponent@official",
+      "ext:discord:DiscordOnMessageTriggerComponent@official",
+      "ext:discord:DiscordReplyComponent@official",
+      "ext:discord:DiscordSendMessageComponent@official"
     ],
     "docling": [
       "ext:docling:ChunkDoclingDocumentComponent@official",
@@ -100,6 +114,31 @@
       "RunFlow",
       "SubFlow"
     ],
+    "github": [
+      "ext:github:GitHubCreateCommentComponent@official",
+      "ext:github:GitHubCreateIssueComponent@official",
+      "ext:github:GitHubCreatePullRequestComponent@official",
+      "ext:github:GitHubGetIssueComponent@official",
+      "ext:github:GitHubGetPullRequestComponent@official",
+      "ext:github:GitHubGetRepositoryComponent@official",
+      "ext:github:GitHubOnIssueTriggerComponent@official",
+      "ext:github:GitHubOnPullRequestTriggerComponent@official",
+      "ext:github:GitHubUpdateIssueComponent@official",
+      "ext:github:GitHubUpdatePullRequestComponent@official"
+    ],
+    "gitlab": [
+      "ext:gitlab:GitLabCreateIssueCommentComponent@official",
+      "ext:gitlab:GitLabCreateIssueComponent@official",
+      "ext:gitlab:GitLabCreateMergeRequestCommentComponent@official",
+      "ext:gitlab:GitLabCreateMergeRequestComponent@official",
+      "ext:gitlab:GitLabGetIssueComponent@official",
+      "ext:gitlab:GitLabGetMergeRequestComponent@official",
+      "ext:gitlab:GitLabGetProjectComponent@official",
+      "ext:gitlab:GitLabOnIssueTriggerComponent@official",
+      "ext:gitlab:GitLabOnMergeRequestTriggerComponent@official",
+      "ext:gitlab:GitLabUpdateIssueComponent@official",
+      "ext:gitlab:GitLabUpdateMergeRequestComponent@official"
+    ],
     "google": [
       "ext:google:BigQueryExecutorComponent@official",
       "ext:google:GmailLoaderComponent@official",
@@ -113,6 +152,9 @@
       "ext:google:GoogleGenerativeAIComponent@official",
       "ext:google:GoogleGenerativeAIEmbeddingsComponent@official",
       "ext:google:GoogleOAuthToken@official",
+      "ext:google:GoogleOnCalendarTriggerComponent@official",
+      "ext:google:GoogleOnDriveTriggerComponent@official",
+      "ext:google:GoogleOnGmailTriggerComponent@official",
       "ext:google:GoogleSearchAPICore@official",
       "ext:google:GoogleSerperAPICore@official"
     ],
@@ -129,6 +171,16 @@
       "TextInput",
       "TextOutput",
       "Webhook"
+    ],
+    "jira": [
+      "ext:jira:JiraCreateIssueComponent@official",
+      "ext:jira:JiraOnIssueCreatedTriggerComponent@official",
+      "ext:jira:JiraOnIssueStatusChangedTriggerComponent@official",
+      "ext:jira:JiraOnIssueUpdatedTriggerComponent@official",
+      "ext:jira:JiraReadIssueComponent@official",
+      "ext:jira:JiraSearchIssuesComponent@official",
+      "ext:jira:JiraTransitionIssueComponent@official",
+      "ext:jira:JiraUpdateIssueComponent@official"
     ],
     "langchain_utilities": [
       "CSVAgent",
@@ -159,6 +211,7 @@
     ],
     "llm_operations": [
       "BatchRunComponent",
+      "DecisionModel",
       "GuardrailValidator",
       "GuardrailValidatorV2",
       "LLMSelectorComponent",
@@ -167,6 +220,9 @@
       "StructuredOutput"
     ],
     "microsoft": [
+      "ext:microsoft:MicrosoftOnCalendarTriggerComponent@official",
+      "ext:microsoft:MicrosoftOnFileTriggerComponent@official",
+      "ext:microsoft:MicrosoftOnMailTriggerComponent@official",
       "ext:microsoft:OutlookCalendarCreateComponent@official",
       "ext:microsoft:OutlookCalendarListComponent@official",
       "ext:microsoft:OutlookSearchComponent@official",
@@ -204,6 +260,7 @@
       "CombineText",
       "CreateData",
       "CreateList",
+      "DataFrameKeywordSearch",
       "DataFrameOperations",
       "DataOperations",
       "DataToDataFrame",
@@ -231,14 +288,37 @@
     "prototypes": [
       "PythonFunction"
     ],
+    "salesforce": [
+      "ext:salesforce:SalesforceCreateRecordComponent@official",
+      "ext:salesforce:SalesforceOnRecordTriggerComponent@official",
+      "ext:salesforce:SalesforceReadRecordComponent@official",
+      "ext:salesforce:SalesforceUpdateRecordComponent@official"
+    ],
+    "servicenow": [
+      "ext:servicenow:ServiceNowCreateRecordComponent@official",
+      "ext:servicenow:ServiceNowOnStatusChangeTriggerComponent@official",
+      "ext:servicenow:ServiceNowOnTicketCreatedTriggerComponent@official",
+      "ext:servicenow:ServiceNowReadRecordComponent@official",
+      "ext:servicenow:ServiceNowSearchRecordsComponent@official",
+      "ext:servicenow:ServiceNowUpdateRecordComponent@official"
+    ],
     "slack": [
       "ext:slack:SlackAddReactionComponent@official",
       "ext:slack:SlackCanvasComponent@official",
       "ext:slack:SlackListChannelMembersComponent@official",
+      "ext:slack:SlackOnMessageTriggerComponent@official",
+      "ext:slack:SlackOnReactionTriggerComponent@official",
       "ext:slack:SlackPostAsAppComponent@official",
       "ext:slack:SlackReadThreadComponent@official",
       "ext:slack:SlackSearchComponent@official",
       "ext:slack:SlackSendAsUserComponent@official"
+    ],
+    "telegram": [
+      "ext:telegram:TelegramNotifyComponent@official",
+      "ext:telegram:TelegramOnCommandTriggerComponent@official",
+      "ext:telegram:TelegramOnMessageTriggerComponent@official",
+      "ext:telegram:TelegramReplyComponent@official",
+      "ext:telegram:TelegramSendMessageComponent@official"
     ],
     "toolguard": [
       "ext:toolguard:PoliciesComponent@official"
@@ -256,6 +336,7 @@
       "YahooFinanceTool"
     ],
     "triggers": [
+      "InboundWebhookTrigger",
       "ScheduleTrigger"
     ],
     "utilities": [
@@ -263,6 +344,12 @@
       "CurrentDate",
       "IDGenerator",
       "PythonREPLComponent"
+    ],
+    "whatsapp": [
+      "ext:whatsapp:WhatsAppOnEventTriggerComponent@official",
+      "ext:whatsapp:WhatsAppReplyComponent@official",
+      "ext:whatsapp:WhatsAppSendTemplateComponent@official",
+      "ext:whatsapp:WhatsAppSendTextComponent@official"
     ]
   }
 }
