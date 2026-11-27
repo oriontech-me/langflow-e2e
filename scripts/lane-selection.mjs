@@ -19,7 +19,7 @@
 //
 //   node scripts/lane-selection.mjs runs <verdict.json>
 //       one tab-separated line per run to make: name, the instance environment
-//       (K=V, space-separated; empty for a lane with no variants), the spec files.
+//       (K=V, space-separated; "-" for a lane with no variants), the spec files.
 //
 // A lane selects NOTHING until its tests are promoted to @stable, and that is a normal
 // state, not a broken one: an empty declaration against an empty listing is verified
@@ -124,7 +124,9 @@ export function selectLane(name, report, declared) {
 /** The `runs` lines: name, env (K=V ...), files (space-separated). */
 export function runLines(verdict) {
   return (verdict?.runs || []).map((r) =>
-    [r.name, Object.entries(r.env || {}).map(([k, v]) => `${k}=${v}`).join(" "), r.files.join(" ")].join("\t"),
+    // "-" for no environment: tab is whitespace to `read`, so an EMPTY middle field
+    // would collapse and hand the files to the env column.
+    [r.name, Object.entries(r.env || {}).map(([k, v]) => `${k}=${v}`).join(" ") || "-", r.files.join(" ")].join("\t"),
   );
 }
 

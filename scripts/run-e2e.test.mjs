@@ -3947,8 +3947,14 @@ test("phase_prep shards no wider than the listing and names an area that selects
 test("the listing and the round both use the composed grep, never a literal @stable", () => {
   const src = readFileSync(SCRIPT, "utf8");
   const calls = src.split("\n").filter((l) => /npx playwright test .*--grep/.test(l) && !/^\s*#/.test(l));
-  assert.ok(calls.length >= 2, calls.join("\n"));
-  for (const l of calls) assert.match(l, /--grep "\$STABLE_GREP"/, l);
+  assert.ok(calls.length >= 4, calls.join("\n"));
+  // The shards' grep, or a scheduled lane's (#2142), which lane-selection.mjs composes
+  // with @stable required — never a literal spelled here.
+  for (const l of calls) assert.match(l, /--grep "\$(STABLE_GREP|filter)"/, l);
+  for (const l of calls) assert.doesNotMatch(l, /--grep "?@stable/, l);
+  const filters = src.split("\n").filter((l) => /^\s*filter="/.test(l));
+  assert.ok(filters.length >= 2, filters.join("\n"));
+  for (const l of filters) assert.match(l, /lane-selection\.mjs filter|lane-\$lane\.grep/, l);
 });
 
 test("the image label decides match, mismatch or absent, and <no value> is never a match", () => {
@@ -4816,7 +4822,7 @@ set +e; run_lane_round destructive destructive "a.spec.ts b.spec.ts" ${JSON.stri
   );
   assert.match(r.stdout, /RC=0/, r.stderr);
   const call = readFileSync(join(dir, "npx.log"), "utf8");
-  assert.match(call, /^flag=1\| blob=1 retries=1 args=playwright test --grep \(\?=\.\*\(\?:@destructive\)\)\(\?=\.\*\(\?:@stable\)\) --pass-with-no-tests a\.spec\.ts b\.spec\.ts$/m);
+  assert.match(call, /^flag=1\| blob=1 retries=1 args=playwright test --grep \(\?=\.\*\(\?:@destructive\)\)\(\?=\.\*\(\?:@stable\)\) a\.spec\.ts b\.spec\.ts$/m);
   assert.ok(existsSync(join(dir, "all-blobs", "lane-destructive-destructive-report-abc.zip")), "the blob is filed under the lane's prefix");
   assert.equal(readFileSync(join(dir, "logs", "lane-destructive-destructive.status"), "utf8").trim(), "0");
 
@@ -4890,11 +4896,40 @@ test("the destructive lane runs on shard 1 only, after its round and before its 
   const body = readFileSync(SCRIPT, "utf8");
   const shard = body.slice(body.indexOf("run_shard() {"), body.indexOf("phase_shards() {"));
   const round = shard.indexOf('npx playwright test --grep "$STABLE_GREP"');
-  const lane = shard.indexOf("run_lane_round destructive");
+  const lane = shard.indexOf('status="$(destructive_after_round "$idx" "$status" "$log")"');
   const stop = shard.lastIndexOf("backend_stopper");
   assert.ok(round > 0 && lane > round && stop > lane, "order: @stable round, destructive lane, backend stop");
-  assert.match(shard, /\[ "\$idx" = "\$DESTRUCTIVE_SHARD" \] && lane_enabled destructive/);
   assert.equal(sourced("echo $DESTRUCTIVE_SHARD").stdout.trim(), "1");
+});
+
+test("a destructive failure fails its shard, on shard 1 only and only when the lane selected something", () => {
+  const dir = makeTempDir("run-e2e-destructive-after-");
+  writeLaneVerdict(dir, "destructive", { tests: 1, runs: [{ name: "destructive", env: {}, files: ["a.spec.ts"], tests: 1 }] });
+  const after = (idx, status, roundRc, lanes = "destructive") => sourced(
+    `RUN_DIR=${JSON.stringify(dir)}; run_lane_round() { echo "ROUND $1 $3" >&2; return ${roundRc}; }; destructive_after_round ${idx} ${status} /dev/null`,
+    { E2E_LANES: lanes },
+  );
+  const red = after(1, 0, 1);
+  assert.equal(red.stdout, "1", red.stderr);
+  assert.match(red.stderr, /ROUND destructive a\.spec\.ts/);
+  assert.equal(after(1, 0, 0).stdout, "0", "a green lane leaves a green shard green");
+  assert.equal(after(1, 2, 0).stdout, "2", "the round's own failure is kept");
+  assert.equal(after(1, 2, 1).stdout, "2", "and not overwritten by the lane's");
+  const other = after(2, 0, 1);
+  assert.equal(other.stdout, "0");
+  assert.doesNotMatch(other.stderr, /ROUND/, "only DESTRUCTIVE_SHARD runs the lane");
+  assert.doesNotMatch(after(1, 0, 1, "serving").stderr, /ROUND/, "nor when the lane is off");
+  writeLaneVerdict(dir, "destructive", { tests: 0, runs: [] });
+  assert.doesNotMatch(after(1, 0, 1).stderr, /ROUND/, "nor when nothing is promoted");
+});
+
+test("a lane round that collects nothing is red, never a valid empty blob", () => {
+  // No --pass-with-no-tests: a round starts only when the listing found tests, so zero
+  // collected is a loss (#1764's shape per lane), and Playwright's own exit says so.
+  const body = readFileSync(SCRIPT, "utf8");
+  const fn = body.slice(body.indexOf("run_lane_round() {"), body.indexOf("destructive_after_round() {"));
+  assert.ok(fn.includes("npx playwright test"), "could not isolate run_lane_round");
+  assert.doesNotMatch(fn.replace(/^\s*#.*$/gm, ""), /--pass-with-no-tests/);
 });
 
 test("a shard working copy needs no idx in its caller's scope", () => {

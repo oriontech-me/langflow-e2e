@@ -48,7 +48,7 @@ test("the destructive lane is one run over every file it lists", () => {
   assert.equal(v.verified, true, v.reason);
   assert.equal(v.tests, 2);
   assert.deepEqual(v.runs, [{ name: "destructive", env: {}, files: [...files].sort(), tests: 2 }]);
-  assert.deepEqual(runLines(v), [`destructive\t\t${[...files].sort().join(" ")}`]);
+  assert.deepEqual(runLines(v), [`destructive\t-\t${[...files].sort().join(" ")}`]);
 });
 
 test("a serving spec runs under the one variant it asserts, and a spec in none fails the lane", () => {

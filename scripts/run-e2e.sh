@@ -2144,8 +2144,15 @@ lane_prep() {
     > "$RUN_DIR/lane-$lane.json" || warn "could not decide what the $lane lane runs."
   info "lane $lane: $(lane_tests "$lane") test(s) in $(lane_field "$lane" v.files.length) file(s)$( [ "$(lane_tests "$lane")" = 0 ] && printf ' — nothing promoted to @stable, nothing to start')"
   [ "$(lane_field "$lane" v.verified)" = "true" ] || warn "lane $lane: listing NOT verified — $(lane_field "$lane" v.reason)"
+  [ "$(lane_field "$lane" 'v.unexpected.length')" = "0" ] \
+    || warn "lane $lane: listed but not declared on disk: $(lane_field "$lane" "v.unexpected.join(', ')") — its missing list is a lower bound (#1812)."
 }
 
+# A round starts only when the lane's listing found tests, so it runs WITHOUT
+# --pass-with-no-tests: a round that collects zero where the listing found N (#1764's
+# shape, per lane — the round runs from a working copy, not from the listed clone)
+# exits non-zero and is red, never a valid empty blob.
+#
 # One round of a lane run, in the CURRENT directory against PLAYWRIGHT_BASE_URL: the
 # lane's flag and --grep over the run's files, its blob renamed lane-<lane>-<run>-* into
 # all-blobs (outside the shards' count), and its exit status recorded for the merge and
@@ -2164,7 +2171,7 @@ run_lane_round() {
   # its log and no blob).
   # shellcheck disable=SC2086  # $files is a space-separated list of spec paths
   ( env "$flag=1" PW_SHARD_FILE_LEVEL=1 PLAYWRIGHT_RETRIES="$RETRIES" PLAYWRIGHT_BLOB_OUTPUT_DIR="$blobdir" \
-    npx playwright test --grep "$filter" --pass-with-no-tests $files ) >> "$log" 2>&1 || rc=$?
+    npx playwright test --grep "$filter" $files ) >> "$log" 2>&1 || rc=$?
   for blob in "$blobdir"/*.zip; do
     [ -e "$blob" ] || continue
     cp "$blob" "$RUN_DIR/all-blobs/lane-$lane-$run-$(basename "$blob")"
@@ -2174,6 +2181,19 @@ run_lane_round() {
   printf '%s\n' "$rc" > "$RUN_DIR/logs/lane-$lane-$run.status"
   [ "$rc" = "0" ] && info "lane $lane/$run: OK" || warn "lane $lane/$run: FAILED (exit $rc, see $log)"
   return "$rc"
+}
+
+# The destructive lane on a shard's backend once its @stable round is over: runs only on
+# DESTRUCTIVE_SHARD, and only when the lane selected something. Prints the shard's status
+# after it — the round's own, or non-zero when the lane failed — so a destructive failure
+# reaches phase_shards' TEST_JOB_FAILED like any test of the shard.
+destructive_after_round() {
+  local idx="$1" status="$2" log="$3" files
+  if [ "$idx" = "$DESTRUCTIVE_SHARD" ] && lane_enabled destructive && [ "$(lane_tests destructive)" != "0" ]; then
+    files="$(lane_field destructive "v.runs.length ? v.runs[0].files.join(' ') : ''")"
+    run_lane_round destructive destructive "$files" "$log" >&2 || { [ "$status" != "0" ] || status=1; }
+  fi
+  printf '%s' "$status"
 }
 
 # The serving lane: each variant on SERVING_PORT, one after the other, on the run's own
@@ -2188,7 +2208,10 @@ phase_lanes() {
   while IFS=$'\t' read -r run env files; do
     [ -n "$run" ] || continue
     rc=0
-    ( run_serving_variant "$run" "$env" "$files" ) || rc=$?
+    [ "$env" = "-" ] && env=""
+    # stdin from /dev/null: the loop reads its runs from stdin, and anything in a variant
+    # that read it would swallow the next variants.
+    ( run_serving_variant "$run" "$env" "$files" ) < /dev/null || rc=$?
     [ "$rc" = "0" ] || TEST_JOB_FAILED=1
   done < <(node scripts/lane-selection.mjs runs "$RUN_DIR/lane-serving.json")
   cd "$REPO_DIR"
@@ -2676,11 +2699,7 @@ run_shard() {
 
   # The destructive lane (#2142), on this backend now that its own round is over: the
   # specs mutate instance-global state, so nothing else may share the instance.
-  if [ "$idx" = "$DESTRUCTIVE_SHARD" ] && lane_enabled destructive && [ "$(lane_tests destructive)" != "0" ]; then
-    local lane_files
-    lane_files="$(lane_field destructive "v.runs.length ? v.runs[0].files.join(' ') : ''")"
-    run_lane_round destructive destructive "$lane_files" "$log" || { [ "$status" != "0" ] || status=1; }
-  fi
+  status="$(destructive_after_round "$idx" "$status" "$log")"
 
   target_ssh "$(backend_stop_env "$port") bash -s" < "$REPO_DIR/$(backend_stopper)" >> "$log" 2>&1 || true
   return $status
