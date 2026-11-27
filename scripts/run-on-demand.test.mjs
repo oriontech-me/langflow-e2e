@@ -971,6 +971,70 @@ test("PyPI's own spelling, the interpreter its requires_python allows, and only 
   }
 });
 
+// #2547: since 1.14.0.dev23 a nightly's langflow-base==devN requires lfx==dev(N+1), and
+// PyPI still has an lfx at devN, so pinning lfx to langflow's version made every such
+// install unsatisfiable. lfx's pin is read from langflow-base's own requirement.
+const NIGHTLY = "1.14.0.dev35";
+const nightlyReq = VERSION_REQUEST.replace(VERSION, NIGHTLY);
+const lfxReq = (spec) => [`lfx[sqlite]${spec}`, `lfx${spec}; extra == "beautifulsoup"`, "lfx-amazon<1.0.0,>=0.3.1"];
+
+test("a nightly whose langflow-base requires lfx one dev ahead pins lfx to that version and installs", () => {
+  const r = onDemand({ request: nightlyReq, baseRequiresDist: lfxReq("==1.14.0.dev36") });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.result["req-v"].STATUS, "done", r.log);
+  // lfx at langflow's version is never asked of PyPI: langflow-base already named it.
+  assert.deepEqual(r.pypiAsked, ["langflow", "langflow-base"].map((p) => `https://pypi.org/pypi/${p}/${NIGHTLY}/json`));
+  assert.match(r.dist ?? "", /LANGFLOW_DIST_PIN=langflow-base lfx==1\.14\.0\.dev36 LANGFLOW_DIST_PYTHON/, r.log);
+  assert.match(r.log, /^installing: langflow==1\.14\.0\.dev35 .*, with langflow-base==1\.14\.0\.dev35 and lfx==1\.14\.0\.dev36 \(langflow-base's own requirement\) \(at most/m);
+  // The run's record names the lfx that landed, on a line of its own (readProgress
+  // parses the "installed:" line, which keeps its shape).
+  assert.match(r.log, /^installed: langflow==1\.14\.0\.dev35, version 1\.14\.0\.dev35, 95s, in \S+$/m);
+  assert.match(r.log, /^installed lfx: 1\.14\.0\.dev36 \(pinned to the version langflow-base requires, lfx==1\.14\.0\.dev36\)$/m);
+});
+
+test("a final, an rc and an equal-version nightly resolve as before", () => {
+  // A range (a final's ~=, an rc's >=,<): lfx keeps the same-version pin when PyPI has it.
+  for (const [version, spec] of [["1.12.3", "~=1.12.3"], ["1.12.5rc1", "<1.13.dev0,>=1.12.5rc1"]]) {
+    const r = onDemand({ request: VERSION_REQUEST.replace(VERSION, version), baseRequiresDist: lfxReq(spec) });
+    assert.equal(r.status, 0, `${version}: ${r.log}`);
+    assert.deepEqual(r.pypiAsked, ["langflow", "langflow-base", "lfx"].map((p) => `https://pypi.org/pypi/${p}/${version}/json`), version);
+    assert.match(r.dist ?? "", /LANGFLOW_DIST_PIN=langflow-base lfx LANGFLOW_DIST_PYTHON/, version);
+    assert.match(r.log, new RegExp(`^installed lfx: ${version.replace(/\./g, "\\.")}$`, "m"), version);
+    // And without an lfx at the version, nothing pins it, as before.
+    const noLfx = onDemand({ request: VERSION_REQUEST.replace(VERSION, version), baseRequiresDist: lfxReq(spec), siblings: { "langflow-base": 200, lfx: 404 } });
+    assert.match(noLfx.dist ?? "", /LANGFLOW_DIST_PIN=langflow-base LANGFLOW_DIST_PYTHON/, version);
+  }
+  // An equal-version nightly: the exact requirement is langflow's own version.
+  const eq = onDemand({ request: VERSION_REQUEST.replace(VERSION, "1.13.0.dev12"), baseRequiresDist: lfxReq("==1.13.0.dev12") });
+  assert.equal(eq.status, 0, eq.log);
+  assert.match(eq.dist ?? "", /LANGFLOW_DIST_PIN=langflow-base lfx==1\.13\.0\.dev12 LANGFLOW_DIST_PYTHON/);
+  // A langflow-base PyPI does not have at the version: nothing to read lfx from, so the
+  // old rule (lfx at the version, when PyPI has it) applies.
+  const noBase = onDemand({ request: nightlyReq, baseRequiresDist: lfxReq("==1.14.0.dev36"), siblings: { "langflow-base": 404, lfx: 200 } });
+  assert.match(noBase.dist ?? "", /LANGFLOW_DIST_PIN=lfx LANGFLOW_DIST_PYTHON/, noBase.log);
+});
+
+test("a conflict uv pins on the executor's lfx pin is not blamed on the index", () => {
+  // uv 0.12.5's own paragraph, as the qa printed it for 1.14.0.dev40 (wrapped as uv wraps).
+  const uv = `  × No solution found when resolving dependencies:
+  ╰─▶ Because langflow-base>=1.14.0.dev35 depends on lfx[sqlite]==1.14.0.dev36
+      and you require langflow-base==1.14.0.dev35, we can conclude that you
+      require lfx==1.14.0.dev36.
+      And because you require lfx==1.14.0.dev35, we can conclude that your
+      requirements are unsatisfiable.`;
+  const r = onDemand({ request: nightlyReq, siblings: { "langflow-base": 200, lfx: 200 }, distExit: 2, distNoSolution: uv, distError: `could not install langflow==${NIGHTLY} — uv's reason is above.` });
+  assert.equal(r.status, 3, r.log);
+  const res = r.result["req-v"];
+  assert.equal(res.STATUS, "failed");
+  // Unread langflow-base JSON: the old same-version pin, which uv names as the conflict.
+  assert.match(res.REASON, /^uv found no set of packages that installs langflow==1\.14\.0\.dev35 with langflow-base==1\.14\.0\.dev35 and lfx==1\.14\.0\.dev35: the lfx pin this executor added contradicts the release's own requirements, so asking again will not help/);
+  assert.doesNotMatch(res.REASON, /ask again shortly/);
+  assert.match(res.REASON, /uv said: × No solution found/);
+  // A conflict that names no pin of ours keeps the old reading, index lag included.
+  const other = onDemand({ request: nightlyReq, distExit: 2, distNoSolution: true, distError: `could not install langflow==${NIGHTLY} — uv's reason is above.` });
+  assert.match(other.result["req-v"].REASON, /the release's own requirements, or an index that has not caught up .*\(ask again shortly\)/);
+});
+
 test("before 1.12 a version is refused, and every version names uv's pre-release mode", () => {
   for (const v of ["1.11.6", "1.8.0rc6", "0.6.19", "1.5.0.post2", "1"]) {
     const r = onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n` });
@@ -1024,7 +1088,7 @@ test("a resolver that finds no solution is said in uv's words, not blamed on the
   assert.equal(r.status, 3, r.log);
   const res = r.result["req-v"];
   assert.equal(res.STATUS, "failed");
-  assert.match(res.REASON, /^uv found no set of packages that installs langflow==1\.13\.1rc0 with langflow-base lfx at the same version: the release's own requirements, or an index that has not caught up/);
+  assert.match(res.REASON, /^uv found no set of packages that installs langflow==1\.13\.1rc0 with langflow-base==1\.13\.1rc0 and lfx==1\.13\.1rc0: the release's own requirements, or an index that has not caught up/);
   assert.match(res.REASON, /uv said: x No solution found when resolving dependencies: .*unsatisfiable/);
   assert.doesNotMatch(res.REASON, /the machine|ERROR:/);
 });

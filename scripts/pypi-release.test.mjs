@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { allows, pythonFor, judge } from "./lib/pypi-release.mjs";
+import { allows, pythonFor, judge, lfxPin } from "./lib/pypi-release.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const CLI = fileURLToPath(new URL("./lib/pypi-release.mjs", import.meta.url));
@@ -57,4 +57,41 @@ test("the command line answers key=value, and an unreadable file is absent, not 
   assert.equal(ok.stdout, "verdict=ok\nversion=1.13.1rc0\npython=3.13\nrequires=<3.14,>=3.10\n");
   writeFileSync(file, "<html>not json</html>");
   assert.match(spawnSync("node", [CLI, file, "1.13.1rc0"], { encoding: "utf8" }).stdout, /^verdict=absent$/m);
+});
+
+// #2547: the requires_dist PyPI publishes for langflow-base, as read on 2026-11-27.
+const base = (requires_dist) => ({ info: { version: "x", requires_dist } });
+const extras = (spec) => [`lfx${spec}; extra == "beautifulsoup"`, `lfx[cassandra]${spec}; extra == "cassandra"`];
+
+test("lfx's pin is the one exact version langflow-base requires, and nothing for a range", () => {
+  // A 1.14 nightly since dev23: lfx one dev ahead, with an extra on the requirement.
+  assert.equal(lfxPin(base(["lfx[sqlite]==1.14.0.dev36", ...extras("==1.14.0.dev36")])), "1.14.0.dev36");
+  // A nightly with equal versions.
+  assert.equal(lfxPin(base(["lfx==1.13.0.dev12", ...extras("==1.13.0.dev12"), "lfx-amazon<1.0.0,>=0.1.6"])), "1.13.0.dev12");
+  // A final (~=) and an rc (a range): the caller keeps its same-version pin.
+  assert.equal(lfxPin(base(["lfx~=1.12.3", ...extras("~=1.12.3")])), "");
+  assert.equal(lfxPin(base(["lfx<1.13.dev0,>=1.12.5rc1", ...extras("<1.13.dev0,>=1.12.5rc1")])), "");
+  // Only the unconditional requirement counts: an extra's exact pin is not the install's.
+  assert.equal(lfxPin(base(["lfx~=1.12.3", 'lfx==1.12.3; extra == "x"'])), "");
+  // Sister distributions are not lfx; PEP 503 spellings of lfx are.
+  assert.equal(lfxPin(base(["lfx-amazon==0.1.6"])), "");
+  assert.equal(lfxPin(base(["LFX==1.2.3"])), "1.2.3");
+  assert.equal(lfxPin(base(["lfx (==1.2.3)"])), "1.2.3", "the legacy parenthesised form");
+  // Two unconditional requirements that disagree, or a wildcard, are not one version.
+  assert.equal(lfxPin(base(["lfx==1.2.3", "lfx[sqlite]==1.2.4"])), "");
+  assert.equal(lfxPin(base(["lfx==1.2.3", "lfx[sqlite]==1.2.3"])), "1.2.3");
+  assert.equal(lfxPin(base(["lfx==1.*"])), "");
+  for (const junk of [null, {}, { info: null }, base(null), base("lfx==1.0"), base([7, null]), base([])]) assert.equal(lfxPin(junk), "", JSON.stringify(junk));
+});
+
+test("--lfx-pin answers lfx_pin=, empty for a file it cannot read", () => {
+  const dir = makeTempDir("pypi-release-");
+  const file = join(dir, "base.json");
+  writeFileSync(file, JSON.stringify(base(["lfx[sqlite]==1.14.0.dev36"])));
+  const ok = spawnSync("node", [CLI, "--lfx-pin", file], { encoding: "utf8" });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.stdout, "lfx_pin=1.14.0.dev36\n");
+  writeFileSync(file, "<html>not json</html>");
+  assert.equal(spawnSync("node", [CLI, "--lfx-pin", file], { encoding: "utf8" }).stdout, "lfx_pin=\n");
+  assert.equal(spawnSync("node", [CLI, "--lfx-pin", join(dir, "missing.json")], { encoding: "utf8" }).stdout, "lfx_pin=\n");
 });

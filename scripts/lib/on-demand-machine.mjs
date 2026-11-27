@@ -88,6 +88,8 @@ export function setup({
   pypiVersion = null,
   pypiRequires = ">=3.10,<3.15",
   siblings = { "langflow-base": 200, lfx: 200 },
+  // langflow-base's requires_dist in its JSON (null: no body, a JSON nothing reads).
+  baseRequiresDist = null,
   // A Langflow on one of the lane's ports that survives its stop (the stopper exits 1).
   stopFails = false,
   // A published image. Docker Hub answers each repository's tag (an HTTP status; null
@@ -105,7 +107,8 @@ export function setup({
   distExit = 0,
   distOut = null,
   distError = null,
-  // uv's "No solution found" paragraph on the installer's stderr, as a resolver refusal.
+  // uv's "No solution found" paragraph on the installer's stderr, as a resolver refusal:
+  // true for a conflict in the release's own requirements, or uv's text as a string.
   distNoSolution = false,
   // The install running past its limit: timeout answers this for prepare-target-dist.sh.
   installTimesOut = false,
@@ -178,10 +181,11 @@ echo "LANGFLOW_DIST_PRERELEASE=$LANGFLOW_DIST_PRERELEASE" >> ${q(distLog)}
 echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed) fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(distLog)}
 echo "target: langflow==$TARGET_VERSION" >&2
 ${distExit === 0 ? `mkdir -p "$LANGFLOW_DIST_VENV/bin" "$LANGFLOW_DIST_VENV/lib/langflow/frontend" && printf '#!/bin/sh\n' > "$LANGFLOW_DIST_VENV/bin/langflow" && chmod +x "$LANGFLOW_DIST_VENV/bin/langflow"` : ""}
-${distNoSolution ? `printf '  x No solution found when resolving dependencies:\\n  -> Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,\\n      we can conclude that your requirements are unsatisfiable.\\n' >&2` : ""}
+${typeof distNoSolution === "string" ? `printf '%s\\n' ${q(distNoSolution)} >&2` : distNoSolution ? `printf '  x No solution found when resolving dependencies:\\n  -> Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,\\n      we can conclude that your requirements are unsatisfiable.\\n' >&2` : ""}
 ${distError ? `echo ${q(`ERROR: ${distError}`)} >&2
 echo "the second line of its reason" >&2` : ""}
-${distOut === null ? `printf 'prepared_version=%s\nprepared_base_version=%s\nvenv=%s\npython=3.14\nfrontend_dir=%s\ninstall_s=95\ntotal_s=97\n' "$TARGET_VERSION" "$TARGET_VERSION" "$LANGFLOW_DIST_VENV" "$LANGFLOW_DIST_VENV/lib/langflow/frontend"` : `printf '%b\n' ${q(distOut)}`}
+lfx="$TARGET_VERSION"; for t in $LANGFLOW_DIST_PIN; do case "$t" in lfx==*) lfx="\${t#lfx==}" ;; esac; done
+${distOut === null ? `printf 'prepared_version=%s\nprepared_base_version=%s\nprepared_lfx_version=%s\nvenv=%s\npython=3.14\nfrontend_dir=%s\ninstall_s=95\ntotal_s=97\n' "$TARGET_VERSION" "$TARGET_VERSION" "$lfx" "$LANGFLOW_DIST_VENV" "$LANGFLOW_DIST_VENV/lib/langflow/frontend"` : `printf '%b\n' ${q(distOut)}`}
 exit ${distExit}`,
   );
   writeFileSync(join(repo, "scripts", "stop-ollama-source.sh"), `echo "ollama $OLLAMA_PORT" >> ${q(stopLog)}\n`);
@@ -257,7 +261,9 @@ case "$url" in
 esac
 ${pypi === null ? "exit 7" : ""}
 case "$url" in
-  */langflow-base/*) printf '%s' ${siblings["langflow-base"]} ;;
+  */langflow-base/*)
+    ${baseRequiresDist === null ? ":" : `[ "$out" != /dev/null ] && [ -n "$out" ] && printf '%s' ${q(JSON.stringify({ info: { requires_dist: baseRequiresDist } }))} > "$out"`}
+    printf '%s' ${siblings["langflow-base"]} ;;
   */lfx/*) printf '%s' ${siblings.lfx} ;;
   */langflow/*)
     v="\${url%/json}"; v="\${v##*/}"

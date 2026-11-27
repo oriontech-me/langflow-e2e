@@ -8,6 +8,11 @@
 // python=<x.y> (empty when none this machine runs is allowed), requires=<as published>.
 // Never throws on the JSON's shape: what it cannot read it says so, and the caller
 // lets the install decide.
+//
+//   node scripts/lib/pypi-release.mjs --lfx-pin <langflow-base-release.json>
+//
+// prints lfx_pin=<version>: the one exact lfx version that release of langflow-base
+// requires, or empty when its requirement is a range, absent or unreadable (#2547).
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -78,9 +83,42 @@ export function judge(json, asked) {
   return { verdict: "ok", version, python: pythonFor(requires), requires };
 }
 
+/**
+ * The exact lfx version a langflow-base release requires (its JSON, an object), or ""
+ * when it requires a range, none, or something this does not read (#2547).
+ *
+ * Since 1.14.0.dev23 a nightly's langflow-base==1.14.0.devN requires lfx==1.14.0.dev(N+1),
+ * so the version the pin must name is read from langflow-base, never assumed equal to
+ * langflow's. Only the unconditional requirement counts (`lfx[sqlite]==V`): the ones
+ * behind an `extra ==` marker are optional and the install asks for none. Every
+ * unconditional one must name the same single `==` version, or nothing is pinned.
+ */
+export function lfxPin(json) {
+  const info = json && typeof json === "object" ? json.info : null;
+  const deps = info && Array.isArray(info.requires_dist) ? info.requires_dist : [];
+  let pin = "";
+  for (const dep of deps) {
+    if (typeof dep !== "string") continue;
+    const [req, marker] = dep.split(";", 2);
+    // PEP 508: name, optional [extras], then the specifier, bare or in parentheses.
+    const m = req.trim().match(/^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*\(?\s*([^()]*?)\s*\)?$/);
+    if (!m || m[1].toLowerCase().replace(/[-_.]+/g, "-") !== "lfx") continue;
+    if (marker !== undefined && marker.trim() !== "") continue;
+    const exact = m[2].match(/^===?\s*([0-9][0-9A-Za-z.]*)$/);
+    if (!exact) return "";
+    if (pin && pin !== exact[1]) return "";
+    pin = exact[1];
+  }
+  return pin;
+}
+
 // Run as a command, compared by real path: the clone may be reached through a symlink.
 const isMain = () => { try { return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]); } catch { return false; } };
-if (process.argv[1] && isMain()) {
+if (process.argv[1] && isMain() && process.argv[2] === "--lfx-pin") {
+  let json = null;
+  try { json = JSON.parse(readFileSync(process.argv[3], "utf8")); } catch { json = null; }
+  process.stdout.write(`lfx_pin=${lfxPin(json)}\n`);
+} else if (process.argv[1] && isMain()) {
   let json = null;
   try { json = JSON.parse(readFileSync(process.argv[2], "utf8")); } catch { json = null; }
   const r = judge(json, process.argv[3] ?? "");
