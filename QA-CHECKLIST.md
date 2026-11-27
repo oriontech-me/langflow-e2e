@@ -1862,6 +1862,20 @@
 - [x] Approving `["jira.issue_created", "schedule"]` leaves exactly those two trigger components in the catalog and the sidebar, pauses the `pending` rows of the denied provider kinds (`policy_blocked`) while the approved one stays `pending`, refuses enabling a denied kind over its own connection with the policy's `403` and two `trigger:policy_denied` rows, and lets the approved kind reach its own first gate (`409 background_runs_not_allowed`) → governance/trigger-policy-enforcement.spec.ts
 - [ ] A provider trigger that arms and fires: a `ready` connection for any of the nine needs a provider account (#2503), and a push kind also a public HTTPS ingress; so do a provider push activation, a poll round, Discord's gateway, pausing an `active` provider trigger by policy and a dispatch refused under a provider kind
 
+
+#### 24.23 The Schedule picker (#2569)
+
+> Since `1.14.0.dev30` (upstream #16322) the Schedule trigger asks for a schedule type instead of a cron, and flow save compiles it on the server. API half: `api/triggers/api-triggers-schedule-picker.spec.ts`; canvas half: `core-functionality/integrations/trigger-schedule-picker.spec.ts`.
+
+- [x] Each type compiles on the server from a flow saved through the API only, to exactly one timing key: `interval_minutes`, `run_at`, a `crons` list for times at different minutes (`0 8,12` + `30 18`), a 12-hour time, compacted weekdays (`1-3,5`), month days and a custom cron, each in its picked timezone → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] An unusable pick (Weekly with no days, an unreadable time) stores `cron: ""` and reads `config_invalid` with the picker's message, switching a Daily flow to it drops the old cron, and `enable` is refused `409` with that message, not a cron error → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] A custom cron survives switching the type away and back through the editor's field refresh (`/custom_component/update`): hidden but intact on Daily, shown again on Custom, and the saved node runs it → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] An unknown timezone reads `config_invalid` with its reason; the timezone input stays a combobox (catalog and *Update*), and a zone outside the list (`posix/America/New_York`) is kept on the row where the server loads it (annotated, not skipped, where its tzdata has no `posix/` tree) → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] A node saved before the picker keeps its own cron on save, and the editor's *Update* opens it on *Custom (cron)* with that cron; a typed node keeps its type; a picker-less node on the default cron opens on the defaults → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] The canvas shows exactly each type's fields, swapping them on every pick, and the stored node and the compiled row agree with the last pick → `core-functionality/integrations/trigger-schedule-picker.spec.ts`
+- [x] A cron typed into *Custom (cron)* is shown again after switching to Daily and back, and is what the node and the row store → `core-functionality/integrations/trigger-schedule-picker.spec.ts`
+- [x] A saved timezone outside the list is shown, survives opening and closing the list, and is still stored after a save → `core-functionality/integrations/trigger-schedule-picker.spec.ts`
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
