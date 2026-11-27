@@ -16,6 +16,7 @@ const DESTRUCTIVE = "deletes every project @destructive @api";
 const ENTERPRISE = "the admin surface rejects an unauthorised write @enterprise @api";
 const SERVING = "two end users on one session are isolated @api @regression @serving";
 const INSTANCE_MIGRATION = "check the copy names a deleted row @instance-migration @settings @database";
+const BACKGROUND_WORKER = "a job waits queued while no worker runs @api @background-worker";
 
 /** Every lane selector, so a new one cannot be added to `lane.ts` alone. */
 const LANES: Array<{ env: Record<string, string>; title: string; name: string }> = [
@@ -23,6 +24,7 @@ const LANES: Array<{ env: Record<string, string>; title: string; name: string }>
   { env: { PW_ENTERPRISE: "1" }, title: ENTERPRISE, name: "enterprise" },
   { env: { PW_SERVING_IDENTITY: "1" }, title: SERVING, name: "serving" },
   { env: { PW_INSTANCE_MIGRATION: "1" }, title: INSTANCE_MIGRATION, name: "instance-migration" },
+  { env: { PW_BACKGROUND_WORKER: "1" }, title: BACKGROUND_WORKER, name: "background-worker" },
 ];
 
 function selects(grepInvert: RegExp | undefined, title: string): boolean {
@@ -36,11 +38,27 @@ test("normal lane runs none of the opt-in lanes", () => {
   assert.equal(selects(grepInvert, ENTERPRISE), false);
   assert.equal(selects(grepInvert, SERVING), false);
   assert.equal(selects(grepInvert, INSTANCE_MIGRATION), false);
+  assert.equal(selects(grepInvert, BACKGROUND_WORKER), false);
   assert.equal(serial, false);
+});
+
+test("background-worker lane runs @background-worker tests and still excludes the others", () => {
+  const { grepInvert, serial } = resolveLane({ PW_BACKGROUND_WORKER: "1" });
+  assert.equal(selects(grepInvert, BACKGROUND_WORKER), true);
+  assert.equal(selects(grepInvert, DESTRUCTIVE), false);
+  assert.equal(selects(grepInvert, ENTERPRISE), false);
+  assert.equal(selects(grepInvert, SERVING), false);
+  assert.equal(selects(grepInvert, INSTANCE_MIGRATION), false);
+  assert.equal(selects(grepInvert, NORMAL), true, "an untagged test still runs, as in every lane");
+  // SERIAL: the worker is one process the instance shares, and the tests assert
+  // what happens to the queue around it — two at once would read each other's
+  // jobs. Flipping this to `false` must fail here.
+  assert.equal(serial, true);
 });
 
 test("destructive lane runs destructive tests and still excludes the others", () => {
   const { grepInvert, serial } = resolveLane({ PW_DESTRUCTIVE: "1" });
+  assert.equal(selects(grepInvert, BACKGROUND_WORKER), false);
   assert.equal(selects(grepInvert, DESTRUCTIVE), true);
   assert.equal(selects(grepInvert, ENTERPRISE), false);
   assert.equal(selects(grepInvert, SERVING), false);
@@ -51,6 +69,7 @@ test("destructive lane runs destructive tests and still excludes the others", ()
 
 test("enterprise lane runs enterprise tests and still excludes the others", () => {
   const { grepInvert, serial } = resolveLane({ PW_ENTERPRISE: "1" });
+  assert.equal(selects(grepInvert, BACKGROUND_WORKER), false);
   assert.equal(selects(grepInvert, ENTERPRISE), true);
   assert.equal(selects(grepInvert, DESTRUCTIVE), false);
   assert.equal(selects(grepInvert, SERVING), false);
@@ -62,6 +81,7 @@ test("enterprise lane runs enterprise tests and still excludes the others", () =
 
 test("serving-identity lane runs @serving tests and still excludes the others", () => {
   const { grepInvert, serial } = resolveLane({ PW_SERVING_IDENTITY: "1" });
+  assert.equal(selects(grepInvert, BACKGROUND_WORKER), false);
   assert.equal(selects(grepInvert, SERVING), true);
   assert.equal(selects(grepInvert, DESTRUCTIVE), false);
   assert.equal(selects(grepInvert, ENTERPRISE), false);
@@ -76,6 +96,7 @@ test("serving-identity lane runs @serving tests and still excludes the others", 
 
 test("instance-migration lane runs @instance-migration tests and still excludes the others", () => {
   const { grepInvert, serial } = resolveLane({ PW_INSTANCE_MIGRATION: "1" });
+  assert.equal(selects(grepInvert, BACKGROUND_WORKER), false);
   assert.equal(selects(grepInvert, INSTANCE_MIGRATION), true);
   assert.equal(selects(grepInvert, DESTRUCTIVE), false);
   assert.equal(selects(grepInvert, ENTERPRISE), false);
@@ -110,6 +131,10 @@ test("a test carrying two selectors is unrunnable in every lane", () => {
     "migrate and wipe @instance-migration @destructive",
     "migrate and serve @instance-migration @serving",
     "enterprise migration @enterprise @instance-migration",
+    "queue and wipe @background-worker @destructive",
+    "queue and serve @background-worker @serving",
+    "enterprise queue @enterprise @background-worker",
+    "migrate and queue @instance-migration @background-worker",
   ];
   for (const env of [{}, ...LANES.map((lane) => lane.env)]) {
     const { grepInvert } = resolveLane(env);
@@ -124,7 +149,7 @@ test("a test carrying two selectors is unrunnable in every lane", () => {
 });
 
 test("several flags set resolve by a fixed precedence and say so", () => {
-  // enterprise > instance-migration > serving > destructive, by how specialised
+  // enterprise > instance-migration > background-worker > serving > destructive, by how specialised
   // an instance each demands. Any ambiguous request resolves to exactly one lane
   // and announces it.
   const cases: Array<[Record<string, string>, string]> = [
@@ -139,6 +164,11 @@ test("several flags set resolve by a fixed precedence and say so", () => {
       { PW_INSTANCE_MIGRATION: "1", PW_SERVING_IDENTITY: "1", PW_DESTRUCTIVE: "1", PW_ENTERPRISE: "1" },
       ENTERPRISE,
     ],
+    // background-worker sits between instance-migration and serving.
+    [{ PW_BACKGROUND_WORKER: "1", PW_SERVING_IDENTITY: "1" }, BACKGROUND_WORKER],
+    [{ PW_BACKGROUND_WORKER: "1", PW_DESTRUCTIVE: "1" }, BACKGROUND_WORKER],
+    [{ PW_BACKGROUND_WORKER: "1", PW_INSTANCE_MIGRATION: "1" }, INSTANCE_MIGRATION],
+    [{ PW_BACKGROUND_WORKER: "1", PW_ENTERPRISE: "1" }, ENTERPRISE],
   ];
   for (const [env, winner] of cases) {
     const { grepInvert, notices } = resolveLane(env);
@@ -156,7 +186,7 @@ test("several flags set resolve by a fixed precedence and say so", () => {
 test("every exclusion is announced with the command that runs it", () => {
   const normal = resolveLane({});
   assert.equal(normal.notices.length, LANES.length);
-  for (const flag of ["PW_ENTERPRISE=1", "PW_DESTRUCTIVE=1", "PW_SERVING_IDENTITY=1", "PW_INSTANCE_MIGRATION=1"]) {
+  for (const flag of ["PW_ENTERPRISE=1", "PW_DESTRUCTIVE=1", "PW_SERVING_IDENTITY=1", "PW_INSTANCE_MIGRATION=1", "PW_BACKGROUND_WORKER=1"]) {
     assert.equal(
       normal.notices.some((line) => line.includes(flag)),
       true,

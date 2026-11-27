@@ -47,8 +47,8 @@ test("the destructive lane is one run over every file it lists", () => {
   const v = selectLane("destructive", listing(files.map((f) => [f, ["stable", "destructive"]])), declared([...files].reverse()));
   assert.equal(v.verified, true, v.reason);
   assert.equal(v.tests, 2);
-  assert.deepEqual(v.runs, [{ name: "destructive", env: {}, files: [...files].sort(), tests: 2 }]);
-  assert.deepEqual(runLines(v), [`destructive\t-\t${[...files].sort().join(" ")}`]);
+  assert.deepEqual(v.runs, [{ name: "destructive", env: {}, worker: false, files: [...files].sort(), tests: 2 }]);
+  assert.deepEqual(runLines(v), [`destructive\t-\t-\t${[...files].sort().join(" ")}`]);
 });
 
 test("a serving spec runs under the one variant it asserts, and a spec in none fails the lane", () => {
@@ -58,7 +58,7 @@ test("a serving spec runs under the one variant it asserts, and a spec in none f
   assert.equal(v.verified, true, v.reason);
   assert.deepEqual(v.runs.map((r) => [r.name, r.files, r.tests]), [["trusted", [iso], 4], ["required", [req], 3]]);
   assert.deepEqual(v.runs[1].env, { LANGFLOW_SERVING_END_USER_HEADER: SERVING_HEADER, LANGFLOW_SERVING_TRUST_PROXY_HEADERS: "true", LANGFLOW_SERVING_END_USER_REQUIRED: "true" });
-  assert.equal(runLines(v)[1], `required\tLANGFLOW_SERVING_END_USER_HEADER=X-End-User-Id LANGFLOW_SERVING_TRUST_PROXY_HEADERS=true LANGFLOW_SERVING_END_USER_REQUIRED=true\t${req}`);
+  assert.equal(runLines(v)[1], `required\tLANGFLOW_SERVING_END_USER_HEADER=X-End-User-Id LANGFLOW_SERVING_TRUST_PROXY_HEADERS=true LANGFLOW_SERVING_END_USER_REQUIRED=true\t-\t${req}`);
 
   const stray = `${S}end-user-new-thing.spec.ts`;
   const bad = selectLane("serving", listing([[iso, ["stable", "serving"]], [stray, ["stable", "serving"]]]), declared([iso, stray]));
@@ -134,9 +134,47 @@ test("the command line: flag, filter, select and runs", () => {
   assert.equal(sel.status, 0, sel.stderr);
   writeFileSync(join(dir, "verdict.json"), sel.stdout);
   assert.equal(JSON.parse(sel.stdout).tests, 2);
-  assert.match(run("runs", join(dir, "verdict.json")).stdout, /^trusted\tLANGFLOW_SERVING_END_USER_HEADER=X-End-User-Id .*\ttests-automations\/regression\/serving\/end-user-identity-isolation\.spec\.ts\n$/);
+  assert.match(run("runs", join(dir, "verdict.json")).stdout, /^trusted\tLANGFLOW_SERVING_END_USER_HEADER=X-End-User-Id .*\t-\ttests-automations\/regression\/serving\/end-user-identity-isolation\.spec\.ts\n$/);
   // An unreadable listing still answers a verdict, unverified.
   assert.equal(JSON.parse(run("select", "serving", join(dir, "nope.json"), join(dir, "declared.json")).stdout).verified, false);
   assert.equal(run("flag", "enterprise").status, 2);
   assert.equal(run("bogus").status, 2);
+});
+
+test("the background lane's variants: scaled mode without a worker, then with one", () => {
+  // No spec carries the tag yet (#2574's specs are a follow-up), so the mapping is
+  // exercised against a stand-in table entry with the lane's own variants.
+  const bg = SCHEDULED_LANES.background;
+  assert.equal(bg.tag, "@background-worker");
+  assert.equal(bg.flag, "PW_BACKGROUND_WORKER");
+  assert.deepEqual(bg.variants.map((v) => [v.name, v.worker, v.env.LANGFLOW_BACKGROUND_BACKEND]), [["queued", false, "scaled"], ["worker", true, "scaled"]]);
+  const held = "tests-automations/regression/background/held.spec.ts";
+  const ran = "tests-automations/regression/background/ran.spec.ts";
+  const saved = bg.variants.map((v) => v.specs);
+  try {
+    bg.variants[0].specs = [held];
+    bg.variants[1].specs = [ran];
+    const v = selectLane("background", listing([[held, ["stable", "background-worker"]], [ran, ["stable", "background-worker"], 2]]), declared([held, ran]));
+    assert.equal(v.verified, true, v.reason);
+    assert.deepEqual(runLines(v), [`queued\tLANGFLOW_BACKGROUND_BACKEND=scaled\t-\t${held}`, `worker\tLANGFLOW_BACKGROUND_BACKEND=scaled\tworker\t${ran}`]);
+  } finally {
+    bg.variants.forEach((v, i) => (v.specs = saved[i]));
+  }
+  assert.equal(laneFilter("background"), "(?=.*(?:@background-worker))(?=.*(?:@stable))");
+});
+
+test("every @background-worker spec in the tree maps to exactly one variant", () => {
+  const dir = join(REPO, "tests/tests-automations/regression");
+  const specs = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d)) {
+      const p = join(d, e);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (e.endsWith(".spec.ts") && /["']@background-worker["']/.test(readFileSync(p, "utf8"))) specs.push(p.slice(join(REPO, "tests").length + 1));
+    }
+  };
+  walk(dir);
+  const owners = (s) => SCHEDULED_LANES.background.variants.filter((v) => v.specs.includes(s)).map((v) => v.name);
+  for (const s of specs) assert.equal(owners(s).length, 1, `${s} maps to ${owners(s).join(", ") || "no variant"}`);
+  for (const v of SCHEDULED_LANES.background.variants) for (const s of v.specs) assert.ok(specs.includes(s), `${v.name} names ${s}, which is not a @background-worker spec`);
 });

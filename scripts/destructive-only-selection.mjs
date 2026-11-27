@@ -88,6 +88,13 @@ const SERVING = "@serving";
  * that red for `@serving`.
  */
 const INSTANCE_MIGRATION = "@instance-migration";
+/**
+ * The fifth lane selector (#2574). `@background-worker` specs need an instance in
+ * the database-backed background mode and, for some of them, a `langflow worker`
+ * beside it. This runner starts neither, so they are executed by nobody here (the VM
+ * daily runs them through E2E_LANES). Added WITH the lane, for #2169's reason.
+ */
+const BACKGROUND_WORKER = "@background-worker";
 
 /**
  * True when this source declares at least one tag array and EVERY one of them
@@ -122,6 +129,11 @@ export function isInstanceMigrationOnlySource(source) {
   return everyTagArrayCarries(source, INSTANCE_MIGRATION);
 }
 
+/** The `@background-worker` counterpart — same rule, same conservative defaults. */
+export function isBackgroundWorkerOnlySource(source) {
+  return everyTagArrayCarries(source, BACKGROUND_WORKER);
+}
+
 function everyTagArrayCarries(source, tag) {
   const arrays = source.match(TAG_ARRAY_RE);
   if (!arrays || arrays.length === 0) return false;
@@ -134,13 +146,14 @@ function everyTagArrayCarries(source, tag) {
  * @param specs     spec paths, as the workflow's `$SPECS` splits them
  * @param readSpec  reads a spec's source; throws when it cannot (injected so the
  *                  unit tests never touch the filesystem)
- * @returns `{ destructiveOnly, excludedOnly, destructive, enterprise, serving, instanceMigration, runnable }`
+ * @returns `{ destructiveOnly, excludedOnly, destructive, enterprise, serving, instanceMigration, backgroundWorker, runnable }`
  */
 export function classifySelection(specs, readSpec) {
   const destructive = [];
   const enterprise = [];
   const serving = [];
   const instanceMigration = [];
+  const backgroundWorker = [];
   const runnable = [];
 
   for (const spec of specs) {
@@ -156,6 +169,7 @@ export function classifySelection(specs, readSpec) {
     else if (isEnterpriseOnlySource(source)) enterprise.push(spec);
     else if (isServingOnlySource(source)) serving.push(spec);
     else if (isInstanceMigrationOnlySource(source)) instanceMigration.push(spec);
+    else if (isBackgroundWorkerOnlySource(source)) backgroundWorker.push(spec);
     else runnable.push(spec);
   }
 
@@ -169,7 +183,8 @@ export function classifySelection(specs, readSpec) {
       runnable.length === 0 &&
       enterprise.length === 0 &&
       serving.length === 0 &&
-      instanceMigration.length === 0,
+      instanceMigration.length === 0 &&
+      backgroundWorker.length === 0,
     // The gate the normal run gets skipped on — true whenever NOTHING selected
     // can run there, whichever lane took it.
     excludedOnly: specs.length > 0 && runnable.length === 0,
@@ -177,6 +192,7 @@ export function classifySelection(specs, readSpec) {
     enterprise,
     serving,
     instanceMigration,
+    backgroundWorker,
     runnable,
   };
 }

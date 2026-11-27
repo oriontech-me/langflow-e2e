@@ -401,7 +401,7 @@ test("an unreadable tag option is flagged rather than read as untagged", () => {
 });
 
 test("the lane selectors are the four lane tags lane.ts resolves", () => {
-  assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving", "@instance-migration"]);
+  assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving", "@instance-migration", "@background-worker"]);
 });
 
 test("collectDeclaredTests covers every @stable test the Phase 0 parser finds", () => {

@@ -4687,6 +4687,14 @@ test("phase_publish uploads a report only when the scrub verified it (#2486)", (
 // Scheduled lanes (#2142): @destructive after shard 1's round, @serving after the shards
 // ---------------------------------------------------------------------------
 
+/**
+ * A target_ssh that records WHICH script it was handed (they share an environment
+ * string, so only the script tells them apart) and swallows it.
+ */
+function targetSshStub(log) {
+  return `target_ssh() { local body; body="$(cat)"; case "$body" in *"Stop the worker"*) echo stop-worker ;; *"Start a \\\`langflow worker\\\`"*) echo "start-worker env=[$1]" ;; *) echo stop-backend ;; esac >> ${JSON.stringify(log)}; return \${WORKER_START_RC:-0}; }`;
+}
+
 /** A lane verdict file in `dir`, as scripts/lane-selection.mjs writes it. */
 function writeLaneVerdict(dir, lane, over = {}) {
   const v = { version: 1, lane, tests: 0, files: [], missing: [], unexpected: [], unmapped: [], runs: [], verified: true, reason: "", ...over };
@@ -4697,18 +4705,20 @@ test("E2E_LANES takes only the lanes the table knows, and serving only where it 
   assert.equal(sourced("echo ok", { E2E_LANES: "destructive serving" }).stdout.trim(), "ok");
   assert.equal(sourced("echo ok", { E2E_LANES: "" }).stdout.trim(), "ok", "off by default");
   for (const [env, why] of [
-    [{ E2E_LANES: "enterprise" }, /E2E_LANES may name destructive and serving, got: 'enterprise'/],
+    [{ E2E_LANES: "enterprise" }, /E2E_LANES may name destructive, serving and background, got: 'enterprise'/],
     [{ E2E_LANES: "destructive  servng" }, /got: 'servng'/],
     [{ E2E_LANES: "serving", TARGET_KIND: "image" }, /runs only on a source target \(TARGET_KIND=image\)/],
-    [{ E2E_LANES: "serving", BASE_PORT: "7870", SHARDS: "4", SERVING_PORT: "7872" }, /SERVING_PORT=7872 is one of the shards' ports \(7870\.\.7873\)/],
-    [{ E2E_LANES: "serving", SERVING_PORT: "78x" }, /SERVING_PORT must be a port number/],
+    [{ E2E_LANES: "serving", BASE_PORT: "7870", SHARDS: "4", LANE_PORT: "7872" }, /LANE_PORT=7872 is one of the shards' ports \(7870\.\.7873\)/],
+    [{ E2E_LANES: "background", LANE_PORT: "78x" }, /LANE_PORT must be a port number/],
+    [{ E2E_LANES: "background", TARGET_KIND: "image" }, /E2E_LANES names background, which runs only on a source target \(TARGET_KIND=image\)/],
   ]) {
     const r = sourced("echo ok", env);
     assert.equal(r.status, 1, JSON.stringify(env));
     assert.match(r.stderr, why, JSON.stringify(env));
   }
   // The default serving port sits beside the shards', never on them.
-  assert.equal(sourced('echo "$SERVING_PORT"', { BASE_PORT: "7870" }).stdout.trim(), "7878");
+  assert.equal(sourced('echo "$LANE_PORT"', { BASE_PORT: "7870" }).stdout.trim(), "7878");
+  assert.equal(sourced("echo ok", { E2E_LANES: "destructive serving background" }).stdout.trim(), "ok");
 });
 
 test("a serving variant's switches reach the starter, quoted, and a shard's launch carries none", () => {
@@ -4857,7 +4867,7 @@ test("the serving lane starts each variant with its switches, in order, and a fa
       `start_backend_for_shard() { echo "start $1 $2 extra=[$BACKEND_EXTRA_ENV]" >> ${JSON.stringify(log)}; }`,
       `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
       `run_lane_round() { echo "round $1 $2 files=[$3] url=$PLAYWRIGHT_BASE_URL" >> ${JSON.stringify(log)}; [ "$2" = trusted ]; }`,
-      `target_ssh() { echo "stop" >> ${JSON.stringify(log)}; cat > /dev/null; }`,
+      targetSshStub(log),
       `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
     ].join("\n"),
     { E2E_LANES: "serving", BASE_PORT: "7870", TARGET_SSH: "local" },
@@ -4866,10 +4876,12 @@ test("the serving lane starts each variant with its switches, in order, and a fa
   assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
     "start lane-serving-trusted 7878 extra=[LANGFLOW_SERVING_TRUST_PROXY_HEADERS='true' ]",
     "round serving trusted files=[iso.spec.ts] url=http://localhost:7878/",
-    "stop",
+    "stop-worker",
+    "stop-backend",
     "start lane-serving-untrusted 7878 extra=[LANGFLOW_SERVING_TRUST_PROXY_HEADERS='false' ]",
     "round serving untrusted files=[untr.spec.ts] url=http://localhost:7878/",
-    "stop",
+    "stop-worker",
+    "stop-backend",
   ]);
 
   // Nothing selected: no backend at all.
@@ -4961,11 +4973,86 @@ test("a serving variant that dies with its backend up still stops it, so the nex
       `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
       // The first variant aborts the subshell outright, as a `set -e` failure would.
       `run_lane_round() { echo "round $2" >> ${JSON.stringify(log)}; [ "$2" = trusted ] && exit 3; return 0; }`,
-      `target_ssh() { echo "stop" >> ${JSON.stringify(log)}; cat > /dev/null; }`,
+      targetSshStub(log),
       `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
     ].join("\n"),
     { E2E_LANES: "serving", TARGET_SSH: "local" },
   );
   assert.match(r.stdout, /FAILED=1/, r.stderr);
-  assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), ["start lane-serving-trusted", "round trusted", "stop", "start lane-serving-required", "round required", "stop"]);
+  assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), ["start lane-serving-trusted", "round trusted", "stop-worker", "stop-backend", "start lane-serving-required", "round required", "stop-worker", "stop-backend"]);
+});
+
+test("the background lane starts its worker after the instance, on the same port, and stops it first", () => {
+  const dir = makeTempDir("run-e2e-background-lane-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeLaneVerdict(dir, "background", {
+    tests: 3,
+    runs: [
+      { name: "queued", env: { LANGFLOW_BACKGROUND_BACKEND: "scaled" }, worker: false, files: ["held.spec.ts"], tests: 1 },
+      { name: "worker", env: { LANGFLOW_BACKGROUND_BACKEND: "scaled" }, worker: true, files: ["run.spec.ts"], tests: 2 },
+    ],
+  });
+  const log = join(dir, "calls.log");
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)}; TEST_JOB_FAILED=0`,
+      `start_backend_for_shard() { echo "start $1 $2 extra=[$BACKEND_EXTRA_ENV]" >> ${JSON.stringify(log)}; }`,
+      `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
+      `run_lane_round() { echo "round $1 $2 files=[$3]" >> ${JSON.stringify(log)}; }`,
+      targetSshStub(log),
+      `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
+    ].join("\n"),
+    { E2E_LANES: "background", BASE_PORT: "7870", TARGET_SSH: "local", LANGFLOW_SRC_RUN_CMD: "/venv/bin/langflow run" },
+  );
+  assert.match(r.stdout, /FAILED=0/, r.stderr);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.deepEqual(calls.map((l) => l.replace(/ env=\[.*\]$/, "")), [
+    "start lane-background-queued 7878 extra=[LANGFLOW_BACKGROUND_BACKEND='scaled' ]",
+    "round background queued files=[held.spec.ts]",
+    "stop-worker",
+    "stop-backend",
+    "start lane-background-worker 7878 extra=[LANGFLOW_BACKGROUND_BACKEND='scaled' ]",
+    "start-worker",
+    "round background worker files=[run.spec.ts]",
+    "stop-worker",
+    "stop-backend",
+  ]);
+  // The worker is pointed at the instance's port, with the command that serves it.
+  const start = calls.find((l) => l.startsWith("start-worker"));
+  assert.match(start, /LANGFLOW_SRC_RUN_CMD='\/venv\/bin\/langflow run' /);
+  assert.match(start, /LANGFLOW_BACKGROUND_BACKEND='scaled' LANGFLOW_PORT=7878 bash -s\]$/);
+});
+
+test("a worker that does not start reddens the run, records the variant's status, and stops the instance", () => {
+  const dir = makeTempDir("run-e2e-background-noworker-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeLaneVerdict(dir, "background", { tests: 1, runs: [{ name: "worker", env: {}, worker: true, files: ["run.spec.ts"], tests: 1 }] });
+  const log = join(dir, "calls.log");
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)}; TEST_JOB_FAILED=0`,
+      `start_backend_for_shard() { echo "start" >> ${JSON.stringify(log)}; }`,
+      `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
+      `run_lane_round() { echo RAN >> ${JSON.stringify(log)}; }`,
+      targetSshStub(log),
+      `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
+    ].join("\n"),
+    { E2E_LANES: "background", TARGET_SSH: "local", WORKER_START_RC: "1" },
+  );
+  assert.match(r.stdout, /FAILED=1/, r.stderr);
+  assert.match(r.stderr, /lane background\/worker: the worker did not start/);
+  const calls = readFileSync(log, "utf8").trim().split("\n").map((l) => l.replace(/ env=\[.*\]$/, ""));
+  assert.deepEqual(calls.slice(0, 2), ["start", "start-worker"]);
+  assert.ok(!calls.includes("RAN"), "no round without its worker");
+  assert.ok(calls.includes("stop-backend"), "the instance is stopped");
+  assert.equal(readFileSync(join(dir, "logs", "lane-background-worker.status"), "utf8").trim(), "1");
+});
+
+test("the run's own cleanup stops a lane's worker as well as its instance", () => {
+  const body = readFileSync(SCRIPT, "utf8");
+  for (const fn of ["cleanup() {", "phase_hygiene() {"]) {
+    const text = body.slice(body.indexOf(fn), body.indexOf("\n}\n", body.indexOf(fn)));
+    assert.match(text, /lane_enabled serving \|\| lane_enabled background/, fn);
+    assert.ok(text.indexOf("stop-langflow-worker.sh") < text.indexOf('backend_stop_env "$LANE_PORT"'), `${fn}: the worker is stopped before the instance it holds`);
+  }
 });

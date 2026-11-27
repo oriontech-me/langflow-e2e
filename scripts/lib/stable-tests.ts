@@ -364,14 +364,15 @@ export function collectDeclaredCounts(): DeclaredCounts {
  * Lane selectors, not severities. `tests/fixtures/lane.ts` grep-inverts each of
  * these out of every run that does not opt into its lane. `@enterprise` and
  * `@instance-migration` have no scheduled lane and are never combined with
- * `@stable` (#1010). `@destructive` and `@serving` have one since #2142 (the VM
+ * `@stable` (#1010). `@destructive` and `@serving` have one since #2142, and
+ * `@background-worker` since #2574 (the VM
  * daily's `E2E_LANES`, `scripts/lib/scheduled-lanes.mjs`), so their tests MAY
  * carry `@stable`, and those that do run there. A lane-tagged test WITHOUT
  * `@stable` is still out of the daily by design until it is promoted through the
  * usual validation, and the orphan reconciler keeps not reading it as an unowned
  * removal — the promotions are tracked by their own issues.
  */
-export const LANE_TAGS = ["@destructive", "@enterprise", "@serving", "@instance-migration"] as const;
+export const LANE_TAGS = ["@destructive", "@enterprise", "@serving", "@instance-migration", "@background-worker"] as const;
 
 export interface DeclaredTest {
   /** Title as written in the declaring call's first argument. */

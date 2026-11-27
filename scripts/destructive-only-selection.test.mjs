@@ -7,6 +7,7 @@ import {
   isEnterpriseOnlySource,
   isServingOnlySource,
   isInstanceMigrationOnlySource,
+  isBackgroundWorkerOnlySource,
 } from "./destructive-only-selection.mjs";
 
 const DESTRUCTIVE_SPEC = `
@@ -29,6 +30,10 @@ const SERVING_SPEC = `
 
 const INSTANCE_MIGRATION_SPEC = `
   test("check the copy names a deleted row", { tag: ["@instance-migration", "@settings", "@database"] }, async () => {});
+`;
+
+const BACKGROUND_WORKER_SPEC = `
+  test("a job waits queued while no worker runs", { tag: ["@api", "@background-worker"] }, async () => {});
 `;
 
 const NORMAL_SPEC = `
@@ -325,6 +330,32 @@ describe("the @instance-migration lane (#2347)", () => {
       ["m.spec.ts", "n.spec.ts"],
       sources({ "m.spec.ts": INSTANCE_MIGRATION_SPEC, "n.spec.ts": NORMAL_SPEC }),
     );
+    assert.equal(verdict.excludedOnly, false);
+    assert.deepEqual(verdict.runnable, ["n.spec.ts"]);
+  });
+});
+
+describe("the @background-worker lane (#2574)", () => {
+  it("is excluded from the normal run, and not conflated with the other four selectors", () => {
+    assert.equal(isBackgroundWorkerOnlySource(BACKGROUND_WORKER_SPEC), true);
+    for (const other of [NORMAL_SPEC, SERVING_SPEC, ENTERPRISE_SPEC, DESTRUCTIVE_SPEC, INSTANCE_MIGRATION_SPEC]) {
+      assert.equal(isBackgroundWorkerOnlySource(other), false);
+    }
+    assert.equal(isServingOnlySource(BACKGROUND_WORKER_SPEC), false);
+    assert.equal(isDestructiveOnlySource(BACKGROUND_WORKER_SPEC), false);
+    assert.equal(isInstanceMigrationOnlySource(BACKGROUND_WORKER_SPEC), false);
+  });
+
+  it("a background-worker-only selection skips the normal lane and is reported as executed by nobody", () => {
+    const verdict = classifySelection(["b.spec.ts"], sources({ "b.spec.ts": BACKGROUND_WORKER_SPEC }));
+    assert.equal(verdict.excludedOnly, true, "the normal run would match nothing");
+    assert.equal(verdict.destructiveOnly, false, "the destructive step does not run @background-worker specs");
+    assert.deepEqual(verdict.backgroundWorker, ["b.spec.ts"]);
+    assert.deepEqual(verdict.runnable, []);
+  });
+
+  it("one runnable spec keeps the normal lane running", () => {
+    const verdict = classifySelection(["b.spec.ts", "n.spec.ts"], sources({ "b.spec.ts": BACKGROUND_WORKER_SPEC, "n.spec.ts": NORMAL_SPEC }));
     assert.equal(verdict.excludedOnly, false);
     assert.deepEqual(verdict.runnable, ["n.spec.ts"]);
   });

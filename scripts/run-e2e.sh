@@ -128,17 +128,22 @@ BASE_PORT="${BASE_PORT:-7860}"
 ECHO_PORT="${ECHO_PORT:-8080}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 # The lanes scheduled beside the shards (#2142): a space-separated subset of the names in
-# scripts/lib/scheduled-lanes.mjs (`destructive`, `serving`). Empty by default, so every
+# scripts/lib/scheduled-lanes.mjs (`destructive`, `serving`, `background`). Empty by default, so every
 # caller but the one that asks for them (ops/vm/run-daily.sh) runs exactly what it ran
 # before. Each lane runs the tests carrying @stable AND its tag, under its flag:
 #   destructive  on shard 1's backend, after that shard's @stable round (workers=1, the
 #                config's own pin for the lane);
-#   serving      after the shards, on SERVING_PORT, once per configuration variant, on
-#                the run's own served artifact (source targets only).
+#   serving      after the shards, on LANE_PORT, once per configuration variant, on
+#                the run's own served artifact (source targets only);
+#   background   after serving, on the same LANE_PORT, once per variant: the
+#                database-backed background backend with no worker (`queued`) and with
+#                one `langflow worker` on the instance's database (`worker`, #2574).
 # A lane whose selection is empty starts nothing and costs nothing; that is its state
 # until its tests are promoted.
 E2E_LANES="${E2E_LANES:-}"
-SERVING_PORT="${SERVING_PORT:-$((BASE_PORT + 8))}"
+# The port of the lanes that bring up an instance of their own (serving, background),
+# one variant at a time. Beside the shards' range, never on it.
+LANE_PORT="${LANE_PORT:-$((BASE_PORT + 8))}"
 # The shard whose backend the destructive lane borrows once its own round is over.
 DESTRUCTIVE_SHARD=1
 RETRIES="${RETRIES:-}"                        # empty = the config's default (2 in CI)
@@ -390,7 +395,7 @@ DECLARED_MODEL_ID="${DECLARED_MODEL_ID:-}"
 # aimed at what a change touched: a PR on the MCP server runs @stable's MCP tests. The
 # filter is composed by scripts/build-grep-filter.mjs, as the Actions lane composes its
 # own (#1275): an alternation spliced in by hand narrowed a release run unnoticed. The
-# lane tags (@destructive, @enterprise, @serving, @instance-migration) need an environment of their own and
+# lane tags (@destructive, @enterprise, @serving, @instance-migration, @background-worker) need an environment of their own and
 # are refused here; @stable is the base, not an area.
 STABLE_AREAS="${STABLE_AREAS:-}"
 # Composed in phase_prep from STABLE_AREAS; @stable alone until then, so a shard never
@@ -541,18 +546,19 @@ check_lanes() {
   for lane in $E2E_LANES; do
     case "$lane" in
       destructive) ;;
-      serving)
-        # The variants are instance environment handed to the starter; the image
-        # starter does not forward them, so an image run would serve the wrong
-        # configuration and every spec would throw. Refused rather than half-run.
+      serving | background)
+        # The variants are instance environment handed to the starter (and, for the
+        # background worker, a second process on the instance's own state); the image
+        # starter forwards neither, so an image run would serve the wrong configuration
+        # and every spec would throw. Refused rather than half-run.
         [ "$TARGET_KIND" = "source" ] \
-          || { echo "E2E_LANES names serving, which runs only on a source target (TARGET_KIND=$TARGET_KIND)" >&2; exit 1; }
-        case "$SERVING_PORT" in '' | *[!0-9]*) echo "SERVING_PORT must be a port number, got: '$SERVING_PORT'" >&2; exit 1 ;; esac
-        if [ "$SERVING_PORT" -ge "$BASE_PORT" ] && [ "$SERVING_PORT" -lt $((BASE_PORT + SHARDS)) ]; then
-          echo "SERVING_PORT=$SERVING_PORT is one of the shards' ports ($BASE_PORT..$((BASE_PORT + SHARDS - 1)))" >&2; exit 1
+          || { echo "E2E_LANES names $lane, which runs only on a source target (TARGET_KIND=$TARGET_KIND)" >&2; exit 1; }
+        case "$LANE_PORT" in '' | *[!0-9]*) echo "LANE_PORT must be a port number, got: '$LANE_PORT'" >&2; exit 1 ;; esac
+        if [ "$LANE_PORT" -ge "$BASE_PORT" ] && [ "$LANE_PORT" -lt $((BASE_PORT + SHARDS)) ]; then
+          echo "LANE_PORT=$LANE_PORT is one of the shards' ports ($BASE_PORT..$((BASE_PORT + SHARDS - 1)))" >&2; exit 1
         fi
         ;;
-      *) echo "E2E_LANES may name destructive and serving, got: '$lane'" >&2; exit 1 ;;
+      *) echo "E2E_LANES may name destructive, serving and background, got: '$lane'" >&2; exit 1 ;;
     esac
   done
   return 0
@@ -914,7 +920,7 @@ check_stable_areas() {
     [[ "$tag" =~ ^@[a-z0-9][a-z0-9-]{0,39}$ ]] || die "STABLE_AREAS has a tag that is not one: '$tag'."
     case "$tag" in
       @stable) die "STABLE_AREAS names @stable: it is the base every run keeps, not an area." ;;
-      @destructive | @enterprise | @serving | @instance-migration) die "STABLE_AREAS names $tag, a lane tag: its tests need an environment of their own and this lane excludes them." ;;
+      @destructive | @enterprise | @serving | @instance-migration | @background-worker) die "STABLE_AREAS names $tag, a lane tag: its tests need an environment of their own and this lane excludes them." ;;
     esac
   done
   [ "$n" -le 25 ] || die "STABLE_AREAS names $n tags; at most 25."
@@ -1561,7 +1567,10 @@ cleanup() {
     port=$((BASE_PORT + i - 1))
     target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" > /dev/null 2>&1 || true
   done
-  lane_enabled serving && { target_ssh "$(backend_stop_env "$SERVING_PORT") bash -s" < "$(backend_stopper)" > /dev/null 2>&1 || true; }
+  if lane_enabled serving || lane_enabled background; then
+    target_ssh "LANGFLOW_PORT=$LANE_PORT bash -s" < scripts/stop-langflow-worker.sh > /dev/null 2>&1 || true
+    target_ssh "$(backend_stop_env "$LANE_PORT") bash -s" < "$(backend_stopper)" > /dev/null 2>&1 || true
+  fi
   [ "$WITH_ECHO" = "1" ] && target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh > /dev/null 2>&1 || true
   [ "$WITH_OLLAMA" = "1" ] && target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh > /dev/null 2>&1 || true
   # The holders last, and only after the stop scripts have had their turn: killing
@@ -1608,8 +1617,9 @@ phase_hygiene() {
     port=$((BASE_PORT + i - 1))
     target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
   done
-  if lane_enabled serving; then
-    target_ssh "$(backend_stop_env "$SERVING_PORT") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
+  if lane_enabled serving || lane_enabled background; then
+    target_ssh "LANGFLOW_PORT=$LANE_PORT bash -s" < scripts/stop-langflow-worker.sh 2>&1 | sed 's/^/    /' || true
+    target_ssh "$(backend_stop_env "$LANE_PORT") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
   fi
   target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh 2>&1 | sed 's/^/    /' || true
   target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh 2>&1 | sed 's/^/    /' || true
@@ -2196,47 +2206,63 @@ destructive_after_round() {
   printf '%s' "$status"
 }
 
-# The serving lane: each variant on SERVING_PORT, one after the other, on the run's own
-# served artifact with the variant's instance environment. After the shards, so its
-# backend never competes with theirs. A variant whose backend does not come up records
-# no blob, and the merge names it.
+# The lanes with variants (serving, then background): each variant on LANE_PORT, one
+# after the other, on the run's own served artifact with the variant's instance
+# environment, and a `langflow worker` beside it when the variant asks for one. After
+# the shards, so their backends never compete. A variant whose backend or worker does
+# not come up records no blob, and the merge names it.
+VARIANT_LANES="serving background"
 phase_lanes() {
-  lane_enabled serving || return 0
-  [ "$(lane_tests serving)" != "0" ] || { info "lane serving: nothing selected, no variant started"; return 0; }
-  log "Running the serving lane"
-  local line run env files rc
-  while IFS=$'\t' read -r run env files; do
-    [ -n "$run" ] || continue
-    rc=0
-    [ "$env" = "-" ] && env=""
-    # stdin from /dev/null: the loop reads its runs from stdin, and anything in a variant
-    # that read it would swallow the next variants.
-    ( run_serving_variant "$run" "$env" "$files" ) < /dev/null || rc=$?
-    [ "$rc" = "0" ] || TEST_JOB_FAILED=1
-  done < <(node scripts/lane-selection.mjs runs "$RUN_DIR/lane-serving.json")
+  local lane run env worker files rc
+  for lane in $VARIANT_LANES; do
+    lane_enabled "$lane" || continue
+    [ "$(lane_tests "$lane")" != "0" ] || { info "lane $lane: nothing selected, no variant started"; continue; }
+    log "Running the $lane lane"
+    while IFS=$'\t' read -r run env worker files; do
+      [ -n "$run" ] || continue
+      rc=0
+      [ "$env" = "-" ] && env=""
+      # stdin from /dev/null: the loop reads its runs from stdin, and anything in a
+      # variant that read it would swallow the next variants.
+      ( run_variant "$lane" "$run" "$env" "$worker" "$files" ) < /dev/null || rc=$?
+      [ "$rc" = "0" ] || TEST_JOB_FAILED=1
+    done < <(node scripts/lane-selection.mjs runs "$RUN_DIR/lane-$lane.json")
+  done
   cd "$REPO_DIR"
 }
 
-run_serving_variant() {
-  local run="$1" env="$2" files="$3" port="$SERVING_PORT" host wd log status=0 kv extra=""
+run_variant() {
+  local lane="$1" run="$2" env="$3" worker="$4" files="$5" port="$LANE_PORT" host wd log status=0 kv extra=""
   host="$(target_reach_host)"
-  wd="$RUN_DIR/shard-lane-serving-$run"
-  log="$RUN_DIR/logs/lane-serving-$run.log"
+  wd="$RUN_DIR/shard-lane-$lane-$run"
+  log="$RUN_DIR/logs/lane-$lane-$run.log"
   : > "$log"
   # The variant's switches, quoted for the far side's shell like every launch value.
   for kv in $env; do extra="$extra${kv%%=*}=$(shq "${kv#*=}") "; done
   BACKEND_EXTRA_ENV="$extra"
-  start_backend_for_shard "lane-serving-$run" "$port" || { printf '1\n' > "$RUN_DIR/logs/lane-serving-$run.status"; return 1; }
+  start_backend_for_shard "lane-$lane-$run" "$port" || { printf '1\n' > "$RUN_DIR/logs/lane-$lane-$run.status"; return 1; }
   # Stopped on ANY exit of this subshell, a `set -e` abort included: a variant that
   # dies with its backend up leaves the port taken, and the next variant's starter
-  # then refuses (measured on the first live run of this lane).
-  # Expanded NOW: the trap fires after this function returns, when its locals are gone.
+  # then refuses (measured on the first live run of the serving lane). The worker
+  # first: it holds the instance's database. Expanded NOW: the trap fires after this
+  # function returns, when its locals are gone.
   # shellcheck disable=SC2064
-  trap "target_ssh $(shq "$(backend_stop_env "$port") bash -s") < $(shq "$REPO_DIR/$(backend_stopper)") >> $(shq "$log") 2>&1 || true" EXIT
-  prepare_shard_workdir "lane-serving-$run"
+  trap "target_ssh $(shq "LANGFLOW_PORT=$port bash -s") < $(shq "$REPO_DIR/scripts/stop-langflow-worker.sh") >> $(shq "$log") 2>&1 || true; target_ssh $(shq "$(backend_stop_env "$port") bash -s") < $(shq "$REPO_DIR/$(backend_stopper)") >> $(shq "$log") 2>&1 || true" EXIT
+  if [ "$worker" = "worker" ]; then
+    # On the instance's own state and database, with the variant's switches and the
+    # command that serves the instance (scripts/start-langflow-worker.sh derives the
+    # worker's from it).
+    if ! target_ssh "PATH=\$HOME/.local/bin:\$PATH $(target_cmd_env)${extra}LANGFLOW_PORT=$port bash -s" < "$REPO_DIR/scripts/start-langflow-worker.sh" >> "$log" 2>&1; then
+      err "lane $lane/$run: the worker did not start (see logs/lane-$lane-$run.log)."
+      printf '1\n' > "$RUN_DIR/logs/lane-$lane-$run.status"
+      return 1
+    fi
+    info "lane $lane/$run: worker ready beside port $port"
+  fi
+  prepare_shard_workdir "lane-$lane-$run"
   cd "$wd"
   export CI=true PLAYWRIGHT_BASE_URL="http://${host}:${port}/"
-  run_lane_round serving "$run" "$files" "$log" || status=$?
+  run_lane_round "$lane" "$run" "$files" "$log" || status=$?
   return "$status"
 }
 
