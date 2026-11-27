@@ -58,6 +58,7 @@ const MODULES: ModuleConfig[] = [
   { label: "`core-functionality/project-management/`",       sectionStart: "### core-functionality/project-management/" },
   { label: "`core-functionality/templates/`",                sectionStart: "### core-functionality/templates/" },
   { label: "`core-functionality/a2a/`",                      sectionStart: "### core-functionality/a2a/" },
+  { label: "`core-functionality/evals/`",                    sectionStart: "### core-functionality/evals/" },
   { label: "`flow-functionality/`",                          sectionStart: "## flow-functionality/" },
   { label: "`mcp/client/`",                                  sectionStart: "### mcp/client/" },
   { label: "`mcp/server/`",                                  sectionStart: "### mcp/server/" },
