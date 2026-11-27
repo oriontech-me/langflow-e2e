@@ -1,6 +1,6 @@
 # Workflows v2 — the request-level variable transport
 
-**Last validated:** Langflow 1.14.0.dev39 (`langflowai/langflow-nightly:latest`), #2570.
+**Last validated:** Langflow 1.14.x (nightly `1.14.0.dev39`, #2570)
 
 ---
 
@@ -18,8 +18,9 @@ no signal. So the router now **refuses** the header instead.
 Four contracts, all measured on `1.14.0.dev39`:
 
 1. **The header is refused in every mode.** `mode: "sync"`, `"stream"` and `"background"` all answer `400` with
-   `detail.code == "LEGACY_GLOBAL_VAR_HEADER"` and the exact message below. The header name is matched
-   case-insensitively, and the guard runs **before body validation**: an invalid body that answers `422` without
+   `detail.code == "LEGACY_GLOBAL_VAR_HEADER"` and the exact message below. The wire spelling of the header
+   name does not matter (HTTP normalises it before the guard sees it), and the guard runs **before body
+   validation**: an invalid body that answers `422` without
    the header answers `400` with it. Nothing runs.
 2. **Body `globals` replace the stored variable in sync mode.** A flow whose Chat Input reads a stored global
    variable returns the stored value without `globals` and the request's sentinel with them.
@@ -67,11 +68,15 @@ and `load_from_db: true`, so the run's output is whatever value the variable res
 
 1. For each of `sync`, `stream` and `background`: `POST /api/v2/workflows` with a valid body for that mode and
    `X-LANGFLOW-GLOBAL-VAR-<NAME>: <sentinel>` → `400` with exactly the `detail` above.
-2. The same with the header name in lower case → the same `400` and `detail.code`.
+2. The same with the header name spelled in lower case → the same `400` and `detail.code`. This is not a
+   case-sensitivity check (the server sees header names lower-cased either way); it pins that a caller's
+   spelling does not slip past the guard.
 3. A body with an unknown field and **no** header → `422` (`extra_forbidden`); the same body **with** the header
    → `400` `LEGACY_GLOBAL_VAR_HEADER`. This is the ordering the issue states.
-4. Every refused request carried its own `session_id`; `GET /api/v1/monitor/messages?session_id=…` returns no
-   message for any of them, so nothing ran.
+4. Every refused request of steps 1–2 carried its own `session_id`; `GET /api/v1/monitor/messages?session_id=…`
+   returns no message for any of them, read repeatedly for 3 s, so nothing ran. The window covers a background
+   job, which writes its messages asynchronously after the submit returns (about 0.1 s measured). The
+   invalid-body session of step 3 can never run, so it is not part of this check.
 
 **Test 2 — body globals replace the stored variable in sync mode.**
 
@@ -84,8 +89,9 @@ and `load_from_db: true`, so the run's output is whatever value the variable res
 
 1. For each of `stream` and `background`: the request with `globals` → `422`,
    `detail.code == "MODE_UNSUPPORTED_FIELDS"`, `detail.fields == ["globals"]`.
-2. The same request without `globals` → accepted (`stream` answers `200`; `background` answers with a `job_id`),
-   so the refusal is about the field.
+2. The same request without `globals` → accepted (`stream` answers `200`; `background` answers with a `job_id`,
+   and the step waits for that job to report `completed`, so teardown never deletes the flow under it), so the
+   refusal is about the field.
 
 **Test 4 — v1 still honours the header.**
 
@@ -100,8 +106,9 @@ and `load_from_db: true`, so the run's output is whatever value the variable res
 ## Validation criterion *(required)*
 
 - **Header refused:** each mode answers `400` with the exact `detail` (error, code and message compared as a
-  whole), and no message exists for the refused sessions. A build that drops the guard answers `200`/`422`, and
-  a build that merges the header back would also run the flow and leave messages: both fail Test 1.
+  whole), and no message appears for the refused sessions within 3 s. A build that drops the guard answers
+  `200`/`422` and fails the status assertion; a build that answers `400` but still runs the flow leaves
+  messages and fails the last step.
 - **Sync globals:** the control returns the stored value **and** the overridden run returns the sentinel. Either
   half alone could pass on a broken flow; together they pin the override.
 - **Stream/background:** the `422` and its `code`/`fields` with `globals`, and acceptance without. If upstream
@@ -120,10 +127,15 @@ assertion.
 - **The guard also runs before authentication:** an unauthenticated request with the header answers `400`, and
   without it `403`. Not asserted (an auth-first reordering would be legitimate), only recorded.
 - A `globals` entry with an empty string value overrides the stored value with `""` (measured, not asserted).
+- **Key case differs between the APIs** (measured, not asserted): v2 `globals` keys match the variable name
+  exactly, so a lower-cased key does not override an upper-case variable; v1 upper-cases what follows the
+  header prefix. A caller migrating from the header to `globals` must send the variable's exact name. The spec
+  keeps its variable name upper-case for that reason.
 - `stream` and `background` are chosen by the body's `mode`; top-level `stream`/`background` booleans are
   refused as `extra_forbidden`.
-- The v2 run path also refuses body `globals` from a **non-owner** on a shared flow that holds the owner's hidden
-  credentials (`400`, *code*). Not covered: it needs a second user and a shared flow.
+- *Read from code, not measured:* the v2 run path also refuses body `globals` from a **non-owner** on a shared
+  flow that holds the owner's hidden credentials (`400`, *"Cannot override variables in a shared flow using its
+  owner's hidden credentials."*, `workflow_execution.py`). Not covered: it needs a second user and a shared flow.
 
 ---
 
@@ -138,7 +150,8 @@ assertion.
 
 ## Preconditions *(required)*
 
-- A running Langflow `1.14.0.dev32` or later (the guard ships with #16350). No provider key is needed.
+- A running Langflow `1.14.0.dev27` or later (the guard ships with #16350, first in `v1.14.0.dev27`). No provider
+  key is needed.
 - The default superuser under `AUTO_LOGIN` (bearer token for v2, an API key minted by the spec for v1).
 
 ---

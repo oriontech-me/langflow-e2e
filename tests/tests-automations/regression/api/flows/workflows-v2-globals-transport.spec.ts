@@ -30,12 +30,17 @@ const LEGACY_HEADER_DETAIL = {
 
 type Mode = "sync" | "stream" | "background";
 
+/** How long the refused sessions are watched for a message (see Test 1's last step). */
+const NOTHING_RAN_WINDOW_MS = 3_000;
+
 function unique(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 test.describe("Workflows v2 — the request-level variable transport", () => {
   // Per-run values: no other worker's variable or flow can satisfy an assertion.
+  // The name must stay upper-case: v1 maps a header name to a variable by
+  // upper-casing what follows the prefix, so a mixed-case name breaks Test 4.
   const variableName = `E2E_GV_${Date.now()}_${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
   const storedValue = unique("stored");
   const sentinel = unique("sentinel");
@@ -130,7 +135,10 @@ test.describe("Workflows v2 — the request-level variable transport", () => {
         });
       }
 
-      await test.step("a lower-case header name is refused the same way", async () => {
+      // Not a case-sensitivity check: HTTP header names are case-insensitive and the
+      // server sees them lower-cased whatever the client sends. It pins that the
+      // wire spelling a migrating caller may use does not slip past the guard.
+      await test.step("the header's wire spelling does not matter", async () => {
         const sessionId = unique("refused-lowercase");
         refusedSessions.push(sessionId);
         const res = await postV2(
@@ -144,8 +152,9 @@ test.describe("Workflows v2 — the request-level variable transport", () => {
       });
 
       await test.step("the guard runs before body validation: 422 without the header, 400 with it", async () => {
+        // This session can never run (422 or 400), so it is not added to the
+        // "nothing ran" check below.
         const invalidBody = { mode: "sync", session_id: unique("refused-invalid"), unknown_field_e2e: 1 };
-        refusedSessions.push(invalidBody.session_id);
 
         const withoutHeader = await postV2(request, invalidBody);
         const rawWithout = await withoutHeader.text();
@@ -159,11 +168,19 @@ test.describe("Workflows v2 — the request-level variable transport", () => {
       });
 
       await test.step("nothing ran for any refused request", async () => {
-        for (const sessionId of refusedSessions) {
-          expect(await messagesForSession(request, sessionId), `messages for refused session ${sessionId}`).toEqual(
-            [],
-          );
-        }
+        // Read repeatedly over a window, not once: a background job writes its
+        // messages asynchronously after the submit returns (about 0.1 s on
+        // 1.14.0.dev39), so a single early read could miss a job a 400 still queued.
+        const deadline = Date.now() + NOTHING_RAN_WINDOW_MS;
+        do {
+          for (const sessionId of refusedSessions) {
+            expect(
+              await messagesForSession(request, sessionId),
+              `messages for refused session ${sessionId}`,
+            ).toEqual([]);
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        } while (Date.now() < deadline);
       });
     },
   );
@@ -207,7 +224,6 @@ test.describe("Workflows v2 — the request-level variable transport", () => {
           expect(detail?.code).toBe("MODE_UNSUPPORTED_FIELDS");
           expect(detail?.fields).toEqual(["globals"]);
         });
-
       }
 
       await test.step("control: stream without globals is accepted", async () => {
@@ -220,7 +236,20 @@ test.describe("Workflows v2 — the request-level variable transport", () => {
         const res = await postV2(request, { mode: "background", session_id: unique("background-control") });
         const raw = await res.text();
         expect(res.ok(), `mode=background without globals — ${res.status()} ${raw.slice(0, 300)}`).toBe(true);
-        expect(JSON.parse(raw).job_id, "a background submit returns its job id").toBeTruthy();
+        const jobId = JSON.parse(raw).job_id;
+        expect(jobId, "a background submit returns its job id").toBeTruthy();
+        // Awaited so teardown never deletes the flow under a queued or running job.
+        await expect
+          .poll(
+            async () => {
+              const status = await request.get(`/api/v2/workflows?job_id=${jobId}`, {
+                headers: { Authorization: bearer },
+              });
+              return (await status.json())?.status;
+            },
+            { timeout: 30_000, intervals: [250, 500, 1000] },
+          )
+          .toBe("completed");
       });
     },
   );
