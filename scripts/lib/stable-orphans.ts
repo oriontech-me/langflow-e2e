@@ -546,7 +546,7 @@ export function renderReport(v: Verdict, opts: RenderOptions): string {
   lines.push(
     `Scanned ${v.counts.declared} declared test(s): ${v.counts.stable} carry \`@stable\`, ` +
       `${v.counts.laneGated} are lane-gated (\`@destructive\` / \`@enterprise\` / \`@serving\` / \`@instance-migration\`, ` +
-      "never combined with `@stable` — #1010), " +
+      "out of the daily until promoted — #1010, #2142), " +
       `${v.counts.neverStable} never carried the tag in the walked history.`,
   );
   lines.push("");

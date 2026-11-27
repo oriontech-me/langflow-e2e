@@ -362,10 +362,14 @@ export function collectDeclaredCounts(): DeclaredCounts {
 
 /**
  * Lane selectors, not severities. `tests/fixtures/lane.ts` grep-inverts each of
- * these out of every run that does not opt into its lane, and none of them is
- * ever combined with `@stable` because no scheduled lane exists for them
- * (#1010). A test that carries one is therefore out of the daily BY DESIGN —
- * the orphan reconciler must not read that as an unowned removal.
+ * these out of every run that does not opt into its lane. `@enterprise` and
+ * `@instance-migration` have no scheduled lane and are never combined with
+ * `@stable` (#1010). `@destructive` and `@serving` have one since #2142 (the VM
+ * daily's `E2E_LANES`, `scripts/lib/scheduled-lanes.mjs`), so their tests MAY
+ * carry `@stable`, and those that do run there. A lane-tagged test WITHOUT
+ * `@stable` is still out of the daily by design until it is promoted through the
+ * usual validation, and the orphan reconciler keeps not reading it as an unowned
+ * removal — the promotions are tracked by their own issues.
  */
 export const LANE_TAGS = ["@destructive", "@enterprise", "@serving", "@instance-migration"] as const;
 
@@ -727,6 +731,12 @@ export function declaredStableSpecFiles(
    * string Playwright greps, as the lane exclusion is. Absent, the whole @stable.
    */
   grep?: RegExp,
+  /**
+   * A scheduled lane's flag (`{ PW_DESTRUCTIVE: "1" }`, #2142): the declaration is
+   * then the lane's — the tests its run does NOT exclude — instead of the normal
+   * run's. The caller's `grep` carries the lane tag, so only the lane's tests remain.
+   */
+  laneEnv: Record<string, string> = {},
 ): DeclaredStableSpecs {
   const files: string[] = [];
   const laneOnly: string[] = [];
@@ -751,7 +761,7 @@ export function declaredStableSpecFiles(
   // `playwright.config.ts`'s, so a fourth lane tag must not need a second edit
   // here to stay correct. `{}` is the normal run — no lane flag set — which is
   // the listing the daily's matrix is built from.
-  const grepInvert = resolveLane({}).grepInvert;
+  const grepInvert = resolveLane(laneEnv).grepInvert;
   const excluded = (rel: string, t: DeclaredTest) =>
     !!grepInvert && grepInvert.test(`${rel} ${t.grepTitle}`);
 

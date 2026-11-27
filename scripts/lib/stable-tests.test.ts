@@ -400,7 +400,7 @@ test("an unreadable tag option is flagged rather than read as untagged", () => {
   assert.equal(out[0].stable, false);
 });
 
-test("the lane selectors are the four that are never combined with @stable", () => {
+test("the lane selectors are the four lane tags lane.ts resolves", () => {
   assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving", "@instance-migration"]);
 });
 
@@ -553,6 +553,38 @@ test("declaredStableSpecFiles reports a file with one @stable test, relative to 
       assert.equal(d.root, root);
       assert.deepEqual(d.laneOnly, []);
       assert.deepEqual(d.unparseable, []);
+    },
+  );
+});
+
+// #2142: a scheduled lane's declaration is the tests its own run does NOT exclude,
+// under its flag and a --grep carrying its tag — the lane-only files of the normal
+// run, and nothing else.
+test("declaredStableSpecFiles under a lane flag declares that lane's @stable tests only", () => {
+  withTree(
+    {
+      "tests-automations/regression/governance/policy.spec.ts": stableTest("p", "@destructive"),
+      "tests-automations/regression/serving/iso.spec.ts": stableTest("s", "@serving"),
+      "tests-automations/regression/core-components/a.spec.ts": stableTest("a"),
+      "tests-automations/regression/governance/unpromoted.spec.ts":
+        'test("u", { tag: ["@destructive"] }, async () => {});',
+    },
+    (root) => {
+      const normal = declaredStableSpecFiles(root);
+      assert.deepEqual(normal.files, ["tests-automations/regression/core-components/a.spec.ts"]);
+      assert.deepEqual(normal.laneOnly, [
+        "tests-automations/regression/governance/policy.spec.ts",
+        "tests-automations/regression/serving/iso.spec.ts",
+      ]);
+      const lane = declaredStableSpecFiles(root, /(?=.*(?:@destructive))(?=.*(?:@stable))/i, { PW_DESTRUCTIVE: "1" });
+      assert.deepEqual(lane.files, ["tests-automations/regression/governance/policy.spec.ts"]);
+      // Under the serving flag a destructive test is excluded again, even when the grep
+      // would select it: the lanes stay mutually exclusive, as lane.ts makes them.
+      const crossed = declaredStableSpecFiles(root, /@stable/i, { PW_SERVING_IDENTITY: "1" });
+      assert.deepEqual(crossed.files, [
+        "tests-automations/regression/core-components/a.spec.ts",
+        "tests-automations/regression/serving/iso.spec.ts",
+      ]);
     },
   );
 });

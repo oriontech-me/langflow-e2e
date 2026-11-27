@@ -127,6 +127,20 @@ SHARDS="${SHARDS:-4}"
 BASE_PORT="${BASE_PORT:-7860}"
 ECHO_PORT="${ECHO_PORT:-8080}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+# The lanes scheduled beside the shards (#2142): a space-separated subset of the names in
+# scripts/lib/scheduled-lanes.mjs (`destructive`, `serving`). Empty by default, so every
+# caller but the one that asks for them (ops/vm/run-daily.sh) runs exactly what it ran
+# before. Each lane runs the tests carrying @stable AND its tag, under its flag:
+#   destructive  on shard 1's backend, after that shard's @stable round (workers=1, the
+#                config's own pin for the lane);
+#   serving      after the shards, on SERVING_PORT, once per configuration variant, on
+#                the run's own served artifact (source targets only).
+# A lane whose selection is empty starts nothing and costs nothing; that is its state
+# until its tests are promoted.
+E2E_LANES="${E2E_LANES:-}"
+SERVING_PORT="${SERVING_PORT:-$((BASE_PORT + 8))}"
+# The shard whose backend the destructive lane borrows once its own round is over.
+DESTRUCTIVE_SHARD=1
 RETRIES="${RETRIES:-}"                        # empty = the config's default (2 in CI)
 # What a run's retries ARE, for the record: RETRIES when given, else the config's CI
 # default, which every shard runs under (run_shard exports CI=true).
@@ -518,6 +532,32 @@ require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
 require_flag DRY_RUN "$DRY_RUN"
 require_flag REQUIRE_TARGET_VERSION "$REQUIRE_TARGET_VERSION"
 require_flag CHECK_TARGET_VERSION "$CHECK_TARGET_VERSION"
+
+# E2E_LANES: only names the lane table knows, and only where the lane can run. Refused
+# up front, before any backend: a typo would otherwise drop a lane in silence, which is
+# the run reporting green over tests it never ran (#1012).
+check_lanes() {
+  local lane
+  for lane in $E2E_LANES; do
+    case "$lane" in
+      destructive) ;;
+      serving)
+        # The variants are instance environment handed to the starter; the image
+        # starter does not forward them, so an image run would serve the wrong
+        # configuration and every spec would throw. Refused rather than half-run.
+        [ "$TARGET_KIND" = "source" ] \
+          || { echo "E2E_LANES names serving, which runs only on a source target (TARGET_KIND=$TARGET_KIND)" >&2; exit 1; }
+        case "$SERVING_PORT" in '' | *[!0-9]*) echo "SERVING_PORT must be a port number, got: '$SERVING_PORT'" >&2; exit 1 ;; esac
+        if [ "$SERVING_PORT" -ge "$BASE_PORT" ] && [ "$SERVING_PORT" -lt $((BASE_PORT + SHARDS)) ]; then
+          echo "SERVING_PORT=$SERVING_PORT is one of the shards' ports ($BASE_PORT..$((BASE_PORT + SHARDS - 1)))" >&2; exit 1
+        fi
+        ;;
+      *) echo "E2E_LANES may name destructive and serving, got: '$lane'" >&2; exit 1 ;;
+    esac
+  done
+  return 0
+}
+check_lanes
 require_flag PREPARE_TARGET "$PREPARE_TARGET"
 require_flag CHECK_ISSUE_CREDENTIAL "$CHECK_ISSUE_CREDENTIAL"
 require_flag LANGFLOW_TUNNEL "$LANGFLOW_TUNNEL"
@@ -1521,6 +1561,7 @@ cleanup() {
     port=$((BASE_PORT + i - 1))
     target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" > /dev/null 2>&1 || true
   done
+  lane_enabled serving && { target_ssh "$(backend_stop_env "$SERVING_PORT") bash -s" < "$(backend_stopper)" > /dev/null 2>&1 || true; }
   [ "$WITH_ECHO" = "1" ] && target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh > /dev/null 2>&1 || true
   [ "$WITH_OLLAMA" = "1" ] && target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh > /dev/null 2>&1 || true
   # The holders last, and only after the stop scripts have had their turn: killing
@@ -1567,6 +1608,9 @@ phase_hygiene() {
     port=$((BASE_PORT + i - 1))
     target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
   done
+  if lane_enabled serving; then
+    target_ssh "$(backend_stop_env "$SERVING_PORT") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
+  fi
   target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh 2>&1 | sed 's/^/    /' || true
   target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh 2>&1 | sed 's/^/    /' || true
 
@@ -2058,6 +2102,130 @@ phase_services() {
 # PREP — job `prep`: duration-balanced shard matrix
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# SCHEDULED LANES (#2142) — decided by scripts/lane-selection.mjs, run from here
+# ---------------------------------------------------------------------------
+
+lane_enabled() { case " $E2E_LANES " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# A field of a lane's verdict ($RUN_DIR/lane-<lane>.json), as a JS expression over `v`.
+# Empty when the verdict is absent or unreadable: every caller reads empty as "unknown",
+# never as "nothing to run" being verified.
+lane_field() {
+  node -e '
+    let v; try { v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); } catch { process.exit(0); }
+    const out = (0, eval)("(v) => (" + process.argv[2] + ")")(v);
+    process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+  ' "$RUN_DIR/lane-$1.json" "$2" 2>/dev/null || true
+}
+
+lane_tests() { local n; n="$(lane_field "$1" v.tests)"; [[ "$n" =~ ^[0-9]+$ ]] && printf '%s' "$n" || printf '0'; }
+
+# What a lane will run, and whether its listing holds every file that declares a test for
+# it: listed under the lane's own flag, declared on disk under the same flag and --grep,
+# and compared. The same two halves the shards' check has (#1812), per lane.
+lane_prep() {
+  local lane="$1" flag filter areas="" alt
+  flag="$(node scripts/lane-selection.mjs flag "$lane")" || die "could not read the $lane lane's flag."
+  if [ -n "$STABLE_AREAS" ]; then
+    # shellcheck disable=SC2086  # one tag per word, already checked by check_stable_areas
+    alt="$(printf '%s\n' $STABLE_AREAS | sort -u | paste -sd '|' -)"
+    areas="(?<!\S)(?:${alt})(?!\S)"
+  fi
+  filter="$(node scripts/lane-selection.mjs filter "$lane" ${areas:+"--grep=$areas"})" || die "could not compose the $lane lane's --grep."
+  printf '%s' "$filter" > "$RUN_DIR/lane-$lane.grep"
+  env "$flag=1" npx playwright test --grep "$filter" --list --pass-with-no-tests --reporter=json \
+    > "$RUN_DIR/lane-$lane-list.json" 2> "$RUN_DIR/logs/lane-$lane-list.log" \
+    || warn "the $lane lane's listing failed — its verdict will say it is unverified (see logs/lane-$lane-list.log)."
+  npx ts-node scripts/declared-stable-specs.ts "--lane-env=$flag" "--grep=$filter" \
+    > "$RUN_DIR/lane-$lane-declared.json" 2>> "$RUN_DIR/logs/lane-$lane-list.log" \
+    || warn "could not derive the $lane lane's declared spec set — its verdict will say it is unverified."
+  node scripts/lane-selection.mjs select "$lane" "$RUN_DIR/lane-$lane-list.json" "$RUN_DIR/lane-$lane-declared.json" \
+    > "$RUN_DIR/lane-$lane.json" || warn "could not decide what the $lane lane runs."
+  info "lane $lane: $(lane_tests "$lane") test(s) in $(lane_field "$lane" v.files.length) file(s)$( [ "$(lane_tests "$lane")" = 0 ] && printf ' — nothing promoted to @stable, nothing to start')"
+  [ "$(lane_field "$lane" v.verified)" = "true" ] || warn "lane $lane: listing NOT verified — $(lane_field "$lane" v.reason)"
+}
+
+# One round of a lane run, in the CURRENT directory against PLAYWRIGHT_BASE_URL: the
+# lane's flag and --grep over the run's files, its blob renamed lane-<lane>-<run>-* into
+# all-blobs (outside the shards' count), and its exit status recorded for the merge and
+# the verdict. Returns the round's status.
+run_lane_round() {
+  local lane="$1" run="$2" files="$3" log="$4" wd flag filter blobdir rc=0 blob found=0
+  wd="$(pwd)"
+  flag="$(node scripts/lane-selection.mjs flag "$lane")" || return 1
+  filter="$(cat "$RUN_DIR/lane-$lane.grep")"
+  blobdir="$wd/blob-lane-$lane-$run"
+  rm -rf "$blobdir"
+  info "lane $lane/$run: running $(lane_field "$lane" "(v.runs.find((r) => r.name === '$run') || {}).tests || 0") test(s)"
+  # shellcheck disable=SC2086  # $files is a space-separated list of spec paths
+  ( env "$flag=1" PLAYWRIGHT_RETRIES="$RETRIES" PLAYWRIGHT_BLOB_OUTPUT_DIR="$blobdir" \
+    npx playwright test --grep "$filter" --pass-with-no-tests $files ) >> "$log" 2>&1 || rc=$?
+  for blob in "$blobdir"/*.zip; do
+    [ -e "$blob" ] || continue
+    cp "$blob" "$RUN_DIR/all-blobs/lane-$lane-$run-$(basename "$blob")"
+    found=1
+  done
+  [ "$found" = "1" ] || err "lane $lane/$run: produced no blob."
+  printf '%s\n' "$rc" > "$RUN_DIR/logs/lane-$lane-$run.status"
+  [ "$rc" = "0" ] && info "lane $lane/$run: OK" || warn "lane $lane/$run: FAILED (exit $rc, see $log)"
+  return "$rc"
+}
+
+# The serving lane: each variant on SERVING_PORT, one after the other, on the run's own
+# served artifact with the variant's instance environment. After the shards, so its
+# backend never competes with theirs. A variant whose backend does not come up records
+# no blob, and the merge names it.
+phase_lanes() {
+  lane_enabled serving || return 0
+  [ "$(lane_tests serving)" != "0" ] || { info "lane serving: nothing selected, no variant started"; return 0; }
+  log "Running the serving lane"
+  local line run env files rc
+  while IFS=$'\t' read -r run env files; do
+    [ -n "$run" ] || continue
+    rc=0
+    ( run_serving_variant "$run" "$env" "$files" ) || rc=$?
+    [ "$rc" = "0" ] || TEST_JOB_FAILED=1
+  done < <(node scripts/lane-selection.mjs runs "$RUN_DIR/lane-serving.json")
+  cd "$REPO_DIR"
+}
+
+run_serving_variant() {
+  local run="$1" env="$2" files="$3" port="$SERVING_PORT" host wd log status=0 kv extra=""
+  host="$(target_reach_host)"
+  wd="$RUN_DIR/shard-lane-serving-$run"
+  log="$RUN_DIR/logs/lane-serving-$run.log"
+  : > "$log"
+  # The variant's switches, quoted for the far side's shell like every launch value.
+  for kv in $env; do extra="$extra${kv%%=*}=$(shq "${kv#*=}") "; done
+  BACKEND_EXTRA_ENV="$extra"
+  start_backend_for_shard "lane-serving-$run" "$port" || { printf '1\n' > "$RUN_DIR/logs/lane-serving-$run.status"; return 1; }
+  prepare_shard_workdir "lane-serving-$run"
+  cd "$wd"
+  export CI=true PLAYWRIGHT_BASE_URL="http://${host}:${port}/"
+  run_lane_round serving "$run" "$files" "$log" || status=$?
+  target_ssh "$(backend_stop_env "$port") bash -s" < "$REPO_DIR/$(backend_stopper)" >> "$log" 2>&1 || true
+  return "$status"
+}
+
+# The lanes' share of the merge's completeness: every run a lane selected must have left
+# its blob. Sets LANES_COMPLETE and LANES_MISSING, and LANES_SUMMARY for the metadata.
+lanes_merge_guard() {
+  LANES_COMPLETE=true; LANES_MISSING=""; LANES_SUMMARY=""
+  local lane run
+  for lane in $E2E_LANES; do
+    LANES_SUMMARY="${LANES_SUMMARY:+$LANES_SUMMARY }$lane=$(lane_tests "$lane")"
+    for run in $(lane_field "$lane" "v.runs.map((r) => r.name).join(' ')"); do
+      if ! compgen -G "$RUN_DIR/all-blobs/lane-$lane-$run-*.zip" > /dev/null; then
+        LANES_COMPLETE=false
+        LANES_MISSING="${LANES_MISSING:+$LANES_MISSING }$lane/$run"
+      fi
+    done
+  done
+  [ "$LANES_COMPLETE" = "true" ] || warn "lane blob(s) missing: $LANES_MISSING — those lane runs died before reporting."
+  return 0
+}
+
 phase_prep() {
   log "Computing the duration-balanced shard matrix"
 
@@ -2234,6 +2402,9 @@ phase_prep() {
   LISTING_VERIFIED="$(printf '%s\n' "$listing" | sed -n 's/^LISTING_VERIFIED=//p')"
   LISTING_MISSING="$(printf '%s\n' "$listing" | sed -n 's/^LISTING_MISSING=//p')"
   LISTING_UNEXPECTED="$(printf '%s\n' "$listing" | sed -n 's/^LISTING_UNEXPECTED=//p')"
+
+  local lane
+  for lane in $E2E_LANES; do lane_prep "$lane"; done
 }
 
 # ---------------------------------------------------------------------------
@@ -2275,7 +2446,9 @@ backend_launch_env() {
   # paths without changing what a source run does.
   local repo_env="LANGFLOW_SRC_REPO= "
   [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || repo_env="LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} "
-  printf '%s' "PATH=\$HOME/.local/bin:\$PATH ${repo_env}LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)$(target_image_env "$port")${bind_env}LANGFLOW_PORT=$port"
+  # BACKEND_EXTRA_ENV: a lane variant's instance switches (#2142), already quoted; empty
+  # for every shard.
+  printf '%s' "PATH=\$HOME/.local/bin:\$PATH ${repo_env}LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)$(target_image_env "$port")${bind_env}${BACKEND_EXTRA_ENV:-}LANGFLOW_PORT=$port"
 }
 
 # Starts a backend on the target. A REMOTE one needs its ssh session HELD open, because
@@ -2488,6 +2661,14 @@ run_shard() {
   done
   [ "$found" = "1" ] || err "shard $idx: produced no blob."
 
+  # The destructive lane (#2142), on this backend now that its own round is over: the
+  # specs mutate instance-global state, so nothing else may share the instance.
+  if [ "$idx" = "$DESTRUCTIVE_SHARD" ] && lane_enabled destructive && [ "$(lane_tests destructive)" != "0" ]; then
+    local lane_files
+    lane_files="$(lane_field destructive "v.runs.length ? v.runs[0].files.join(' ') : ''")"
+    run_lane_round destructive destructive "$lane_files" "$log" || { [ "$status" != "0" ] || status=1; }
+  fi
+
   target_ssh "$(backend_stop_env "$port") bash -s" < "$REPO_DIR/$(backend_stopper)" >> "$log" 2>&1 || true
   return $status
 }
@@ -2537,7 +2718,9 @@ phase_merge() {
 
   # Guard 1 — did every expected shard produce a blob? (counts FILES)
   local found
-  found="$(find "$RUN_DIR/all-blobs" -maxdepth 1 -name '*.zip' | wc -l | tr -d ' ')"
+  # The shards' blobs only: a scheduled lane's (lane-*.zip) would otherwise stand in for
+  # a shard that died (#2142). Lanes have their own guard below.
+  found="$(find "$RUN_DIR/all-blobs" -maxdepth 1 -name 'shard-*.zip' | wc -l | tr -d ' ')"
   SHARD_COMPLETE=true
   if [ "$found" -lt "$SHARD_TOTAL" ]; then
     warn "only $found/$SHARD_TOTAL blobs present — the merged report is INCOMPLETE (a shard died before reporting). Failures may be undercounted."
@@ -2545,6 +2728,7 @@ phase_merge() {
   else
     info "$found/$SHARD_TOTAL blobs present"
   fi
+  lanes_merge_guard
 
   # -c is not optional above one shard, and the reason is the per-shard working copy.
   # Each shard runs from its OWN copy of the tree (prepare_shard_workdir, because
@@ -2795,6 +2979,10 @@ phase_merge() {
     collection_gate_keys_absent "${COLLECTION_GATE_KEYS_ABSENT:-}" \
     listing_verified "${LISTING_VERIFIED:-}" \
     listing_missing "${LISTING_MISSING:-}" \
+    lanes "${E2E_LANES:-}" \
+    lanes_selected "${LANES_SUMMARY:-}" \
+    lanes_complete "${LANES_COMPLETE:-true}" \
+    lanes_missing "${LANES_MISSING:-}" \
     tests_total "${RUN_TESTS:-0}" \
     merge_ok "${MERGE_OK:-true}"
 
@@ -3677,9 +3865,25 @@ phase_verdict() {
     failed=1
   fi
   if [ "${TEST_JOB_FAILED:-0}" = "1" ]; then
-    err "at least one shard had a failing test."
+    err "at least one shard or scheduled lane had a failing test."
     failed=1
   fi
+  if [ "${LANES_COMPLETE:-true}" = "false" ]; then
+    err "INCOMPLETE report — scheduled lane run(s) left no blob: ${LANES_MISSING}."
+    failed=1
+  fi
+  local lane
+  for lane in $E2E_LANES; do
+    if [ "$(lane_field "$lane" v.verified)" != "true" ]; then
+      err "the $lane lane could not verify what it runs: $(lane_field "$lane" v.reason || true)"
+      err "Whether a spec declaring @stable and ${lane}'s tag was left out is UNKNOWN (#1012)."
+      err "Triage: $RUN_DIR/lane-$lane.json and logs/lane-$lane-list.log."
+      failed=1
+    elif [ "$(lane_field "$lane" 'v.missing.length')" != "0" ]; then
+      err "spec file(s) declaring an @stable $lane test were ABSENT from that lane's listing: $(lane_field "$lane" "v.missing.join(', ')")"
+      failed=1
+    fi
+  done
   # LISTING COMPLETENESS (#1812/#1818). Its own `if`, never an `elif` of the report
   # chain above: a file that never entered the matrix is a fact about this run's INPUT,
   # and the chain above is about its output. Both can be true, and on a day the report
@@ -3816,6 +4020,7 @@ main() {
   fi
 
   phase_shards
+  phase_lanes
   phase_merge
   phase_publish
   phase_verdict
