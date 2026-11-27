@@ -75,7 +75,17 @@ LAUNCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%S)"
 
 # A simple background command, for the reason the source starter gives at length: with
 # `( cd X && cmd ) &`, $! is a subshell and the stop script would orphan the worker.
+#
+# The identity block mirrors scripts/start-langflow-source.sh's, with its defaults: a
+# worker runs the same startup as the API, superuser setup included, and refuses to
+# start without credentials (measured on the lane's first live run: "Username and
+# password must be set"). The API gets them inline from its starter, so a worker
+# launched beside it inherits none of them.
 cd "${STATE_DIR}"
+LANGFLOW_AUTO_LOGIN=true \
+LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
+LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
+LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}" \
 LANGFLOW_BACKGROUND_BACKEND=scaled \
 LANGFLOW_CONFIG_DIR="${STATE_DIR}/data" \
 LANGFLOW_DATABASE_URL="${DATABASE_URL}" \

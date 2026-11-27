@@ -61,6 +61,9 @@ function setup({ mode = "register", api = true } = {}) {
     `#!/usr/bin/env bash
 [ "$1" = worker ] || { echo "fake langflow: $*" >&2; exit 3; }
 printf 'BACKEND=%s CONFIG=%s DB=%s CWD=%s\\n' "$LANGFLOW_BACKGROUND_BACKEND" "$LANGFLOW_CONFIG_DIR" "$LANGFLOW_DATABASE_URL" "$PWD" > ${JSON.stringify(envLog)}
+printf 'AUTO_LOGIN=%s SUPERUSER=%s PASSWORD=%s\\n' "$LANGFLOW_AUTO_LOGIN" "$LANGFLOW_SUPERUSER" "$LANGFLOW_SUPERUSER_PASSWORD" >> ${JSON.stringify(envLog)}
+# A real worker runs the API's startup and refuses without a superuser's credentials.
+[ -n "$LANGFLOW_SUPERUSER_PASSWORD" ] || { echo "ValueError: Username and password must be set" >&2; exit 1; }
 case ${JSON.stringify(mode)} in
   register) sleep 1; ${register} ;;
   crash) echo "boom: no job table" >&2; exit 1 ;;
@@ -99,7 +102,9 @@ test("a worker starts on the API's own database, in scaled mode, and is ready on
   // The same directory and database the source starter gives the API on this port.
   assert.equal(
     readFileSync(ctx.envLog, "utf8").trim(),
-    `BACKEND=scaled CONFIG=${ctx.state}/data DB=sqlite:///${ctx.state}/data/langflow.db CWD=${ctx.state}`,
+    `BACKEND=scaled CONFIG=${ctx.state}/data DB=sqlite:///${ctx.state}/data/langflow.db CWD=${ctx.state}\n` +
+      // The source starter's identity defaults: the worker's startup needs them too.
+      "AUTO_LOGIN=true SUPERUSER=langflow PASSWORD=langflow123",
   );
   // And a second start beside the same port is refused: two workers, one queue.
   const twice = run(START, ctx);
@@ -174,4 +179,17 @@ test("both scripts are self-contained: the VM lane pipes them to bash -s on the 
     assert.doesNotMatch(text, /\b(source|\.) +["']?\$\{?(REPO|HERE|SCRIPT_DIR)/, script);
     assert.doesNotMatch(text, /\$\(dirname/, `${script} must not read a file beside itself`);
   }
+});
+
+test("the worker's identity defaults are the source starter's, so the two never disagree", () => {
+  const source = readFileSync(join(HERE, "start-langflow-source.sh"), "utf8");
+  const worker = readFileSync(START, "utf8");
+  for (const name of ["LANGFLOW_SUPERUSER", "LANGFLOW_SUPERUSER_PASSWORD", "LANGFLOW_DEACTIVATE_TRACING"]) {
+    const re = new RegExp(`^${name}="\\$\\{${name}:-([^}]*)\\}"`, "m");
+    const s = source.match(re);
+    assert.ok(s, `the source starter no longer sets ${name} this way`);
+    assert.equal(worker.match(re)?.[1], s[1], name);
+  }
+  assert.match(source, /^LANGFLOW_AUTO_LOGIN=true \\$/m);
+  assert.match(worker, /^LANGFLOW_AUTO_LOGIN=true \\$/m);
 });
