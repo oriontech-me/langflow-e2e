@@ -918,9 +918,12 @@ ondemand_install() {
         | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"* \
         | "lfx was pinned to "*)
         ondemand_fail 4 build_failed "langflow==$OD_VERSION installed but cannot be served, not a test result: ${said:-no reason given}" ;;
-      # uv names a pin of this executor's as a requirement of the request ("you require
-      # lfx==..."): the conflict is the pin, and asking again cannot help.
-      *) if [ -n "$nosol" ] && [ -n "$pin" ] && [[ "$nosol" == *"you require lfx"* ]] && [[ " $pin " == *" lfx=="* ]]; then
+      # uv names lfx as a requirement of the request ("you require lfx==...") while lfx
+      # is pinned to langflow's version, not to what langflow-base requires (its JSON
+      # was unreadable): the conflict is the pin, and asking again cannot help. With
+      # lfx==<langflow-base's requirement> uv says the same words for index lag, so
+      # that case keeps the reading below.
+      *) if [ -n "$nosol" ] && [ -n "$pin" ] && [[ "$nosol" == *"you require lfx"* ]] && [[ " $pin " == *" lfx "* ]]; then
            ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION with $pin_said: the lfx pin this executor added contradicts the release's own requirements, so asking again will not help (an executor defect, not the release's); uv said: $nosol"
          fi
          [ -z "$nosol" ] || ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION${pin_said:+ with $pin_said}: the release's own requirements, or an index that has not caught up with a release published minutes ago (ask again shortly); uv said: $nosol"

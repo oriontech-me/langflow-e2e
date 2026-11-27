@@ -89,7 +89,7 @@ export function judge(json, asked) {
  *
  * Since 1.14.0.dev23 a nightly's langflow-base==1.14.0.devN requires lfx==1.14.0.dev(N+1),
  * so the version the pin must name is read from langflow-base, never assumed equal to
- * langflow's. Only the unconditional requirement counts (`lfx[sqlite]==V`): the ones
+ * langflow's. Only the requirement the install gets counts (`lfx[sqlite]==V`): the ones
  * behind an `extra ==` marker are optional and the install asks for none. Every
  * unconditional one must name the same single `==` version, or nothing is pinned.
  */
@@ -103,7 +103,8 @@ export function lfxPin(json) {
     // PEP 508: name, optional [extras], then the specifier, bare or in parentheses.
     const m = req.trim().match(/^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*\(?\s*([^()]*?)\s*\)?$/);
     if (!m || m[1].toLowerCase().replace(/[-_.]+/g, "-") !== "lfx") continue;
-    if (marker !== undefined && marker.trim() !== "") continue;
+    // Optional only behind an extra; any other marker (python_version) still applies.
+    if (marker !== undefined && /\bextra\b/.test(marker)) continue;
     const exact = m[2].match(/^===?\s*([0-9][0-9A-Za-z.]*)$/);
     if (!exact) return "";
     if (pin && pin !== exact[1]) return "";

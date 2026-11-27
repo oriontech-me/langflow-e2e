@@ -173,6 +173,8 @@ process.exit(${probe.exit});
   writeFileSync(join(repo, "scripts", "lib", "pypi-release.mjs"), readFileSync(join(ROOT, "scripts", "lib", "pypi-release.mjs")));
   const distLog = join(dir, "dist.log");
   // The installer: what it was given, and a venv with a langflow in it, as the real one.
+  // uv's paragraph as it prints it, line breaks and all: the executor cuts and joins it.
+  if (typeof distNoSolution === "string") writeFileSync(join(dir, "uv-nosolution.txt"), `${distNoSolution}\n`);
   stub(
     join(repo, "scripts"),
     "prepare-target-dist.sh",
@@ -181,7 +183,7 @@ echo "LANGFLOW_DIST_PRERELEASE=$LANGFLOW_DIST_PRERELEASE" >> ${q(distLog)}
 echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed) fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(distLog)}
 echo "target: langflow==$TARGET_VERSION" >&2
 ${distExit === 0 ? `mkdir -p "$LANGFLOW_DIST_VENV/bin" "$LANGFLOW_DIST_VENV/lib/langflow/frontend" && printf '#!/bin/sh\n' > "$LANGFLOW_DIST_VENV/bin/langflow" && chmod +x "$LANGFLOW_DIST_VENV/bin/langflow"` : ""}
-${typeof distNoSolution === "string" ? `printf '%s\\n' ${q(distNoSolution)} >&2` : distNoSolution ? `printf '  x No solution found when resolving dependencies:\\n  -> Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,\\n      we can conclude that your requirements are unsatisfiable.\\n' >&2` : ""}
+${typeof distNoSolution === "string" ? `cat ${q(join(dir, "uv-nosolution.txt"))} >&2` : distNoSolution ? `printf '  x No solution found when resolving dependencies:\\n  -> Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,\\n      we can conclude that your requirements are unsatisfiable.\\n' >&2` : ""}
 ${distError ? `echo ${q(`ERROR: ${distError}`)} >&2
 echo "the second line of its reason" >&2` : ""}
 lfx="$TARGET_VERSION"; for t in $LANGFLOW_DIST_PIN; do case "$t" in lfx==*) lfx="\${t#lfx==}" ;; esac; done

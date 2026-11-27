@@ -73,6 +73,8 @@ test("lfx's pin is the one exact version langflow-base requires, and nothing for
   assert.equal(lfxPin(base(["lfx<1.13.dev0,>=1.12.5rc1", ...extras("<1.13.dev0,>=1.12.5rc1")])), "");
   // Only the unconditional requirement counts: an extra's exact pin is not the install's.
   assert.equal(lfxPin(base(["lfx~=1.12.3", 'lfx==1.12.3; extra == "x"'])), "");
+  // A marker that is not an extra does not make it optional.
+  assert.equal(lfxPin(base(['lfx==1.14.0.dev36; python_version >= "3.10"'])), "1.14.0.dev36");
   // Sister distributions are not lfx; PEP 503 spellings of lfx are.
   assert.equal(lfxPin(base(["lfx-amazon==0.1.6"])), "");
   assert.equal(lfxPin(base(["LFX==1.2.3"])), "1.2.3");
