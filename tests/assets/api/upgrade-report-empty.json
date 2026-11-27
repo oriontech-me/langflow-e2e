@@ -1,0 +1,70 @@
+{
+  "format_version": 1,
+  "generated_at": "2026-11-27T15:58:34Z",
+  "source": {
+    "dialect": "sqlite",
+    "identity": {
+      "kind": "sqlite",
+      "locator": {
+        "path": "/app/.venv/lib/python3.14/site-packages/langflow/langflow.db"
+      },
+      "sha256": "c677a8d1e00d12dc7207f0dc0425c7665ae964821edac6caf5bd030ba85c74fe"
+    },
+    "alembic_revision": "a09a699afb52",
+    "counts": {
+      "flows": 0,
+      "components": 0,
+      "flow_versions": 0
+    }
+  },
+  "target": {
+    "langflow": "1.14.0.dev39",
+    "lfx": "1.14.0.dev40",
+    "component_index_sha256": "00c05ffe414a6fdeea9e60c47b9449ee30fe944e078ce3db4fea8f21f3c50b7a",
+    "bundles": [],
+    "custom_components": {
+      "path": [],
+      "count": 0
+    }
+  },
+  "inputs": {
+    "output": "/e2e/report.json",
+    "json": true
+  },
+  "network_policy": {
+    "component_callbacks": "blocked_by_python_audit_events",
+    "local_system_metadata_probes": "allowlisted",
+    "source_connections": "explicit_read_only_databases"
+  },
+  "settings": {
+    "allow_custom_components": true,
+    "substitute_outdated_component_code": true,
+    "block_code_interpreter_components": false,
+    "custom_component_admin_only": true,
+    "allow_components_paths_override": true,
+    "components_path": [],
+    "catalog_rules": {
+      "from": "policy_bundle_active",
+      "blocked_component_keys": [],
+      "blocked_template_keys": []
+    }
+  },
+  "summary": {
+    "flows": {
+      "ok": 0,
+      "warn": 0,
+      "fail": 0
+    },
+    "nodes": {
+      "ok": 0,
+      "outdated_safe": 0,
+      "outdated_breaking": 0,
+      "blocked": 0,
+      "retired": 0,
+      "customized": 0,
+      "could_not_verify": 0
+    }
+  },
+  "flows": [],
+  "errors": []
+}
