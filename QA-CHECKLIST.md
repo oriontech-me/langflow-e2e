@@ -458,6 +458,17 @@
 - [x] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode (Text→Message, Word Count→JSON override, JSON Select Keys, Table Filter) → `core-components/data-operations-component.spec.ts`
 - [x] Legacy operations components link/redirect to Data Operations (banner resolves the replacement, link filters the sidebar, old names still find the new component, legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
 
+#### 3.11 Decision Model and Smart Router's decision mode (1.14)
+
+> Langflow 1.14's decision models (`langflow-ai/langflow` #15861, #16330, #16122): a typed question (Choice, Boolean, Score) answered by a provider's decision endpoint, the distribution and confidence kept as evidence (#2571). Neither component had a spec. Tests 1–3 call no model; 4–7 use OpenAI `gpt-6-luna`, and 7 needs tracing on. Contract and measurements: `docs/core-components/decision-model-and-smart-router.md`.
+
+- [x] Smart Router's routing mode, through `custom_component/update` as the editor applies it: Decision Model hides the language model and shows the decision fields, and each decision type sets its own outputs (Choice `category_N_result` + `default_result`, Boolean `yes_result`/`no_result`, Score `level_N_result`); back to Language Model restores the default → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] Decision Model's type decides its fields: Boolean hides the options and shows what yes and no mean; Choice and Score show the options → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] The decision catalog lists only decision models (`gpt-6-luna` with choice/boolean/score), the fields are typed apart (`decision` vs `language`), and a decision is refused before any call when Smart Router lacks its Else output or a minimum probability, or the model is switched off in Model Providers — each with its exact message → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] A Decision Model answers a Boolean (billing → `probability_true` above 0.5) and a Choice (crash → `selected_option: "technical"`, probabilities over the declared ids only) with structured evidence → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] Smart Router in decision mode fires the chosen route (a refund request → the Billing output) and leaves the other routes and the Else empty → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] The output inspection renders the decision: the pick marked among the declared options, the model, type and question → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] The trace records a Decision Model span carrying the decision, and the trace view renders it with the same request id → `core-components/decision-model-and-smart-router.spec.ts`
 ---
 
 ## core-functionality/ — Core and Operational Logic
@@ -872,6 +883,15 @@
 - [x] A2A Agent component, Internal mode — the `mode=Internal` dropdown lists the locally published agent and a run returns a `Response` containing the sentinel the published passthrough flow echoes (no LLM on either side). The node opens in **External**, so the mode tab must be clicked for the picker to exist at all, and the dropdown is **folder-scoped** (`list_a2a_agents_by_flow_folder`), so both flows live in the same project. Asserted through a wired `Chat Output` in the playground, **not** the node's output modal: `output-inspection-response-a2aagent` reads "No Data Available" even after a successful run whose stream carried `outputs.response.message` (measured 3× on `1.12.0.dev18`, candidate product defect recorded in the spec doc) → `core-functionality/a2a/a2a-client-agent-internal.spec.ts`
 - [x] A2A Agent component, External mode — pointed at this instance's own card URL, the `agent_card` display renders the card (titled with the target's name, **without** "Requires an API key" while public), a run returns the echoed sentinel, and the target stored it under the A2A server's `<uuid>:<contextId>` session — never the Internal `…:a2a:<id>` one, so the call went over JSON-RPC. The same flow moved into an `auth_type=apikey` project renders **no** card when `agent_url` is re-pointed with no key (an anonymous card request gets 404 since langflow-ai/langflow#16538, #2548; the display does not follow a move on its own), renders the card with "Requires an API key" once the owner's key is in `api_key` and the URL is re-pointed again (the key travels on the card fetch too), and the keyed run still returns a sentinel; `@regression` for `LE-1845` (`NameError: name 'call_a2a_agent' is not defined`). The loopback block recorded here is gone: `_call_external_agent` validates with the connector policy, which lets a literal loopback host through by default (`connector_ssrf_allow_loopback`), and the self-call completes under `LANGFLOW_WORKERS=1` (measured on `1.13.0.dev12`). A failed card fetch is silent — no error, the display is just absent — so the card's presence is the assertion → `core-functionality/a2a/a2a-client-agent-external.spec.ts`
 - [x] A2A Agent used as a Tool — an Agent with the `A2AAgent` wired as a tool (`tool_mode`, Internal mode) and *Requires Approval* on pauses on the approval card (`send_to_agent` + the sentinel in its args) with the target flow **not yet run**; Approve resumes the run, the tool call completes (`tool-status-done`), the target stores the sentinel under `…:a2a:<target id>`, and the caller's persisted `send_to_agent` output carries it. `@regression` for `LE-1963` (`self.user_id is None` → "badly formed hexadecimal UUID string" on tool-approval resume), which lives only in Internal mode and does not reproduce on `1.13.0.dev12`. The model's final wording is not asserted — the same model echoed the sentinel on one run and answered "The message has been sent successfully." on the next. LLM-dependent (`tier: "tool-calling"`) — `--workers=1` + `models.json` → `core-functionality/a2a/a2a-client-agent-as-tool.spec.ts`
+
+
+### core-functionality/evals/ — Evaluations UI (1.14)
+
+> The pages Langflow 1.14's evals ship (`langflow-ai/langflow` #15999, on by default since #16591): the project sidebar's **Evaluations** entry, the Datasets page and the flow toolbar's **Evaluate** stepper (#2565). Every count the pages show is checked against the API the API sections already cover (§ 1.16 datasets, § 1.17 evaluations). Contract and measurements: `docs/core-functionality/evals/evals-ui.md`.
+
+- [x] The Evaluations sidebar entry, the evals pages and the toolbar's Evaluate button follow `feature_flags.evals`: on, the entry opens `/assets/datasets` and the flow shows Evaluate beside Publish; with the config routed to `evals: false`, `/assets/datasets` redirects to `/flows`, the sidebar has no entry and the same flow shows Publish without Evaluate → `core-functionality/evals/evals-ui.spec.ts`
+- [x] A dataset created from a bundled example (examples menu) opens on its page showing every row (`<n> items`, `aria-rowcount` n + 1) and the API agrees; Add item saves only once an input is typed, and the new row is counted on the page and stored by the API as the last manual row → `core-functionality/evals/evals-ui.spec.ts`
+- [x] The Evaluate stepper (Setup → Scoring → Review) gates Next on a dataset, defaults to Exact match alone, estimates "No model calls" for a keyless flow, and Create and run opens the evaluation on its run, whose page reads "1 of 2 rows passed" / 50% exactly as `GET /api/v1/evaluation-runs/{id}` reports → `core-functionality/evals/evals-ui.spec.ts`
 
 ---
 
@@ -1976,7 +1996,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 131 | 124 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
-| `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
+| `core-components/` — Core Components | 101 | 99 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 43 | 38 | 1 | 1 | 3 |
@@ -1986,6 +2006,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
 | `core-functionality/a2a/` | 21 | 17 | 0 | 1 | 3 |
+| `core-functionality/evals/` | 3 | 3 | 0 | 0 | 0 |
 | `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
@@ -1999,7 +2020,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **983** | **853 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **993** | **863 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2015,7 +2036,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 977 `test()` calls carrying the `@stable` tag, distributed across 336 spec
+> 987 `test()` calls carrying the `@stable` tag, distributed across 338 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2361,6 +2382,13 @@
 - [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
 - [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
 - [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
+- [x] Smart Router's routing mode swaps the language model for the decision fields, per decision type → `decision-model-and-smart-router.spec.ts`
+- [x] Decision Model's type decides which fields show → `decision-model-and-smart-router.spec.ts`
+- [x] decision models form their own catalog, and incomplete or switched-off decisions are refused → `decision-model-and-smart-router.spec.ts`
+- [x] Decision Model answers a Boolean and a Choice question with structured evidence → `decision-model-and-smart-router.spec.ts`
+- [x] Smart Router in decision mode fires the chosen route and leaves the others empty → `decision-model-and-smart-router.spec.ts`
+- [x] the output inspection shows the decision evidence → `decision-model-and-smart-router.spec.ts`
+- [x] the trace records the decision, and the trace view renders it → `decision-model-and-smart-router.spec.ts`
 - [x] two API Request nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
@@ -2504,6 +2532,11 @@
 - [x] API request with no token returns 401 or 403 → `session-expired.spec.ts`
 - [x] UI shows login page when auto_login is unavailable (session cannot be established) → `session-expired.spec.ts`
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
+
+#### core-functionality/evals/
+- [x] the evaluations entry, pages and Evaluate button follow the evals flag → `evals-ui.spec.ts`
+- [x] a dataset created from a bundled example shows all its rows, and an added row persists → `evals-ui.spec.ts`
+- [x] the Evaluate stepper runs a keyless evaluation and the result view agrees with the API → `evals-ui.spec.ts`
 
 #### core-functionality/integrations/
 - [x] each site-bound provider lists its scopes ticked, locks the required ones, and names its setup guide → `connection-oauth-site-bound.spec.ts`
