@@ -82,7 +82,7 @@
 # Human progress goes to stderr; stdout carries ONLY `key=value` lines, so a caller
 # can capture the summary without parsing prose:
 #
-#   prepared_version=<v>  prepared_base_version=<v>  venv=<path>
+#   prepared_version=<v>  prepared_base_version=<v>  prepared_lfx_version=<v>  venv=<path>
 #   python=<x.y>  frontend_dir=<path>  install_s=<n>  total_s=<n>
 #
 # Environment:
@@ -99,6 +99,10 @@
 #                           rule, which `--prerelease=allow` would otherwise replace,
 #                           pulling other projects' betas into the venv (measured on
 #                           1.12.5rc1, #2261 review). Each one pinned is checked after.
+#                           lfx may name its own version, `lfx==<version>`: since
+#                           1.14.0.dev23 a nightly's langflow-base==devN requires
+#                           lfx==dev(N+1), so the caller reads that version from
+#                           langflow-base and the check expects it (#2547).
 #   LANGFLOW_DIST_PRERELEASE  uv's pre-release mode, passed as --prerelease=<mode>
 #                           (default empty: no flag, as the daily has always installed).
 #                           Named rather than left to uv's default, which UV_PRERELEASE
@@ -137,8 +141,9 @@ case "${PRERELEASE}" in
   "" | disallow | allow | if-necessary | explicit | if-necessary-or-explicit) ;;
   *) die "LANGFLOW_DIST_PRERELEASE must be one of uv's pre-release modes (disallow, allow, if-necessary, explicit, if-necessary-or-explicit) or empty, got '${PRERELEASE}'. Nothing has been touched." ;;
 esac
-[[ "${PIN}" =~ ^((langflow-base|lfx)( (langflow-base|lfx))?)?$ ]] \
-  || die "LANGFLOW_DIST_PIN may name langflow-base and lfx, space-separated, got '${PIN}'.
+PIN_TOKEN='(langflow-base|lfx(==[0-9][0-9A-Za-z.]*)?)'
+[[ "${PIN}" =~ ^(${PIN_TOKEN}( ${PIN_TOKEN})?)?$ ]] \
+  || die "LANGFLOW_DIST_PIN may name langflow-base and lfx (or lfx==<version>), space-separated, got '${PIN}'.
 Nothing has been touched."
 [ -n "${TARGET_VERSION}" ] \
   || die "TARGET_VERSION is empty. This script does not pick a version:
@@ -181,7 +186,18 @@ nothing rather than something stale."
 
 T="$(date +%s)"
 pins=()
-for p in ${PIN}; do pins+=("${p}==${TARGET_VERSION}"); done
+# The version lfx is pinned to, when it is: its own when the caller named one.
+LFX_PIN=""
+for p in ${PIN}; do
+  case "${p}" in
+    *==*) pins+=("${p}") ;;
+    *) pins+=("${p}==${TARGET_VERSION}") ;;
+  esac
+  case "${p}" in
+    lfx==*) LFX_PIN="${p#lfx==}" ;;
+    lfx) LFX_PIN="${TARGET_VERSION}" ;;
+  esac
+done
 [ -n "${PRERELEASE}" ] && pins=("--prerelease=${PRERELEASE}" ${pins[@]+"${pins[@]}"})
 # Which uv, and what of its environment could change the resolution, on the record.
 say "installing with $(uv --version 2>/dev/null || echo 'uv of unknown version')${UV_PRERELEASE:+, UV_PRERELEASE=${UV_PRERELEASE}}...${pins[*]:+ (${pins[*]})}"
@@ -201,7 +217,7 @@ say "installed in ${INSTALL_S}s"
 # will serve them. Its stderr is NOT redirected: command substitution captures only
 # stdout, so a traceback reaches the operator instead of being replaced by a sentence
 # this script guessed.
-if ! PROBE="$("${VENV}/bin/python" - <<'PY'
+if ! PROBE="$(LFX_PIN="${LFX_PIN}" "${VENV}/bin/python" - <<'PY'
 import os
 import sys
 import importlib.metadata as md
@@ -237,6 +253,7 @@ facts = {
     "base_version": installed("langflow-base"),
     "lfx_version": installed("lfx"),
     "want_canon": canon(os.environ.get("TARGET_VERSION", "")),
+    "lfx_want_canon": canon(os.environ.get("LFX_PIN", "")),
     "package_dir": locations[0] if locations else "",
     "python_version": "%d.%d" % sys.version_info[:2],
 }
@@ -282,14 +299,12 @@ what serves the product. On a stable version the dependency is a range, so the
 resolver is free to pick a base the published image never contained — which would
 make the whole run describe a product nobody asked for."
 
-# lfx, when it was pinned: the pin asked for this version, so anything else is a
-# resolver that did not do what it was told.
-case " ${PIN} " in
-  *" lfx "*)
-    [ "$(probe lfx_version_canon)" = "${WANT_CANON}" ] \
-      || die "lfx was pinned to ${TARGET_VERSION} and is $(probe lfx_version) after the install."
-    ;;
-esac
+# lfx, when it was pinned: the pin asked for that version (the caller's, or this
+# one), so anything else is a resolver that did not do what it was told.
+if [ -n "${LFX_PIN}" ]; then
+  [ "$(probe lfx_version_canon)" = "$(probe lfx_want_canon)" ] \
+    || die "lfx was pinned to ${LFX_PIN} and is $(probe lfx_version) after the install."
+fi
 
 # --- Does it carry the built UI? -------------------------------------------------
 [ -n "${PACKAGE_DIR}" ] \
@@ -307,6 +322,7 @@ say "venv ready: langflow==${GOT} (langflow-base ${BASE_GOT}, python ${PYTHON_AC
 
 emit "prepared_version=${GOT}"
 emit "prepared_base_version=${BASE_GOT}"
+emit "prepared_lfx_version=$(probe lfx_version)"
 emit "venv=${VENV}"
 emit "python=${PYTHON_ACTUAL}"
 emit "frontend_dir=${FRONTEND_DIR}"

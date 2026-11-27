@@ -375,6 +375,35 @@ test("a pinned lfx that is not the version after the install is refused", () => 
   assert.equal(run(setup({ lfxInstalled: "1.13.0" })).status, 0);
 });
 
+// #2547: a nightly's langflow-base==1.14.0.devN requires lfx==1.14.0.dev(N+1), so the
+// caller names lfx's own version and the check after the install expects that one.
+test("lfx pinned to a version of its own is installed at it and checked against it", () => {
+  const env = { TARGET_VERSION: "1.14.0.dev35", LANGFLOW_DIST_PIN: "langflow-base lfx==1.14.0.dev36" };
+  const ctx = setup();
+  const r = run(ctx, env);
+  assert.equal(r.status, 0, r.stderr);
+  const line = readFileSync(ctx.uvLog, "utf8").split("\n").find((l) => l.startsWith("pip install")) ?? "";
+  assert.match(line, /langflow==1\.14\.0\.dev35 langflow-base==1\.14\.0\.dev35 lfx==1\.14\.0\.dev36$/);
+  assert.match(r.stdout, /^prepared_lfx_version=1\.14\.0\.dev36$/m, "what landed is reported");
+  // Landing at langflow's version is the resolver ignoring the pin, not a pass.
+  const wrong = run(setup({ lfxInstalled: "1.14.0.dev35" }), env);
+  assert.equal(wrong.status, 2);
+  assert.match(wrong.stderr, /lfx was pinned to 1\.14\.0\.dev36 and is 1\.14\.0\.dev35 after the install/);
+  // Either order means the same.
+  assert.equal(run(setup(), { ...env, LANGFLOW_DIST_PIN: "lfx==1.14.0.dev36 langflow-base" }).status, 0);
+});
+
+test("an lfx version that is not a plain version is refused before anything is touched", () => {
+  for (const pin of ["lfx==", "lfx==1.0;rm", "lfx==>=1.0", "lfx==1.0 lfx==1.1 lfx==1.2", "langflow-base==1.0", "lfx=1.0"]) {
+    const ctx = setup();
+    seedVenv(ctx);
+    const r = run(ctx, { LANGFLOW_DIST_PIN: pin });
+    assert.equal(r.status, 2, pin);
+    assert.match(r.stderr, /LANGFLOW_DIST_PIN may name langflow-base and lfx/, pin);
+    assert.ok(existsSync(join(ctx.venv, "yesterday.txt")), `${pin}: the venv must be untouched`);
+  }
+});
+
 test("the venv is destroyed before the install, so the checks inspect this install", () => {
   const ctx = setup();
   const leftover = seedVenv(ctx);

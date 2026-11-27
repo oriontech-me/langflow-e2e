@@ -109,7 +109,9 @@ is exactly one of `ONDEMAND_REF`, a branch of upstream built into an image, and
 `ONDEMAND_VERSION`, a version published on PyPI in PEP 440's normal form (`1.13.1rc0`,
 `1.13.0.dev12`, as PyPI spells it), installed with the daily's
 `scripts/prepare-target-dist.sh` into `/root/e2e-on-demand/venv` and served from it.
-`langflow-base` and `lfx` are pinned to the same version where PyPI has them, Python is
+`langflow-base` is pinned to the same version where PyPI has it, and `lfx` to the exact
+version that `langflow-base` requires (a 1.14 nightly since `dev23` requires `lfx` one dev
+ahead, #2547), or to the same version where that requirement is a range. Python is
 3.14 unless the release excludes it (then 3.13 or 3.12, which uv downloads once), uv
 resolves under `--prerelease=if-necessary-or-explicit` whatever `UV_PRERELEASE` says
 (with uv 0.12.5, the qa's, that resolves rcs, finals and nightlies alike), and versions

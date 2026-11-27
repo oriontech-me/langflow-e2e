@@ -15,8 +15,9 @@
 # version alone (#2261). No image is built. Unlike the daily's, which is always the
 # newest, the version may be any release: PyPI is asked first (scripts/lib/pypi-
 # release.mjs) for its own spelling, a file to install and the newest interpreter its
-# requires_python allows, and langflow-base and lfx are pinned to the version too where
-# PyPI has them, because a release asks for langflow-base as a range, under uv's
+# requires_python allows, and langflow-base is pinned to the version too where PyPI has
+# it, because a release asks for langflow-base as a range (lfx to the exact version that
+# langflow-base requires, or to the version under a range, #2547), under uv's
 # if-necessary-or-explicit pre-release mode, named so no uv setting changes it. From
 # 1.12 on only. The team's usual question is "is the rc that was just published
 # good?", and a branch build is not the artefact users install.
@@ -810,6 +811,17 @@ ondemand_clear_pulled() {
   if [ -n "$left" ]; then printf '%s' "$left" > "$OD_STATE/pulled-image"; else rm -f "$OD_STATE/pulled-image"; fi
 }
 
+# Whether uv's no-solution paragraph ($1) says the request needs an lfx version other
+# than the pinned one ($2): "you require lfx==X" with X not $2 (#2547 review).
+ondemand_lfx_pin_conflicts() {
+  local v
+  while IFS= read -r v; do
+    v="${v#you require lfx==}"; v="${v%.}"
+    [ -n "$v" ] && [ "$v" != "$2" ] && return 0
+  done < <(printf '%s\n' "$1" | grep -oE 'you require lfx==[0-9][0-9A-Za-z.]*' || true)
+  return 1
+}
+
 # The published version into $STATE/venv, where the build would put the image: asked of
 # PyPI first, so a version it does not have is refused in seconds and before the venv
 # is touched, then installed by scripts/prepare-target-dist.sh -- the daily's own
@@ -820,7 +832,7 @@ ondemand_install() {
   [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
   # 404 is PyPI's "no such version" and 200 its release; anything else (the network, a
   # 5xx) is failed: the install reads the same index, and the pins below need it too.
-  local python=3.14 pin="" verdict requires p nosol
+  local python=3.14 pin="" pin_said="" lfx_pin="" verdict requires p nosol nosol_full
   # Before 1.12, langflow-base was numbered 0.N (1.11.6 requires langflow-base 0.11.6),
   # which the installer's check that it is the version cannot match: every such run
   # would end build_failed, blaming the release. Refused instead, before anything.
@@ -863,20 +875,38 @@ ondemand_install() {
   # most releases, and a pin to a version it never had fails the install.
   # Any answer but those two is the network's: unpinned, a release would resolve the
   # newest langflow-base and end build_failed, blaming the release for a blip.
+  # lfx's version is read from that langflow-base's own requirement when it names one
+  # exactly (#2547): since 1.14.0.dev23 a nightly's langflow-base==devN requires
+  # lfx==dev(N+1), so a pin to langflow's version contradicts it and nothing installs.
+  # A range (a final, an rc) or a JSON that cannot be read keeps the same-version pin,
+  # which the range admits and every such release has always resolved with.
   for p in langflow-base lfx; do
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$pypi/$p/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
+    if [ "$p" = lfx ] && [ -n "$lfx_pin" ]; then
+      pin="${pin:+$pin }lfx==$lfx_pin"
+      pin_said="${pin_said:+$pin_said and }lfx==$lfx_pin (langflow-base's own requirement)"
+      continue
+    fi
+    code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/$p/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
     case "$code" in
-      200) pin="${pin:+$pin }$p" ;;
+      200)
+        pin="${pin:+$pin }$p"
+        pin_said="${pin_said:+$pin_said and }$p==$OD_VERSION"
+        if [ "$p" = langflow-base ]; then
+          lfx_pin="$(node "$OD_REPO/scripts/lib/pypi-release.mjs" --lfx-pin "$meta" 9>&- 8>&- 2>/dev/null | sed -n 's/^lfx_pin=//p')" || lfx_pin=""
+          [[ "$lfx_pin" =~ ^[0-9][0-9A-Za-z.]*$ ]] || lfx_pin=""
+        fi
+        ;;
       404) ;;
-      *) ondemand_fail 3 failed "could not ask PyPI whether it has $p==$OD_VERSION (HTTP ${code:-none}): the network or the index, not the version" ;;
+      *) rm -f "$meta"; ondemand_fail 3 failed "could not ask PyPI whether it has $p==$OD_VERSION (HTTP ${code:-none}): the network or the index, not the version" ;;
     esac
+    rm -f "$meta"
   done
   # uv's pre-release mode, named rather than its default, which UV_PRERELEASE or a
   # uv.toml would change: if-necessary-or-explicit resolves a pinned rc, a final and a
   # nightly (whose lfx requires a langflow-sdk .devM) with the qa's uv, and lets in no
   # other project's beta the daily's install does not already get (#2261).
   OD_VENV="$OD_STATE/venv"
-  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin:+, with $pin at the same version} (at most ${limit_s}s)"
+  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin_said:+, with $pin_said} (at most ${limit_s}s)"
   out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PIN="$pin" LANGFLOW_DIST_PYTHON="$python" LANGFLOW_DIST_PRERELEASE=if-necessary-or-explicit \
     timeout -k 60 "$limit_s" "$OD_REPO/scripts/prepare-target-dist.sh" 9>&- 8>&- 2> "$err")" || rc=$?
   cat "$err" 2>/dev/null
@@ -886,6 +916,9 @@ ondemand_install() {
   # uv's own word that the requirements cannot be met together: the release's metadata,
   # or an index that has not seen a release published minutes ago -- not the machine.
   # uv's paragraph alone: from its first line up to the installer's own ERROR: line.
+  # The whole of it, joined, for the pin check; cut to six lines and 400 bytes for the
+  # message, where a version cut short would read as another one.
+  nosol_full="$(awk '/No solution found/ { f = 1 } /^ERROR: / { f = 0 } f' "$err" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
   nosol="$(awk '/No solution found/ { f = 1 } /^ERROR: / { f = 0 } f' "$err" 2>/dev/null | head -n 6 | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//' | cut -c1-400)"
   rm -f "$err"
   if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$limit_s" ]; }; then
@@ -899,14 +932,22 @@ ondemand_install() {
         | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"* \
         | "lfx was pinned to "*)
         ondemand_fail 4 build_failed "langflow==$OD_VERSION installed but cannot be served, not a test result: ${said:-no reason given}" ;;
-      *) [ -z "$nosol" ] || ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION${pin:+ with $pin at the same version}: the release's own requirements, or an index that has not caught up with a release published minutes ago (ask again shortly); uv said: $nosol"
+      # uv concluding that the request needs an lfx other than the one pinned ("you
+      # require lfx==<another>"): the pin itself is the conflict, so asking again cannot
+      # help. Index lag or a release defect names the pinned version only, and keeps the
+      # reading below.
+      *) if [ -n "$nosol" ] && [[ " $pin " == *" lfx"[\ =]* ]] && ondemand_lfx_pin_conflicts "$nosol_full" "${lfx_pin:-$OD_VERSION}"; then
+           ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION with $pin_said: the lfx pin this executor added contradicts the release's own requirements, so asking again will not help (an executor defect, not the release's); uv said: $nosol"
+         fi
+         [ -z "$nosol" ] || ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION${pin_said:+ with $pin_said}: the release's own requirements, or an index that has not caught up with a release published minutes ago (ask again shortly); uv said: $nosol"
         ondemand_fail 3 failed "could not install langflow==$OD_VERSION (prepare-target-dist.sh exited $rc): the machine, the network or the index, which this cannot tell from the version: ${said:-no reason given}" ;;
     esac
   fi
-  local line
+  local line lfx_got=""
   while IFS= read -r line; do
     case "$line" in
       prepared_version=*) OD_TARGET_VERSION="${line#prepared_version=}" ;;
+      prepared_lfx_version=*) lfx_got="${line#prepared_lfx_version=}" ;;
       frontend_dir=*) OD_FRONTEND="${line#frontend_dir=}" ;;
       install_s=*) OD_BUILD_S="${line#install_s=}" ;;
     esac
@@ -916,6 +957,8 @@ ondemand_install() {
   [[ "$OD_BUILD_S" =~ ^[0-9]{1,6}$ ]] || OD_BUILD_S=""
   # Parsed by the worker's readProgress, as the build's "built:" line is.
   echo "installed: langflow==$OD_VERSION, version $OD_TARGET_VERSION, ${OD_BUILD_S:-?}s, in $OD_VENV"
+  # On a line of its own: the one above is parsed by the worker's readProgress.
+  echo "installed lfx: ${lfx_got:-unknown}${lfx_pin:+ (pinned to the version langflow-base requires, lfx==$lfx_pin)}"
 }
 
 # A version's Langflow on this lane's ports, by the starter's own pid files: run-e2e.sh
