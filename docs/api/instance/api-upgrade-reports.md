@@ -22,30 +22,40 @@ nobody gave; *safe* otherwise.
    `POST /api/v1/upgrade-reports/checks` (`{target_version}`), which streams NDJSON events (`started`,
    `heartbeat`, `flow`, `imported` with the `report_id`). A target newer than the running release needs `uvx`
    and the network; the **running release itself** (`main_version`, `1.14.0` here — a `.devN` string is refused
-   `422 invalid_target_version`) is checked in process, with no network. That is the target this spec uses.
-2. **A check covers every flow on the instance** and holds a global lock: a second check while one runs is
-   refused `409 {"code": "check_running"}`. One check took about 40 s locally. The spec retries on `409` and
-   asserts on its own flows as a **subset** of the report.
+   `422 invalid_target_version`) is checked without either, in a child process the server starts
+   (`python -m langflow upgrade-check`). That is the target this spec uses.
+2. **A check covers every flow on the instance and is expensive**: it dry-runs every outdated node (up to 30 s
+   each). Measured: about 40 s with 2–4 flows, **242 s with 30 flows**. A check holds a per-process lock: a second
+   one is refused `409 {"code": "check_running"}`, or, in the window before the run takes the lock, answered
+   `200` with a single `{"event": "error", "code": "check_running"}` event. The spec retries both, with the lock
+   wait and the check on separate budgets (300 s and 600 s).
 3. **The frozen outdated flow (`outdated_flow.json`, #2424) is not repairable**: four of its five nodes are
    `outdated_breaking`, so its preview reads `manual` (`reason_codes: ["outdated_breaking"]`). Its OpenAI node
-   alone is `outdated_safe`, so a flow holding that node is `ready` for repair.
+   alone is `outdated_safe`, so a flow holding that node is `ready` for repair
+   (`tests/helpers/flows/outdated-safe-flow.ts`).
 4. **Apply needs database maintenance on**: without it, `409 "Enable database maintenance before applying
-   repairs"`. Maintenance pauses writes **instance-wide**, so the apply path runs only in the `@destructive` lane
-   (see *Tags*). The issue assumed the normal lane.
+   repairs"`. Maintenance pauses writes **instance-wide**.
+
+Because of 2 and 4, the two instance-wide operations (a check, an applied repair) run in the serial
+`@destructive` lane; everything else runs in the normal lane. See *Tags*.
 
 ---
 
 ## Tags *(required)*
 
-Tests 1–4: `@stable` `@api` `@database`. Test 5: `@destructive` `@api` `@database`.
+Tests 1–3: `@stable` `@api` `@database`. Tests 4–5: `@destructive` `@api` `@database`.
 
 No functional tag fits better than the issue's `@components` for an instance-administration API, so the
-cross-cutting pair is used, as the `api/instance/` siblings do. Tests 1–4 never turn maintenance on and only
-read or preview, so they run in the normal lane and are `@stable`.
+cross-cutting pair is used, as the `api/instance/` siblings do. Tests 1–3 never run a check and never turn
+maintenance on: they only preview and probe refusals, take seconds, and are `@stable`.
 
-**Test 5 is `@destructive` and therefore not `@stable`** (CLAUDE.md: never combine the two). Applying a repair
-requires turning database maintenance on, which refuses writes for every other test on the instance. It runs
-with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive` (one worker).
+**Tests 4–5 are `@destructive` and therefore not `@stable`** (CLAUDE.md: never combine the two).
+- Test 4 runs a check: it scans and dry-runs every flow on the instance (242 s with 30 flows) and loads the
+  server meanwhile. In the parallel daily that would cost minutes per run and slow every other spec, so it runs in
+  the serial lane, which runs alone. This was decided with the team on #2567's review.
+- Test 5 applies a repair, which needs database maintenance: that refuses writes for every other test.
+
+Run them with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive` (one worker).
 
 ---
 
@@ -55,79 +65,81 @@ with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive` (one worker).
 
 - *breaking*: `tests/assets/flows/outdated_flow.json` as is (Prompt, Chat Input, OpenAI, Chat Output, Chat
   Memory, four edges);
-- *safe*: that fixture's OpenAI node plus a **current** Chat Output from the live catalog, with one edge
-  `text_output → input_value`.
+- *safe*: built by `buildOutdatedSafeFlow`: that fixture's OpenAI node, kept with its frozen code, plus a
+  **current** Chat Output from the live catalog, joined by one edge `text_output → input_value` whose handles come
+  from the catalog builder (the target handle is the live Chat Output's `input_value`).
 
-A *check* means `POST /api/v1/upgrade-reports/checks` with `target_version` = the server's `main_version`,
-retried while it answers `409 check_running`, reading the whole NDJSON stream; its last event must be
-`imported` with a `report_id` and `incomplete: false`.
+**Test 1 — preview is read-only: ready for the safe flow, manual for the breaking one.**
 
-**Test 1 — a check against the running release reports the breaking flow and the safe one.**
+1. `POST /api/v1/upgrade-repairs/preview` with both flow ids → `200`, a 64-hex `target_sha256`; *safe* reads
+   `status: "ready"`, `updated_nodes: 1`, with its `version_token` and `data_sha256`; *breaking* reads
+   `status: "manual"`, `reason_codes: ["outdated_breaking"]`.
+2. Both flows' stored `data` deep-equals what it was before the preview, and neither has a saved version.
 
-1. Run a check. The stream starts with `started` and ends with `imported`.
-2. `GET /api/v1/upgrade-reports/{report_id}` → `200`; its `document.flows` holds both flows (subset; other
-   workers' flows may be there too).
+**Test 2 — apply outside maintenance is refused and writes nothing.** With maintenance off (asserted through
+`GET /api/v1/maintenance/status`), apply the *safe* selection with the preview's `target_sha256` → `409`,
+`detail: "Enable database maintenance before applying repairs"`; the flow's `data` is unchanged and it has no
+saved version.
+
+**Test 3 — every route refuses a non-superuser.** A throwaway user (`createThrowawayUser`) gets `403`
+`"The user doesn't have enough privileges"` on: `GET /api/v1/upgrade-reports`, `GET …/{id}`, `GET …/{id}/export`,
+`GET …/{id}/repairs`, `GET …/checks/releases`, `POST …/checks`, `POST /api/v1/upgrade-reports`,
+`POST /api/v1/upgrade-repairs/preview`, `POST /api/v1/upgrade-repairs/apply`.
+
+**Test 4 (`@destructive`) — a check against the running release reports the breaking flow and the safe one.**
+
+1. Run a check (`target_version` = the server's `main_version`), retrying a lock refusal; read the whole stream.
+   It starts with `started` and ends with `imported`, naming the `report_id`.
+2. `GET /api/v1/upgrade-reports/{report_id}` → `200`; its `document.flows` holds both flows (other flows may be
+   there too), and no entry of `document.errors` names either of them. The report's `incomplete` flag is **not**
+   asserted: any unreadable flow elsewhere on the instance sets it.
 3. *breaking*: `status: "fail"`, at least one node `outdated_breaking`, each such node with at least one
    `reasons[]` entry.
 4. *safe*: `status: "ok"`, its OpenAI node `outdated_safe`.
 5. The report appears in `GET /api/v1/upgrade-reports` (history).
 
-**Test 2 — preview is read-only: ready for the safe flow, manual for the breaking one.**
-
-1. `POST /api/v1/upgrade-repairs/preview` with both flow ids → `200`, a 64-hex `target_sha256`; *safe* reads
-   `status: "ready"`, `updated_nodes: 1`, with its `version_token` and `data_sha256`; *breaking* reads
-   `status: "manual"`, `reason_codes: ["outdated_breaking"]`.
-2. Both flows' stored `data` is byte-identical to before the preview, and neither has a saved version.
-
-**Test 3 — apply outside maintenance is refused and writes nothing.** With maintenance off (asserted through
-`GET /api/v1/maintenance/status`), apply the *safe* selection with the preview's `target_sha256` → `409`,
-`detail: "Enable database maintenance before applying repairs"`; the flow's `data` is unchanged and it has no
-saved version.
-
-**Test 4 — every route refuses a non-superuser.** A throwaway user (`createThrowawayUser`) gets `403`
-`"The user doesn't have enough privileges"` on: `GET /api/v1/upgrade-reports`, `GET …/{id}`, `GET …/{id}/export`,
-`GET …/{id}/repairs`, `GET …/checks/releases`, `POST …/checks`, `POST /api/v1/upgrade-reports`,
-`POST /api/v1/upgrade-repairs/preview`, `POST /api/v1/upgrade-repairs/apply`.
-
 **Test 5 (`@destructive`) — under maintenance, a repair updates the flow, keeps its edges and a retained
-recovery version.**
+recovery version.** It repairs its own copy of the *safe* flow, so the shared one stays outdated.
 
-1. Preview the *safe* flow (no `report_id`) → `ready`. Turn maintenance on (`POST /api/v1/maintenance/on`);
-   it is turned off in a `finally`, whatever happens.
+1. Preview the copy (no `report_id`) → `ready`; record its stored edges. Turn maintenance on
+   (`POST /api/v1/maintenance/on`); it is turned off in a `finally`, whatever happens.
 2. A stale `target_sha256` → `409 "The target registry changed. Preview the selected flows again"`.
 3. A stale `data_sha256` → `200` with `status: "conflict"`, and the flow unchanged.
 4. Apply the preview's selection → `200`, `status: "updated"`, `updated_nodes: 1`, a `recovery_version_id`.
-5. The stored flow: the OpenAI node's code changed, the Chat Output untouched, the one edge intact.
+5. The stored flow: the OpenAI node's code changed, the Chat Output's code unchanged, and the stored edges
+   deep-equal the ones recorded in step 1.
 6. `GET /api/v1/flows/{id}/versions/` → one entry, `id == recovery_version_id`, `retained: true`,
    `retained_reason: "admin-upgrade-repair"`, description *"Recovery before an administrator upgraded this
    flow"*.
 7. A new preview reads `unchanged`.
 
-**Teardown (`afterAll`).** Delete both flows (their versions go with them) and the throwaway user; turn
-maintenance off if Test 5 left it on.
+**Teardown (`afterAll`).** Delete every flow the file created (their versions go with them) and the throwaway
+user; turn maintenance off if a test left it on.
 
 ---
 
 ## Validation criterion *(required)*
 
-- **Report:** both flows present with the expected flow status and node statuses. A check that stopped seeing
-  breaking changes would mark *breaking* `ok`.
-- **Preview read-only:** `ready`/`manual` as above **and** byte-identical data with no version; a preview that
-  wrote would change the hash or leave a version.
+- **Preview read-only:** `ready`/`manual` as above **and** deep-equal data with no version; a preview that wrote
+  would change the data or leave a version.
 - **Maintenance gate:** the exact `409` and an unchanged flow.
 - **Superuser only:** the exact `403` on all nine routes.
-- **Repair (destructive):** `updated`, the code changed, the edge intact, the recovery version retained with its
-  reason, and `unchanged` after; the two stale-input refusals as measured.
+- **Report (destructive):** both flows present with the expected flow and node statuses, and no report error
+  about them. A check that stopped seeing breaking changes would mark *breaking* `ok`.
+- **Repair (destructive):** `updated`, the code changed, the edges unchanged, the recovery version retained with
+  its reason, and `unchanged` after; the two stale-input refusals as measured.
 
 ---
 
 ## Notes
 
-- Report rows have no delete route: every check leaves one row in the instance's report history. They hold
-  flow names and statuses only.
+- Report rows have no delete route: every check leaves one row in the instance's report history (flow names and
+  statuses only).
 - The node statuses come from comparing the frozen fixture with the running catalog, so a component that later
-  stops being breaking could flip *breaking* towards `warn`/`ok`. The assertions are deliberately "at least one
+  stops being breaking could flip *breaking* towards `warn`/`ok`. The assertion is deliberately "at least one
   node breaking", not the exact four.
+- The lock is per server process (`run.py`: two workers can each run one), so with `LANGFLOW_WORKERS > 1` two
+  checks may run at once and no `409` occurs; the spec does not depend on the refusal either way.
 
 ---
 
@@ -143,7 +155,7 @@ maintenance off if Test 5 left it on.
 ## Preconditions *(required)*
 
 - Langflow 1.14 with the upgrade-report routes (`1.14.0.dev39` measured).
-- Test 5: the destructive lane (`PW_DESTRUCTIVE=1`, one worker).
+- Tests 4–5: the destructive lane (`PW_DESTRUCTIVE=1`, one worker).
 
 ---
 
@@ -151,9 +163,10 @@ maintenance off if Test 5 left it on.
 
 - `src/backend/base/langflow/api/v1/upgrade_reports.py` — check, history, detail, export, the superuser gate
 - `src/backend/base/langflow/api/v1/upgrade_repairs.py` — preview and apply
-- `src/backend/base/langflow/services/upgrade_reports/run.py` — `parse_target_version`, `running_version`, the in-process check
-- `src/backend/base/langflow/services/flow_repair/service.py` — repair statuses, the maintenance requirement, the stale-input refusals
-- `src/backend/base/langflow/services/flow_repair/retention.py` — the retained recovery version and its reason
+- `src/backend/base/langflow/services/upgrade_reports/run.py` — `parse_target_version`, `running_version`, the check's child process and its lock
+- `src/backend/base/langflow/services/flow_repair/service.py` — repair statuses, the maintenance requirement, the stale-input refusals, the recovery description
+- `src/backend/base/langflow/services/flow_repair/retention.py` — `REPAIR_RETENTION_REASON`
 - `src/backend/base/langflow/services/flow_repair/models.py` — `RepairResult` statuses
 - `tests/assets/flows/outdated_flow.json` — the frozen outdated flow (#2424)
+- `tests/helpers/flows/outdated-safe-flow.ts` — the repairable flow, built from the frozen node and the live catalog
 - `tests/helpers/auth/throwaway-user.ts` — the non-superuser
