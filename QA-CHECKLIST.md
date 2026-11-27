@@ -293,6 +293,17 @@
 - [x] (`@destructive`) On with a reason records it and the superuser in `set_by`; a regular user's flow update, flow create, variable create, run (`POST /build/{id}/flow`) and even `POST /maintenance/off` are refused `503` with the exact body, while their reads and sign-in work and the superuser still creates and updates a flow; off lifts it and the user's writes go through again → `api/instance/api-maintenance-mode.spec.ts`
 - [x] (`@destructive`) *Settings › Upgrade reports* (opened on an imported empty report): on through the confirmation dialog with a reason shows *Maintenance is on.*, the reason, and the changes-paused notice, which the flow editor shows too; off through its dialog removes the notice → `api/instance/api-maintenance-mode.spec.ts`
 
+#### 1.20 Scoped API keys on OSS — unavailable, and keys stay full-access (1.14)
+
+> Upstream #16000. On OSS the authorization service does not support key scopes, so the feature degrades to "not available". A refusal is the safe direction: a key with a stored policy cannot authenticate while authorization is off, so an accepted write would lock the key out rather than restrict it. Queued admission (a job whose key is deleted while queued) is unreachable on the in-process backend and belongs to #2574.
+
+- [x] `GET /api/v1/api_key/permission-options` answers `{supported: false}` with empty roles, resource actions and scope types → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] `PATCH /api/v1/api_key/{id}/permissions` with a well-formed policy is refused `403 "Scoped API keys require enabled authorization"` and the key keeps `permissions: null`; an empty policy is `422`, `null` is allowed, an unknown key is `404` → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] `POST /api/v1/api_key/` with `permissions` is refused with the same `403` and creates no key → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] After a refused restriction the key keeps full owner access: on a cookie-less context (no header and a bogus key refused `403`) it creates a flow owned by its owner, runs it on v1 and v2 with the sentinels echoed, and `total_uses` counts exactly those three calls → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] *Settings › API keys* shows the Permissions column as "Full owner access"; its dialog shows the unavailable notice, holds no form control, keeps *Save permissions* disabled and sends no permission write → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] The create-key modal has no scope step: its creation request carries no `permissions` and the key it creates is unrestricted → `api/auth/api-key-permissions-oss.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
