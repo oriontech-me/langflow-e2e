@@ -260,6 +260,19 @@
 - [x] Export: a UTF-8 CSV attachment with a BOM, CRLF lines and formula-leading cells prefixed with `'` (CSV injection); re-importing it reproduces commas, quotes, embedded newlines, non-ASCII text and `null` exactly, and the formula row with its apostrophe (lossy by design) → `api/evals/api-datasets.spec.ts`
 - [x] Ownership: another user gets `404 "Dataset not found"` on all eight per-id operations and an empty list, the owner's dataset is unchanged, and the other user may reuse the same name (unique per user) → `api/evals/api-datasets.spec.ts`
 
+
+#### 1.17 Evals API — evaluations and runs (1.14)
+
+> The scoring half of evals (#2564): the **14** operations of `/api/v1/evaluations` and `/api/v1/evaluation-runs`, keyless by construction — an echo flow (Chat Input → Chat Output) built from the live catalog, a six-row dataset each of whose rows a different rule decides, and the text scorers, which call no model. Runs execute server-side, so the row `error` and `failed_items` are the verdict, not the flow-error gate. Contract and measurements: `docs/api/evals/api-evaluations.md`.
+
+- [x] `check` reports the echo as evaluable (one Chat Output, nothing blocking) and blocks a flow with no output with `no_output`; an evaluation of that flow is still **created**, but starting its run is `422 no_output`; an unknown flow is `404` → `api/evals/api-evaluations.spec.ts`
+- [x] `estimate` counts the dataset's rows and **zero** LLM calls, judge calls, tokens and cost for text scorers → `api/evals/api-evaluations.spec.ts`
+- [x] Validation refuses an `llm_judge` with no model, duplicate scorer names, an unknown text-scorer config key and an empty scorer list (`422`, asserted on `loc` — LE-2462 redacts the scorer type in `msg`); an unknown evaluation and run are `404` → `api/evals/api-evaluations.spec.ts`
+- [x] A keyless run: `202 queued` on the pinned draft and the dataset's revision, `409` on a second start, then `completed` with `passed_items: 4`, `rows.decided: 5` of 6, `pass_rate 0.8`, means `0.6`/`0.8`, and every row's score as predicted (contains-only passes at the 0.5 threshold, `gamma`/`GAMMA` passes case-insensitively, a row with no expected is undecided); the CSV export, the evaluation, the list and the run history agree; the Playground history stays empty → `api/evals/api-evaluations.spec.ts`
+- [x] `case_sensitive: true` fails the case-only mismatch, and `POST /evaluations?run=true` answers with the **run**, not the evaluation → `api/evals/api-evaluations.spec.ts`
+- [x] Cancel stops a run mid-way (`cancelled`, `finished_at` set), the results stop growing and the list and export hold exactly the scored rows; cancelling again is `409` → `api/evals/api-evaluations.spec.ts`
+- [x] A run snapshots the draft as a version **retained** for the evaluation, a second run of the unchanged flow reuses it, an edit leaves the finished run's config alone, and deleting the evaluation keeps the version but releases it (`retained: false`) → `api/evals/api-evaluations.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
@@ -1849,6 +1862,7 @@
 - [x] Approving `["jira.issue_created", "schedule"]` leaves exactly those two trigger components in the catalog and the sidebar, pauses the `pending` rows of the denied provider kinds (`policy_blocked`) while the approved one stays `pending`, refuses enabling a denied kind over its own connection with the policy's `403` and two `trigger:policy_denied` rows, and lets the approved kind reach its own first gate (`409 background_runs_not_allowed`) → governance/trigger-policy-enforcement.spec.ts
 - [ ] A provider trigger that arms and fires: a `ready` connection for any of the nine needs a provider account (#2503), and a push kind also a public HTTPS ingress; so do a provider push activation, a poll round, Discord's gateway, pausing an `active` provider trigger by policy and a dispatch refused under a provider kind
 
+
 #### 24.23 The Schedule picker (#2569)
 
 > Since `1.14.0.dev30` (upstream #16322) the Schedule trigger asks for a schedule type instead of a cron, and flow save compiles it on the server. API half: `api/triggers/api-triggers-schedule-picker.spec.ts`; canvas half: `core-functionality/integrations/trigger-schedule-picker.spec.ts`.
@@ -1940,7 +1954,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 117 | 110 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 124 | 117 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1963,9 +1977,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 110 | 0 | 92 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
+| `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **969** | **839 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **968** | **838 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1981,7 +1995,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 954 `test()` calls carrying the `@stable` tag, distributed across 331 spec
+> 965 `test()` calls carrying the `@stable` tag, distributed across 333 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2080,6 +2094,13 @@
 - [x] duplicates a dataset into an independent copy → `api-datasets.spec.ts`
 - [x] exports a spreadsheet-safe CSV that round-trips everything else → `api-datasets.spec.ts`
 - [x] another user can neither see nor change the dataset → `api-datasets.spec.ts`
+- [x] check reports an evaluable flow and blocks a flow with no output → `api-evaluations.spec.ts`
+- [x] estimate counts the rows and no model calls for text scorers → `api-evaluations.spec.ts`
+- [x] refuses invalid scorers and unknown ids → `api-evaluations.spec.ts`
+- [x] a keyless run scores every row by exact_match, contains and the threshold → `api-evaluations.spec.ts`
+- [x] case_sensitive exact_match fails a case-only mismatch → `api-evaluations.spec.ts`
+- [x] cancel stops a run, and a finished run cannot be cancelled again → `api-evaluations.spec.ts`
+- [x] a run pins a retained flow version, and deleting the evaluation releases it → `api-evaluations.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
@@ -2176,6 +2197,10 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+- [x] the legacy global-variable header is refused in every mode, before the body is validated → `workflows-v2-globals-transport.spec.ts`
+- [x] body globals replace the stored variable in sync mode → `workflows-v2-globals-transport.spec.ts`
+- [x] stream and background refuse body globals with MODE_UNSUPPORTED_FIELDS → `workflows-v2-globals-transport.spec.ts`
+- [x] v1 run still honours the legacy global-variable header → `workflows-v2-globals-transport.spec.ts`
 - [x] batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working → `workflows-v2-job-lifecycle.spec.ts`
 - [x] batch create refuses a duplicate endpoint_name with its own message → `workflows-v2-job-lifecycle.spec.ts`
 - [x] a completed background run reports the session it was given → `workflows-v2-job-lifecycle.spec.ts`
