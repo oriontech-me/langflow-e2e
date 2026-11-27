@@ -78,10 +78,13 @@ exec sleep 300
   return { root, state, db, envLog, runCmd: `${join(bin, "langflow")} run` };
 }
 
+// The API stand-in is a `sleep`: on Linux its /proc/<pid>/environ is THIS runner's, which
+// carries none of an API's settings, so every case reads a missing environ unless it
+// is about inheritance (that case passes a file of its own).
 const run = (script, ctx, env = {}) =>
   spawnSync("bash", [script], {
     encoding: "utf8",
-    env: { ...process.env, LANGFLOW_PORT: PORT, LANGFLOW_SRC_STATE_ROOT: ctx.root, LANGFLOW_SRC_RUN_CMD: ctx.runCmd, LANGFLOW_WORKER_READY_TIMEOUT_S: "10", LANGFLOW_WORKER_STOP_TIMEOUT_S: "5", ...env },
+    env: { ...process.env, LANGFLOW_PORT: PORT, LANGFLOW_SRC_STATE_ROOT: ctx.root, LANGFLOW_SRC_RUN_CMD: ctx.runCmd, LANGFLOW_WORKER_READY_TIMEOUT_S: "10", LANGFLOW_WORKER_STOP_TIMEOUT_S: "5", LANGFLOW_WORKER_API_ENVIRON: join(ctx.root, "no-environ"), ...env },
     timeout: 60_000,
   });
 const pidOf = (ctx) => Number(readFileSync(join(ctx.state, "worker.pid"), "utf8").trim());
