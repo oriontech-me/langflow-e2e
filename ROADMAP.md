@@ -41,25 +41,23 @@ and the per-wave convergence target.** Everything else is a pointer.
 
 > Snapshot — refresh from `QA-CHECKLIST.md` when it changes. Do not hand-maintain.
 
-_Refreshed 2026-08-10. Every figure below is copied from the source named beside it —
+_Refreshed 2026-11-27. Every figure below is copied from the source named beside it —
 do not compute one by hand._
 
-- **Coverage (validated `[x]` / total):** **76%** (402 / 532 checklist bullets) — the
+- **Coverage (validated `[x]` / total):** **87%** (853 / 983 checklist bullets) — the
   auto-generated Coverage Summary table in `QA-CHECKLIST.md`
-- **`@stable` `test()` calls:** **473** across **183** spec files — the auto-generated
+- **`@stable` `test()` calls:** **977** across **336** spec files — the auto-generated
   `Phase 0 — Validated` header in `QA-CHECKLIST.md`
-- **Total `test()` calls:** **679** in **254** spec files — `PW_DESTRUCTIVE=1 npx
+- **Total `test()` calls:** **1130** in **353** spec files — `PW_DESTRUCTIVE=1 npx
   playwright test --list --reporter=json` (the destructive lane is excluded from a
   plain `--list`, so a bare count misses it)
-- **Disabled tests:** **13** `test.fixme` + **6** statically skipped `test()` — the
-  same `--list`, counting Playwright's own `skip`/`fixme` annotations. The previous
-  figure (54 `test.skip`) came from grepping `test.skip(`, which counts every
-  **conditional in-body** `test.skip(cond, reason)` — a runtime gate, not a disabled
-  test. There are ~159 of those; the *Disabled-test triage* pool item below is sized
-  off the wrong one of the two.
-- **Spec-doc coverage:** **201** of 251 regression specs have a doc; 122 of those also
-  declare upstream dependencies — `npm run validate:specs`
-- **Langflow version last validated against:** `1.12.x` (nightly `1.12.0.dev20`)
+- **Disabled tests:** **2** `test.fixme` + **4** statically skipped `test()` — the
+  same `--list`, counting Playwright's own `skip`/`fixme` annotations (a conditional
+  in-body `test.skip(cond, reason)` is a runtime gate, not a disabled test, and is not
+  counted)
+- **Spec-doc coverage:** **376** of 384 specs have a doc; 247 of those also declare
+  upstream dependencies — `npm run validate:specs`
+- **Langflow version last validated against:** `1.14.x` (nightly `1.14.0.dev39`)
 
 **Biggest structural gaps** (where coverage is near-zero relative to product value):
 
@@ -143,7 +141,14 @@ without it the Wave 4 promotions would land in a red daily.
 | ~~**2**~~ ✅ | Components, RAG, flows & observability | ~58 | core-components §2 (22) + knowledge-ingestion §5 (8) + flow-functionality §12 (15) + observability §8 (8) + playground §9 (5) | ~74% | ✅ 2026-07-17 |
 | ~~**3**~~ ✅ | Infra stabilization & test coverage | off-band | infra (not a coverage axis) + new-test batch: §Pages, §3.8, §6.2–6.4, §9.1, §13–14 | n/a (stabilization) | ✅ 2026-07-24 |
 | ~~**4**~~ ✅ | Canvas UI/UX & MCP | ~46 | ui-ux §15 (42) + mcp §13–14 remainder | ~87% | ✅ 2026-07-29 (early) |
-| **5** ◀ current | 1.11.0 feature coverage | ~6 (+1 scoping) | core-components §3.9–3.10 + model-provider §7.8 + playground §9.6 (+ A2A scoping issue) | directional (+6 `[x]`) | 2026-08-14 |
+| ~~**5**~~ ✅ | 1.11.0 feature coverage | ~6 (+1 scoping) | core-components §3.9–3.10 + model-provider §7.8 + playground §9.6 (+ A2A scoping issue) | directional (+6 `[x]`) | ✅ 2026-08-10 |
+| ~~**6**~~ ✅ | Security, MCP consumption & Memory Base | off-band | see the wave's section | n/a | ✅ 2026-08-26 |
+| ~~**7**~~ ✅ | OSS API coverage | off-band | see the wave's section | n/a | ✅ 2026-09-24 |
+| ~~**8**~~ ✅ | Inherited spec triage | derived | see the wave's section | n/a | ✅ 2026-09-24 |
+| ~~**9**~~ ✅ | Inherited spec triage (T2) | derived | see Wave 8's section | n/a | ✅ 2026-09-24 |
+| ~~**10**~~ ✅ | Memory Base ingestion & agent trust | see section | see the wave's section | directional | ✅ 2026-10-08 (window; #1896 carried) |
+| ~~**11**~~ ✅ | Multi-edit, instance migration & integrations | see section | see the wave's section | directional | ✅ 2026-11-10 |
+| **12** ◀ current | 1.14 OSS features | see section | see the wave's section | directional | 2026-12-14 |
 
 > Bullet counts and `%` are planned targets (`~`), not contracts — see **Cadence & review**.
 > Each wave mixes creation (`[ ]`→`[x]`) and validation (`[-]`→`[x]`): Wave 1 is
@@ -231,7 +236,10 @@ credential-gated); the A2A scoping issue produced named checklist bullets.
 Review (2026-08-14): reassess; date the A2A spec batch and revisit the pool
 (templates refresh, MCP-servers-in-DB persistence) for Wave 6.
 
-### Wave 6 — Security, MCP consumption & Memory Base  ·  2026-08-10 → 2026-08-27
+### ✅ Wave 6 — Security, MCP consumption & Memory Base  ·  2026-08-10 → 2026-08-27 · **DONE** (delivered 2026-08-26)
+
+> GitHub milestone *Wave 6 — Security, MCP consumption & Memory Base* closed 2026-08-26 with **10**
+> issues, 0 open.
 
 First **risk-driven** wave: the order comes from the coverage audit (#1350), which
 ranked residual risk per area and found two areas with **no checklist entry at all**.
@@ -261,7 +269,9 @@ Exit: the nine named spec items are validated under `@stable`; #1400 has landed 
 i18n batch is datable.
 Review (2026-08-27): reassess; date the i18n batch and revisit the pool.
 
-### Wave 7 — OSS API coverage  ·  2026-09-03 → 2026-09-17
+### ✅ Wave 7 — OSS API coverage  ·  2026-09-03 → 2026-09-17 · **DONE** (closed 2026-09-24)
+
+> GitHub milestone *Wave 7 — OSS API coverage* closed 2026-09-24 with **7** issues, 0 open.
 
 First wave measured against a **denominator the product defines**, not against
 checklist bullets: the OSS REST API surface. It exists because "100 % of the API
@@ -303,7 +313,11 @@ Review (2026-09-17): re-run `npm run api:coverage` against the then-current
 nightly, refresh the baseline if the surface moved (`npm run api:baseline`, a
 committed diff), and date the next families.
 
-### Wave 8 — Inherited spec triage  ·  undated
+### ✅ Wave 8 — Inherited spec triage  ·  undated · **DONE** (closed 2026-09-24)
+
+> GitHub milestone *Wave 8 — Inherited spec triage* closed 2026-09-24 with **11** issues, 0 open. Its
+> follow-up, *Wave 9 — Inherited spec triage (T2)* (the T2 rows below), never got a section of its own:
+> its milestone closed the same day with **8** issues, 0 open.
 
 **Undated on purpose**: the order is fixed and the scope is measured, but the date
 is a review's call — the same treatment the pool's decided tail gets. First wave
@@ -355,7 +369,10 @@ shrunk to the parked set; Wave 9 is fillable with a concrete list.
 Review: at the next roadmap review — date Wave 9 off the table's T2 rows, and
 re-run `npm run triage:baseline -- --check` before quoting any count here.
 
-### Wave 10 — Memory Base ingestion & agent trust  ·  2026-09-24 → 2026-10-08 ◀ **CURRENT**
+### ✅ Wave 10 — Memory Base ingestion & agent trust  ·  2026-09-24 → 2026-10-08 · **DONE** (window closed)
+
+> The window closed 2026-10-08 with **20** of 21 milestone issues closed (the last on 2026-10-07).
+> One is still open and carried: #1896 (§12.6 graph execution), still on this milestone.
 
 Second **risk-driven** wave, and the first taken from the regenerated coverage heatmap
 (`docs/coverage-heatmap/`, generation 2026-09-21). That heatmap ranks MCP first,
@@ -402,7 +419,10 @@ Review (2026-10-08): re-read `dashboard-feed.json` and compare the Memory Base a
 Agents rows against this wave's baseline, then coin the next wave from the refreshed
 ranking.
 
-### Wave 11 — Multi-edit, instance migration & integrations  ·  2026-10-27 → 2026-11-10
+### ✅ Wave 11 — Multi-edit, instance migration & integrations  ·  2026-10-27 → 2026-11-10 · **DONE** (delivered 2026-11-10)
+
+> GitHub milestone *Wave 11 — Multi-edit, instance migration & integrations*: **28** issues, 0 open; the
+> last closed 2026-11-10.
 
 **Feature-driven** wave, like Wave 5: three surfaces that reached the nightly from
 upstream's 1.13/1.14 lines and that no spec touches. Two are new. **Multi-edit
@@ -441,7 +461,7 @@ Exit:
 Review (2026-11-10): record what landed per tracker, then decide whether the
 `@instance-migration` lane earns a scheduled run.
 
-### Wave 12 — 1.14 OSS features  ·  2026-11-30 → 2026-12-14 ◀ **NEXT**
+### Wave 12 — 1.14 OSS features  ·  2026-11-30 → 2026-12-14 ◀ **CURRENT**
 
 **Feature-driven** wave, like Waves 5 and 11: the OSS features upstream's
 `release-1.14.0` adds over `release-1.13.5` that no spec touches. Measured 2026-11-26
