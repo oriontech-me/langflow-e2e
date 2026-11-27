@@ -1966,7 +1966,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 124 | 117 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 131 | 124 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1991,7 +1991,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **976** | **846 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **983** | **853 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2007,7 +2007,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 974 `test()` calls carrying the `@stable` tag, distributed across 335 spec
+> 977 `test()` calls carrying the `@stable` tag, distributed across 336 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2223,6 +2223,9 @@
 - [x] the three health routes are not synonyms of each other → `api-instance-identity.spec.ts`
 - [x] version and config answer unauthenticated, the catalog and starter projects do not → `api-instance-identity.spec.ts`
 - [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
+- [x] preview is read-only: ready for the safe flow, manual for the breaking one → `api-upgrade-reports.spec.ts`
+- [x] apply outside maintenance is refused and writes nothing → `api-upgrade-reports.spec.ts`
+- [x] every upgrade-report and repair route refuses a non-superuser → `api-upgrade-reports.spec.ts`
 - [x] code validation answers 200 for broken code, with the verdict in the body → `api-validation-endpoints.spec.ts`
 - [x] prompt validation extracts variables only when it is given a node → `api-validation-endpoints.spec.ts`
 - [x] a custom component is described, and a field update echoes the code back → `api-validation-endpoints.spec.ts`
