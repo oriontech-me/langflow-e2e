@@ -83,13 +83,6 @@ test.describe("Triggers API — the Schedule picker is compiled on the server", 
     expect(res.status(), `PATCH /api/v1/flows/${flowId} — ${await res.text()}`).toBe(200);
   }
 
-  async function storedTemplate(request: APIRequestContext, flowId: string): Promise<{ data: CatalogFlowData; template: Template }> {
-    const res = await request.get(`/api/v1/flows/${flowId}`, { headers });
-    expect(res.status(), `GET /api/v1/flows/${flowId}`).toBe(200);
-    const data = (await res.json()).data as CatalogFlowData;
-    return { data, template: nodeOf(data).template };
-  }
-
   /** The one row flow save reconciled out of the node, polled until it satisfies `until`. */
   async function nodeTrigger(
     request: APIRequestContext,
@@ -227,70 +220,117 @@ test.describe("Triggers API — the Schedule picker is compiled on the server", 
     "a custom cron survives switching the type away and back",
     { tag: ["@stable", "@api", "@integrations"] },
     async ({ request }) => {
-      const nodeId = "ScheduleTrigger-survive";
+      // The overwrite #16322 removed lived in the canvas field refresh
+      // (`update_build_config`), not in flow save, so this drives that refresh:
+      // `POST /api/v1/custom_component/update` with the node's template, as the editor
+      // sends on every pick. Flow save stores whatever template it is given, so a
+      // PATCH alone could never see the defect.
+      const component = findCatalogComponent(catalog, "ScheduleTrigger") as unknown as { template: Template };
+      const code = component.template.code.value as string;
       const customCron = `*/${7 + (Date.now() % 20)} * * * *`;
-      const data = graph(nodeId, { schedule_type: "Custom (cron)", cron_expression: customCron, timezone: "UTC" });
-      const flowId = await saveFlow(request, "custom survives", data);
 
-      await test.step("Custom runs the hand-written cron", async () => {
+      async function refresh(template: Template, value: string): Promise<Template> {
+        const res = await request.post("/api/v1/custom_component/update", {
+          headers,
+          data: { code, template, field: "schedule_type", field_value: value },
+        });
+        const raw = await res.text();
+        expect(res.status(), `POST /api/v1/custom_component/update (${value}) — ${raw.slice(0, 300)}`).toBe(200);
+        return JSON.parse(raw).template as Template;
+      }
+
+      const start = structuredClone(component.template);
+      start.schedule_type.value = "Custom (cron)";
+      start.cron_expression.value = customCron;
+
+      let asDaily: Template = {};
+
+      await test.step("picking Daily hides the hand-written cron without overwriting it", async () => {
+        asDaily = await refresh(start, "Daily");
+        expect({ type: asDaily.schedule_type.value, cron: asDaily.cron_expression.value, shown: asDaily.cron_expression.show }).toEqual({
+          type: "Daily",
+          cron: customCron,
+          shown: false,
+        });
+      });
+
+      let back: Template = {};
+
+      await test.step("picking Custom again shows the same cron", async () => {
+        back = await refresh(asDaily, "Custom (cron)");
+        expect({ type: back.schedule_type.value, cron: back.cron_expression.value, shown: back.cron_expression.show }).toEqual({
+          type: "Custom (cron)",
+          cron: customCron,
+          shown: true,
+        });
+      });
+
+      await test.step("the refreshed node, saved, runs the hand-written cron", async () => {
+        const nodeId = "ScheduleTrigger-survive";
+        const data = graph(nodeId, { schedule_type: "Custom (cron)", timezone: "UTC" });
+        nodeOf(data).template = back;
+        const flowId = await saveFlow(request, "custom survives", data);
         const row = await nodeTrigger(request, flowId, nodeId);
-        expect(timingOf(row.config)).toEqual({ cron: customCron });
-      });
-
-      await test.step("switching to Daily runs the Daily cron", async () => {
-        const template = nodeOf(data).template;
-        template.schedule_type.value = "Daily";
-        template.times_of_day.value = ["08:00"];
-        await patchFlow(request, flowId, data);
-        const row = await nodeTrigger(request, flowId, nodeId, (r) => r.config.cron === "0 8 * * *", "the row runs the Daily cron");
-        expect(timingOf(row.config)).toEqual({ cron: "0 8 * * *" });
-      });
-
-      await test.step("the stored node still holds the hand-written cron, and switching it back runs it again", async () => {
-        const stored = await storedTemplate(request, flowId);
-        expect(stored.template.cron_expression.value, "the compiled Daily cron must not overwrite the field").toBe(
-          customCron,
-        );
-        // Built from the STORED flow, not this test's copy: that is what makes it a check of the server.
-        stored.template.schedule_type.value = "Custom (cron)";
-        await patchFlow(request, flowId, stored.data);
-        const row = await nodeTrigger(request, flowId, nodeId, (r) => r.config.cron === customCron, "the row runs the custom cron again");
         expect(timingOf(row.config)).toEqual({ cron: customCron });
       });
     },
   );
 
   test(
-    "a timezone that loads but is not listed is kept, and an unknown one is refused",
+    "an unknown timezone reads config_invalid with its reason",
     { tag: ["@stable", "@api", "@integrations"] },
     async ({ request }) => {
-      await test.step(`${UNLISTED_TZ} is outside the picker's list and kept on the row`, async () => {
-        const options = (findCatalogComponent(catalog, "ScheduleTrigger").template as Template).timezone.options as string[];
-        expect(options.length, "the catalog lists the picker's zones").toBeGreaterThan(100);
-        expect(options, "the zone must be outside the list for this to test anything").not.toContain(UNLISTED_TZ);
+      const nodeId = "ScheduleTrigger-unknowntz";
+      const flowId = await saveFlow(
+        request,
+        "unknown tz",
+        graph(nodeId, { schedule_type: "Daily", times_of_day: ["08:00"], timezone: "Etc/Unknown" }),
+      );
+      const row = await nodeTrigger(request, flowId, nodeId);
+      expect({ reason: row.reason, last_error: row.last_error }).toEqual({
+        reason: "config_invalid",
+        last_error: UNKNOWN_TZ_MESSAGE,
+      });
+    },
+  );
 
-        const nodeId = "ScheduleTrigger-unlisted";
-        const flowId = await saveFlow(
-          request,
-          "unlisted tz",
-          graph(nodeId, { schedule_type: "Daily", times_of_day: ["08:00"], timezone: UNLISTED_TZ }),
-        );
-        const row = await nodeTrigger(request, flowId, nodeId);
+  test(
+    "a timezone that loads but is not listed is kept, on save and through Update",
+    { tag: ["@stable", "@api", "@integrations"] },
+    async ({ request }) => {
+      const component = findCatalogComponent(catalog, "ScheduleTrigger") as unknown as { template: Template };
+      const options = component.template.timezone.options as string[];
+      expect(options.length, "the catalog lists the picker's zones").toBeGreaterThan(100);
+      expect(options, "the zone must be outside the list for this to test anything").not.toContain(UNLISTED_TZ);
+
+      const nodeId = "ScheduleTrigger-unlisted";
+      const flowId = await saveFlow(
+        request,
+        "unlisted tz",
+        graph(nodeId, { schedule_type: "Daily", times_of_day: ["08:00"], timezone: UNLISTED_TZ }),
+      );
+      const row = await nodeTrigger(request, flowId, nodeId);
+      // The zone loads only where the server's tzdata ships the legacy posix/ tree (the
+      // nightly image does; the Python tzdata package and some hosts do not). The server
+      // answers that itself, so a host without it skips with the server's own words.
+      test.skip(
+        row.reason === "config_invalid" && row.last_error === UNKNOWN_TZ_MESSAGE,
+        `${UNLISTED_TZ} does not load on this server (its tzdata has no posix/ tree): nothing outside the list to keep`,
+      );
+
+      await test.step("flow save keeps it on the row", async () => {
         expect({ timezone: row.config.timezone, reason: row.reason }).toEqual({ timezone: UNLISTED_TZ, reason: "pending" });
       });
 
-      await test.step("an unknown zone reads config_invalid with its reason", async () => {
-        const nodeId = "ScheduleTrigger-unknowntz";
-        const flowId = await saveFlow(
-          request,
-          "unknown tz",
-          graph(nodeId, { schedule_type: "Daily", times_of_day: ["08:00"], timezone: "Etc/Unknown" }),
-        );
-        const row = await nodeTrigger(request, flowId, nodeId);
-        expect({ reason: row.reason, last_error: row.last_error }).toEqual({
-          reason: "config_invalid",
-          last_error: UNKNOWN_TZ_MESSAGE,
+      await test.step("the editor's Update keeps it on the node", async () => {
+        const node = structuredClone(nodeOf(graph("ScheduleTrigger-tzupdate", { schedule_type: "Daily", timezone: UNLISTED_TZ })));
+        const res = await request.post("/api/v1/custom_component", {
+          headers,
+          data: { code: component.template.code.value, frontend_node: node },
         });
+        const raw = await res.text();
+        expect(res.status(), `POST /api/v1/custom_component — ${raw.slice(0, 300)}`).toBe(200);
+        expect(JSON.parse(raw).data.template.timezone.value, "Update must not clear an unlisted zone").toBe(UNLISTED_TZ);
       });
     },
   );

@@ -17,7 +17,8 @@ import { listTriggers, type TriggerRead } from "../../../../helpers/triggers/tri
 
 const NODE_ID = "ScheduleTrigger-canvas1";
 
-// The option order of the Schedule type dropdown, which is also its testid index.
+// The six schedule types. The dropdown's option testid is `<label>-<index>-option`,
+// with the index read from the catalog's options at run time, not from this list.
 const TYPES = ["At regular intervals", "Once", "Daily", "Weekly", "Monthly", "Custom (cron)"] as const;
 type ScheduleType = (typeof TYPES)[number];
 
@@ -35,20 +36,24 @@ const ALWAYS_SHOWN = new Set(["title-Schedule", "title-schedule type", "title-ti
 
 // Loads on the server but is not among the dropdown's options (see the API spec).
 const UNLISTED_TZ = "posix/America/New_York";
+const UNKNOWN_TZ_MESSAGE = "Unknown timezone; use an IANA timezone name.";
 
 type Template = Record<string, { value?: unknown; show?: boolean }>;
 
 test.describe("Triggers on the canvas — the Schedule picker", () => {
   let headers: Record<string, string>;
+  let catalog: Record<string, unknown>;
+  let optionIndex: Record<string, number>;
   const flowIds: string[] = [];
 
   test.beforeEach(async ({ request }) => {
     headers = { Authorization: await getAuthToken(request) };
-    const catalog = await fetchComponentCatalog(request, headers);
-    test.skip(
-      !("schedule_type" in findCatalogComponent(catalog, "ScheduleTrigger").template),
-      "the Schedule picker (schedule_type) ships from 1.14.0.dev30 (upstream #16322)",
-    );
+    catalog = await fetchComponentCatalog(request, headers);
+    const template = findCatalogComponent(catalog, "ScheduleTrigger").template as Record<string, { options?: string[] }>;
+    test.skip(!("schedule_type" in template), "the Schedule picker (schedule_type) ships from 1.14.0.dev30 (upstream #16322)");
+    const options = template.schedule_type.options ?? [];
+    expect([...options].sort(), "the catalog offers exactly the six types").toEqual([...TYPES].sort());
+    optionIndex = Object.fromEntries(options.map((label, i) => [label, i]));
   });
 
   test.afterEach(async ({ page, request }) => {
@@ -62,7 +67,6 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
   });
 
   async function openScheduleFlow(page: Page, request: APIRequestContext, values: Record<string, unknown>): Promise<string> {
-    const catalog = await fetchComponentCatalog(request, headers);
     const flowId = await createCatalogFlow(
       request,
       catalog,
@@ -81,7 +85,7 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
 
   async function pickType(page: Page, type: ScheduleType): Promise<void> {
     await node(page).getByTestId("dropdown_str_schedule_type").click();
-    await page.getByTestId(`${type}-${TYPES.indexOf(type)}-option`).click();
+    await page.getByTestId(`${type}-${optionIndex[type]}-option`).click();
     await expect(node(page).getByTestId("value-dropdown-dropdown_str_schedule_type")).toHaveText(type);
   }
 
@@ -115,7 +119,9 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
         timezone: "UTC",
       });
 
-      for (const type of ["At regular intervals", "Once", "Weekly", "Monthly", "Custom (cron)", "Daily", "Weekly"] as ScheduleType[]) {
+      // Weekly comes last and only once, so the stored-node poll below cannot be
+      // satisfied by an earlier autosave of the same type.
+      for (const type of ["At regular intervals", "Once", "Monthly", "Custom (cron)", "Daily", "Weekly"] as ScheduleType[]) {
         await test.step(`${type}: exactly ${FIELDS_BY_TYPE[type].join(", ")}`, async () => {
           await pickType(page, type);
           await expect.poll(() => shownFields(page), { timeout: 10_000 }).toEqual([...FIELDS_BY_TYPE[type]].sort());
@@ -144,7 +150,7 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
           days_of_month: false,
           cron_expression: false,
         });
-        expect({ days: t.days_of_week.value, times: t.times_of_day.value }, "the defaults the canvas showed").toEqual({
+        expect({ days: t.days_of_week.value, times: t.times_of_day.value }, "the template defaults, untouched by the picks").toEqual({
           days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
           times: ["08:00"],
         });
@@ -210,13 +216,17 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
       });
       const tzValue = node(page).getByTestId("value-dropdown-dropdown_str_timezone");
 
+      let row: TriggerRead | undefined;
+      await expect.poll(async () => (row = await triggerRow(request, flowId)) !== undefined).toBe(true);
+      // The zone loads only where the server's tzdata ships the legacy posix/ tree; the
+      // server says so itself (see the API spec), and then there is nothing to keep.
+      test.skip(
+        row!.reason === "config_invalid" && row!.last_error === UNKNOWN_TZ_MESSAGE,
+        `${UNLISTED_TZ} does not load on this server (its tzdata has no posix/ tree): nothing outside the list to keep`,
+      );
+
       await test.step("the row holds the unlisted zone", async () => {
-        await expect
-          .poll(async () => {
-            const row = await triggerRow(request, flowId);
-            return row && { timezone: row.config.timezone, reason: row.reason };
-          })
-          .toEqual({ timezone: UNLISTED_TZ, reason: "pending" });
+        expect({ timezone: row!.config.timezone, reason: row!.reason }).toEqual({ timezone: UNLISTED_TZ, reason: "pending" });
       });
 
       await test.step("the canvas shows it", async () => {
@@ -225,7 +235,9 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
 
       await test.step("opening and closing the list without picking keeps it", async () => {
         await node(page).getByTestId("dropdown_str_timezone").click();
+        await expect(page.getByRole("option").first(), "the list opened").toBeVisible();
         await page.keyboard.press("Escape");
+        await expect(page.getByRole("option"), "the list closed without a pick").toHaveCount(0);
         await expect(tzValue).toHaveText(UNLISTED_TZ);
       });
 

@@ -19,7 +19,7 @@ row's `config` carries the timing the scheduler runs on.
 
 The suite only touched this as compatibility (`api-triggers-lifecycle` and `api-triggers-run-identity` send
 `schedule_type: "Custom (cron)"`). This file pins the picker's server contract, and in particular the defects
-#16322's own history names:
+#16322's own history names (six tests):
 
 1. **Compiled on the server.** The cron used to be compiled only when the canvas sent a field refresh, so a flow
    saved through the API, an import or the Assistant ran a **stale** cron. Every flow here is saved through the
@@ -105,17 +105,29 @@ reason.**
    never a cron error.
 4. A Daily flow with `25:00` reads `cron: ""`, `config_invalid`, and the time-of-day message.
 
-**Test 3 — a custom cron survives switching the type away and back.** Custom `*/9 * * * *` → row
-`cron: "*/9 * * * *"`; `PATCH` to Daily `08:00` → `cron: "0 8 * * *"`. Then read the **stored** flow
-(`GET /api/v1/flows/{id}`): its node's `cron_expression` is still `*/9 * * * *` (the compiled Daily cron was not
-written over it). Switch that stored node back to Custom and `PATCH` it → `cron: "*/9 * * * *"` again. Building
-the last `PATCH` from the stored flow, not from the test's own copy, is what makes this a check of the server.
+**Test 3 — a custom cron survives switching the type away and back.** The overwrite #16322 removed lived in the
+canvas field refresh (`update_build_config`), not in flow save, which stores whatever template it is given; so
+this drives the refresh the editor sends on every pick, `POST /api/v1/custom_component/update` with the node's
+template, `field: "schedule_type"` and the picked value.
 
-**Test 4 — a timezone that loads but is not listed is kept, and an unknown one is refused.** Daily with
-`posix/America/New_York`: the catalog's timezone options do not list it, and the row keeps it with
-`reason: pending`. Daily with `Etc/Unknown`: `config_invalid` and the unknown-timezone message.
+1. Start from the catalog template on Custom with a per-run cron (`*/<n> * * * *`). Refresh to Daily → the
+   returned template reads `Daily`, the cron unchanged, and the cron field hidden (`show: false`).
+2. Refresh that template back to Custom → `Custom (cron)`, the same cron, shown.
+3. Save a flow with the refreshed node → the row runs that cron.
 
-**Test 5 — a node saved before the picker keeps its own cron, on save and through Update.**
+**Test 4 — an unknown timezone reads config_invalid with its reason.** Daily with `Etc/Unknown` →
+`config_invalid` and the unknown-timezone message.
+
+**Test 5 — a timezone that loads but is not listed is kept, on save and through Update.** The defect #16322
+names is *Update* clearing a zone that loads but is not listed; flow save never compared against the list.
+
+1. `posix/America/New_York` is absent from the catalog's timezone options.
+2. A Daily flow with it: the row keeps it with `reason: pending`. If the server answers `config_invalid` with the
+   unknown-timezone message instead, its tzdata has no `posix/` tree and the test **skips with that reason**
+   (see *Notes*).
+3. `POST /api/v1/custom_component` with a node holding it → the returned template keeps it.
+
+**Test 6 — a node saved before the picker keeps its own cron, on save and through Update.**
 
 1. A flow whose node has no `schedule_type` and cron `5 4 * * *` reads `cron: "5 4 * * *"`.
 2. `POST /api/v1/custom_component` with that node → `200`, `schedule_type: "Custom (cron)"`,
@@ -134,9 +146,10 @@ the last `PATCH` from the stored flow, not from the test's own copy, is what mak
 - **Unusable pick:** the empty cron after the `PATCH` (the old schedule cannot run) and the `409` carrying the
   picker's message. A regression to "keep the old schedule" keeps `0 8 * * *`; one to the cron error changes the
   message.
-- **Custom survives:** the last `PATCH` reads `*/9 * * * *` again. A pick that overwrote the cron would read the
-  Daily cron.
-- **Timezone:** the unlisted zone kept, the unknown one refused with its message.
+- **Custom survives:** the refreshed template keeps the per-run cron on Daily (hidden) and on Custom (shown), and
+  the saved node runs it. A refresh that overwrote the cron (the pre-fix `update_build_config`) returns the
+  Daily-compiled cron.
+- **Timezone:** the unknown zone refused with its message; the unlisted zone kept by flow save and by *Update*.
 - **Legacy:** the row keeps `5 4 * * *`, and *Update* opens it on Custom with that cron. A regression to the
   picker defaults opens `Weekly`.
 
@@ -144,11 +157,13 @@ the last `PATCH` from the stored flow, not from the test's own copy, is what mak
 
 ## Notes
 
-- `posix/America/New_York` is used because it loads on the nightly image (its tzdata ships the `posix/` tree)
-  and is not in `available_timezones()`. If an image drops the `posix/` tree, Test 4's first half fails with
-  `config_invalid`, which names the cause.
-- *Update* needs `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` (set by `scripts/start-langflow-docker.sh` and the CI
-  service containers): `POST /api/v1/custom_component` is the custom-component route.
+- `posix/America/New_York` loads where the server's system tzdata ships the legacy `posix/` tree: the nightly
+  image does (`/usr/share/zoneinfo/posix`), the Python `tzdata` package does not, macOS does not, and newer
+  Debian/Ubuntu move it to `tzdata-legacy`. It is never in `available_timezones()`. Test 5 asks the server: where
+  the zone does not load, the row reads `config_invalid` with the unknown-timezone message and the test skips
+  with that reason instead of failing. The canvas spec's timezone test does the same.
+- *Update* and the field refresh use the catalog's own component code, which the custom-code policy accepts
+  whether or not custom components are allowed.
 
 ---
 
@@ -156,24 +171,26 @@ the last `PATCH` from the stored flow, not from the test's own copy, is what mak
 
 - The canvas: the sibling UI spec.
 - When a schedule fires (the scheduler's clock): no schedule is enabled here, by design.
-- `catchup_policy` and `share_session`: unchanged by the picker; asserted only as present.
+- `catchup_policy` and `share_session`: unchanged by the picker; not asserted.
 
 ---
 
 ## Preconditions *(required)*
 
 - Langflow `1.14.0.dev30` or later (the picker). Earlier builds skip with the reason.
-- `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` for Test 5's *Update* steps.
+- For Test 5, a server whose tzdata ships the `posix/` tree (the nightly image); elsewhere it skips with the reason.
 
 ---
 
 ## External dependencies *(required)*
 
-- `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the component: `trigger_config`, `update_frontend_node` (the legacy rule), `_picker_disagrees`
+- `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the component: `update_build_config` (the field refresh), `update_frontend_node` (the legacy rule), `_picker_disagrees`
+- `src/backend/base/langflow/services/triggers/reconciliation.py` — flow save compiles the pick onto the row (`_apply_schedule_pick`, `schedule_pick_error`)
+- `src/backend/base/langflow/services/triggers/service.py` — the enable refusal and `blocked_actions`
 - `src/lfx/src/lfx/base/triggers/schedule.py` — `picker_timing`, `schedule_timing`, the picker messages and `timezone_options`
 - `src/backend/base/langflow/services/triggers/schedule_config.py` — `validate_schedule_config`, the unknown-timezone refusal
 - `src/backend/base/langflow/services/triggers/scheduler.py` — runs the stored timing
 - `src/lfx/src/lfx/custom/utils.py` — `update_rebuilt_node`, where *Update* calls `update_frontend_node`
-- `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/custom_component`
+- `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/custom_component` (*Update*) and `POST /api/v1/custom_component/update` (the field refresh)
 - `tests/helpers/flows/build-catalog-flow.ts` — builds the flow from the live catalog
 - `tests/helpers/triggers/trigger-api.ts` — `listTriggers`, `TriggerRead`

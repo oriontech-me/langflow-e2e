@@ -38,7 +38,9 @@ on the node):
 | Custom (cron) | `title-cron expression` | `popover-anchor-input-cron_expression` |
 
 The type dropdown is `dropdown_str_schedule_type` (value in `value-dropdown-dropdown_str_schedule_type`); its
-options are `<label>-<index>-option` (e.g. `Weekly-3-option`). The timezone is `dropdown_str_timezone` (value in
+options are `<label>-<index>-option` (e.g. `Weekly-3-option`), the index being the option's position in the list.
+The spec reads that position from the catalog's `schedule_type.options` at run time and asserts the catalog
+offers exactly the six types. The timezone is `dropdown_str_timezone` (value in
 `value-dropdown-dropdown_str_timezone`), a combobox over 599 zones.
 
 ---
@@ -61,13 +63,13 @@ enabled, so nothing fires.
 
 **Test 1 — the picker shows only the fields its type needs, and the saved node reads back what it showed.**
 
-1. Start from Daily. For each type in the table, in order (At regular intervals, Once, Weekly, Monthly, Custom
-   (cron), Daily): open `dropdown_str_schedule_type`, click the type's option, and assert the node's set of
+1. Start from Daily. For each type, in order (At regular intervals, Once, Monthly, Custom (cron), Daily, Weekly
+   — Weekly last and only once, so the stored-node poll cannot accept an earlier save of it): open `dropdown_str_schedule_type`, click the type's option, and assert the node's set of
    `title-…` field labels (excluding `title-Schedule`, `title-schedule type`, `title-timezone`) is **exactly**
    the table's set for that type, and the dropdown reads that type.
-2. Finish on Weekly. Poll the **stored** flow (`GET /api/v1/flows/{id}`) until its node reads
+2. After the last pick (Weekly), poll the **stored** flow (`GET /api/v1/flows/{id}`) until its node reads
    `schedule_type: "Weekly"` with `days_of_week` and `times_of_day` shown and the other picker fields hidden, and
-   the stored days and time are the template defaults the canvas showed (Monday–Friday, `08:00`), and the
+   the stored days and time are the template defaults, untouched by the picks (Monday–Friday, `08:00`), and the
    trigger row's timing is exactly `cron: "0 8 * * 1-5"`, the Weekly cron for those values.
 
 **Test 2 — a typed cron survives switching the type away and back.**
@@ -81,10 +83,13 @@ enabled, so nothing fires.
 
 **Test 3 — a saved timezone outside the list is shown and kept when the list opens.**
 
-1. The flow is created with Daily and timezone `posix/America/New_York` (loads on the server, not in the 599
-   options). The row reads that timezone, `reason: pending`.
+1. The flow is created with Daily and timezone `posix/America/New_York` (not in the 599 options). The row reads
+   that timezone, `reason: pending`. Where the server's tzdata has no `posix/` tree, the row reads
+   `config_invalid` with the unknown-timezone message and the test skips with that reason (see the API doc's
+   *Notes*).
 2. On the canvas, `value-dropdown-dropdown_str_timezone` shows `posix/America/New_York`.
-3. Open the timezone list and close it with `Escape`, without picking: the value still shows the zone.
+3. Open the timezone list (an option is visible) and close it with `Escape` without picking (no option left):
+   the value still shows the zone.
 4. Make an edit that saves the node without touching the timezone (switch the type to Weekly), and poll the
    stored flow until the node reads Weekly: its `timezone` is still `posix/America/New_York`, and so is the
    trigger row's.
@@ -120,6 +125,7 @@ enabled, so nothing fires.
 ## External dependencies *(required)*
 
 - `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the inputs, `update_build_config` and `_show_picker_fields`
+- `src/backend/base/langflow/services/triggers/reconciliation.py` — flow save compiles the stored node onto the row
 - `src/lfx/src/lfx/base/triggers/schedule.py` — `FIELDS_BY_TYPE`, the field set per type, and `timezone_options`
 - `src/backend/base/langflow/services/triggers/schedule_config.py` — validates the stored timezone and timing
 - `src/backend/base/langflow/services/triggers/scheduler.py` — runs the stored timing
