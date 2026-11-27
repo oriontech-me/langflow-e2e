@@ -1039,6 +1039,12 @@ test("a conflict uv pins on the executor's lfx pin is not blamed on the index", 
       unsatisfiable.` });
   assert.equal(lag.status, 3, lag.log);
   assert.match(lag.result["req-v"].REASON, /with langflow-base==1\.14\.0\.dev35 and lfx==1\.14\.0\.dev36 \(langflow-base's own requirement\): the release's own requirements, or an index that has not caught up .*\(ask again shortly\)/);
+  // The check reads uv's whole paragraph, not the six lines and 400 bytes the message
+  // keeps: a version cut short there would read as another one.
+  const long = onDemand({ request: nightlyReq, siblings: { "langflow-base": 200, lfx: 200 }, distExit: 2, distError: `could not install langflow==${NIGHTLY} — uv's reason is above.`,
+    distNoSolution: ["  × No solution found when resolving dependencies:", ...Array.from({ length: 6 }, (_, i) => `  ╰─▶ Because langflow-sdk==0.${i} depends on something and nothing else applies here,`),
+      "      we can conclude that you require lfx==1.14.0.dev36.", "      And because you require lfx==1.14.0.dev35, we can conclude that your requirements are unsatisfiable."].join("\n") });
+  assert.match(long.result["req-v"].REASON, /the lfx pin this executor added contradicts the release's own requirements/, long.log);
   // A final or an rc keeps the bare same-version pin; uv names it ("you require
   // lfx==<the version>") when the index lags behind one of lfx's own requirements too.
   const rcLag = onDemand({ request: vreq(), distExit: 2, distError: `could not install langflow==${V} — uv's reason is above.`,

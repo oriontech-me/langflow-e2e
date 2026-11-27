@@ -832,7 +832,7 @@ ondemand_install() {
   [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
   # 404 is PyPI's "no such version" and 200 its release; anything else (the network, a
   # 5xx) is failed: the install reads the same index, and the pins below need it too.
-  local python=3.14 pin="" pin_said="" lfx_pin="" verdict requires p nosol
+  local python=3.14 pin="" pin_said="" lfx_pin="" verdict requires p nosol nosol_full
   # Before 1.12, langflow-base was numbered 0.N (1.11.6 requires langflow-base 0.11.6),
   # which the installer's check that it is the version cannot match: every such run
   # would end build_failed, blaming the release. Refused instead, before anything.
@@ -916,6 +916,9 @@ ondemand_install() {
   # uv's own word that the requirements cannot be met together: the release's metadata,
   # or an index that has not seen a release published minutes ago -- not the machine.
   # uv's paragraph alone: from its first line up to the installer's own ERROR: line.
+  # The whole of it, joined, for the pin check; cut to six lines and 400 bytes for the
+  # message, where a version cut short would read as another one.
+  nosol_full="$(awk '/No solution found/ { f = 1 } /^ERROR: / { f = 0 } f' "$err" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
   nosol="$(awk '/No solution found/ { f = 1 } /^ERROR: / { f = 0 } f' "$err" 2>/dev/null | head -n 6 | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//' | cut -c1-400)"
   rm -f "$err"
   if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$limit_s" ]; }; then
@@ -933,7 +936,7 @@ ondemand_install() {
       # require lfx==<another>"): the pin itself is the conflict, so asking again cannot
       # help. Index lag or a release defect names the pinned version only, and keeps the
       # reading below.
-      *) if [ -n "$nosol" ] && [[ " $pin " == *" lfx"[\ =]* ]] && ondemand_lfx_pin_conflicts "$nosol" "${lfx_pin:-$OD_VERSION}"; then
+      *) if [ -n "$nosol" ] && [[ " $pin " == *" lfx"[\ =]* ]] && ondemand_lfx_pin_conflicts "$nosol_full" "${lfx_pin:-$OD_VERSION}"; then
            ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION with $pin_said: the lfx pin this executor added contradicts the release's own requirements, so asking again will not help (an executor defect, not the release's); uv said: $nosol"
          fi
          [ -z "$nosol" ] || ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION${pin_said:+ with $pin_said}: the release's own requirements, or an index that has not caught up with a release published minutes ago (ask again shortly); uv said: $nosol"
