@@ -32,14 +32,27 @@ function main(): number {
     // --grep=<regex>: the run's own filter when it narrows @stable to some areas,
     // case-insensitive as Playwright compiles a CLI --grep.
     const grepArg = process.argv.slice(2).find((a) => a.startsWith("--grep="));
-    const declared = declaredStableSpecFiles(undefined, grepArg ? new RegExp(grepArg.slice("--grep=".length), "i") : undefined);
+    // --lane-env=<FLAG>: a scheduled lane's declaration (#2142), under that lane's
+    // flag and its --grep. A lane declares NOTHING until its tests are promoted, so
+    // the floor below does not apply to it: empty is its normal state.
+    const laneArg = process.argv.slice(2).find((a) => a.startsWith("--lane-env="));
+    const laneFlag = laneArg ? laneArg.slice("--lane-env=".length) : "";
+    if (laneArg && !/^PW_[A-Z_]+$/.test(laneFlag)) {
+      process.stderr.write(`[declared-stable-specs] --lane-env must name a lane flag (PW_...), got '${laneFlag}'\n`);
+      return 2;
+    }
+    const declared = declaredStableSpecFiles(
+      undefined,
+      grepArg ? new RegExp(grepArg.slice("--grep=".length), "i") : undefined,
+      laneFlag ? { [laneFlag]: "1" } : {},
+    );
     // A floor, for the reason `snapshotCatalog` has `--min-categories`: the check
     // this feeds is ONE-SIDED. It sees the listing shrink; it cannot see THIS side
     // shrink, because an under-reported declaration yields `missing: []` and reads
     // as agreement. Zero is the degenerate case a broken producer actually reaches
     // (a walk pointed at the wrong root, a parser that stopped matching), and it
     // would certify every possible listing as complete.
-    if (declared.files.length === 0) {
+    if (declared.files.length === 0 && !laneFlag) {
       process.stderr.write(
         "[declared-stable-specs] walked " +
           `${declared.root} and found NO spec file declaring an @stable test. That is ` +
@@ -51,7 +64,7 @@ function main(): number {
     process.stdout.write(JSON.stringify({ version: 1, ...declared }, null, 2) + "\n");
     process.stderr.write(
       `declared: ${declared.files.length} spec file(s) carry an @stable test ` +
-        `a normal lane can select` +
+        (laneFlag ? `a ${laneFlag} run selects` : `a normal lane can select`) +
         (declared.laneOnly.length
           ? `; ${declared.laneOnly.length} excluded as lane-only (${declared.laneOnly.join(", ")})`
           : "") +

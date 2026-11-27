@@ -3947,8 +3947,14 @@ test("phase_prep shards no wider than the listing and names an area that selects
 test("the listing and the round both use the composed grep, never a literal @stable", () => {
   const src = readFileSync(SCRIPT, "utf8");
   const calls = src.split("\n").filter((l) => /npx playwright test .*--grep/.test(l) && !/^\s*#/.test(l));
-  assert.ok(calls.length >= 2, calls.join("\n"));
-  for (const l of calls) assert.match(l, /--grep "\$STABLE_GREP"/, l);
+  assert.ok(calls.length >= 4, calls.join("\n"));
+  // The shards' grep, or a scheduled lane's (#2142), which lane-selection.mjs composes
+  // with @stable required — never a literal spelled here.
+  for (const l of calls) assert.match(l, /--grep "\$(STABLE_GREP|filter)"/, l);
+  for (const l of calls) assert.doesNotMatch(l, /--grep "?@stable/, l);
+  const filters = src.split("\n").filter((l) => /^\s*filter="/.test(l));
+  assert.ok(filters.length >= 2, filters.join("\n"));
+  for (const l of filters) assert.match(l, /lane-selection\.mjs filter|lane-\$lane\.grep/, l);
 });
 
 test("the image label decides match, mismatch or absent, and <no value> is never a match", () => {
@@ -4675,4 +4681,291 @@ test("phase_publish uploads a report only when the scrub verified it (#2486)", (
       rmSync(dir, { recursive: true, force: true });
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Scheduled lanes (#2142): @destructive after shard 1's round, @serving after the shards
+// ---------------------------------------------------------------------------
+
+/** A lane verdict file in `dir`, as scripts/lane-selection.mjs writes it. */
+function writeLaneVerdict(dir, lane, over = {}) {
+  const v = { version: 1, lane, tests: 0, files: [], missing: [], unexpected: [], unmapped: [], runs: [], verified: true, reason: "", ...over };
+  writeFileSync(join(dir, `lane-${lane}.json`), JSON.stringify(v));
+}
+
+test("E2E_LANES takes only the lanes the table knows, and serving only where it can run", () => {
+  assert.equal(sourced("echo ok", { E2E_LANES: "destructive serving" }).stdout.trim(), "ok");
+  assert.equal(sourced("echo ok", { E2E_LANES: "" }).stdout.trim(), "ok", "off by default");
+  for (const [env, why] of [
+    [{ E2E_LANES: "enterprise" }, /E2E_LANES may name destructive and serving, got: 'enterprise'/],
+    [{ E2E_LANES: "destructive  servng" }, /got: 'servng'/],
+    [{ E2E_LANES: "serving", TARGET_KIND: "image" }, /runs only on a source target \(TARGET_KIND=image\)/],
+    [{ E2E_LANES: "serving", BASE_PORT: "7870", SHARDS: "4", SERVING_PORT: "7872" }, /SERVING_PORT=7872 is one of the shards' ports \(7870\.\.7873\)/],
+    [{ E2E_LANES: "serving", SERVING_PORT: "78x" }, /SERVING_PORT must be a port number/],
+  ]) {
+    const r = sourced("echo ok", env);
+    assert.equal(r.status, 1, JSON.stringify(env));
+    assert.match(r.stderr, why, JSON.stringify(env));
+  }
+  // The default serving port sits beside the shards', never on them.
+  assert.equal(sourced('echo "$SERVING_PORT"', { BASE_PORT: "7870" }).stdout.trim(), "7878");
+});
+
+test("a serving variant's switches reach the starter, quoted, and a shard's launch carries none", () => {
+  const plain = sourced('backend_launch_env 7870');
+  assert.doesNotMatch(plain.stdout, /LANGFLOW_SERVING_/);
+  const r = sourced(`BACKEND_EXTRA_ENV="LANGFLOW_SERVING_TRUST_PROXY_HEADERS='false' "; backend_launch_env 7878`);
+  assert.match(r.stdout, /LANGFLOW_SERVING_TRUST_PROXY_HEADERS='false' LANGFLOW_PORT=7878$/);
+});
+
+test("a lane's blob never stands in for a shard that died", () => {
+  const { stderr, meta } = metadataFrom({}, `SHARD_TOTAL=2; : > "$RUN_DIR/all-blobs/lane-destructive-destructive-report.zip"`);
+  assert.match(stderr, /only 1\/2 blobs present/);
+  assert.equal(meta.lanes_complete, "true", "no lane was asked for, so none is owed");
+});
+
+test("every run a lane selected must leave its blob, and the metadata says which did not", () => {
+  const after = [
+    `printf '%s' '${JSON.stringify({ tests: 2, runs: [{ name: "destructive" }], verified: true, missing: [] })}' > "$RUN_DIR/lane-destructive.json"`,
+    `printf '%s' '${JSON.stringify({ tests: 5, runs: [{ name: "trusted" }, { name: "required" }], verified: true, missing: [] })}' > "$RUN_DIR/lane-serving.json"`,
+    `: > "$RUN_DIR/all-blobs/lane-destructive-destructive-report.zip"`,
+    `: > "$RUN_DIR/all-blobs/lane-serving-trusted-report.zip"`,
+  ].join("\n");
+  const { meta, stderr } = metadataFrom({ E2E_LANES: "destructive serving" }, after);
+  assert.equal(meta.lanes, "destructive serving");
+  assert.equal(meta.lanes_selected, "destructive=2 serving=5");
+  assert.equal(meta.lanes_complete, "false");
+  assert.equal(meta.lanes_missing, "serving/required");
+  assert.match(stderr, /lane blob\(s\) missing: serving\/required/);
+  // The shards' own count is untouched by the lanes' blobs.
+  assert.match(stderr + "", /^(?![\s\S]*only \d+\/1 blobs)/);
+});
+
+test("an empty lane owes no blob: nothing promoted, nothing started, nothing missing", () => {
+  const after = `printf '%s' '${JSON.stringify({ tests: 0, runs: [], verified: true, missing: [] })}' > "$RUN_DIR/lane-serving.json"`;
+  const { meta } = metadataFrom({ E2E_LANES: "serving" }, after);
+  assert.equal(meta.lanes_complete, "true");
+  assert.equal(meta.lanes_selected, "serving=0");
+});
+
+/** phase_verdict with lanes: a clean shard state, and the lane files written into RUN_DIR. */
+function laneVerdict(lanes, write, extra = "") {
+  const dir = makeTempDir("run-e2e-lane-verdict-");
+  write(dir);
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0`,
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]' TARGET_VERSION_MATCH=yes`,
+      extra,
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    ].join("\n"),
+    { E2E_LANES: lanes },
+  );
+  return { code: Number(r.stdout.match(/EXIT=(\d+)/)?.[1] ?? -1), stdout: r.stdout, stderr: r.stderr };
+}
+
+test("the verdict fails on a lane it cannot verify, a file its listing lost, or a run with no blob", () => {
+  const green = laneVerdict("destructive serving", (d) => { writeLaneVerdict(d, "destructive"); writeLaneVerdict(d, "serving"); });
+  assert.equal(green.code, 0, green.stderr);
+
+  const unverified = laneVerdict("destructive", (d) => writeLaneVerdict(d, "destructive", { verified: false, reason: "the lane's listing could not be read" }));
+  assert.equal(unverified.code, 1);
+  assert.match(unverified.stderr, /the destructive lane could not verify what it runs: the lane's listing could not be read/);
+
+  // A verdict file that is not there at all is unknown, never a verified empty lane.
+  const absent = laneVerdict("serving", () => {});
+  assert.equal(absent.code, 1);
+  assert.match(absent.stderr, /the serving lane could not verify what it runs/);
+
+  const missing = laneVerdict("destructive", (d) => writeLaneVerdict(d, "destructive", { missing: ["tests-automations/regression/governance/x.spec.ts"] }));
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /ABSENT from that lane's listing: tests-automations\/regression\/governance\/x\.spec\.ts/);
+
+  const incomplete = laneVerdict("serving", (d) => writeLaneVerdict(d, "serving"), `LANES_COMPLETE=false LANES_MISSING="serving/required"`);
+  assert.equal(incomplete.code, 1);
+  assert.match(incomplete.stderr, /scheduled lane run\(s\) left no blob: serving\/required/);
+
+  const red = laneVerdict("destructive", (d) => writeLaneVerdict(d, "destructive"), "TEST_JOB_FAILED=1");
+  assert.equal(red.code, 1);
+  assert.match(red.stderr, /at least one shard or scheduled lane had a failing test/);
+});
+
+/** A run directory and an npx that records how it was called and leaves a blob. */
+function laneRoundFixture(exitCode = 0) {
+  const dir = makeTempDir("run-e2e-lane-round-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  mkdirSync(join(dir, "wd"), { recursive: true });
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "npx"),
+    `#!/usr/bin/env bash
+printf 'flag=%s|%s blob=%s retries=%s args=%s\\n' "\${PW_DESTRUCTIVE:-}" "\${PW_SERVING_IDENTITY:-}" "\${PW_SHARD_FILE_LEVEL:-}" "\${PLAYWRIGHT_RETRIES-unset}" "$*" >> ${JSON.stringify(join(dir, "npx.log"))}
+[ -n "\${PW_SHARD_FILE_LEVEL:-}" ] || exit 0  # the config writes no blob without it
+mkdir -p "$PLAYWRIGHT_BLOB_OUTPUT_DIR" && : > "$PLAYWRIGHT_BLOB_OUTPUT_DIR/report-abc.zip"
+exit ${exitCode}
+`,
+    { mode: 0o755 },
+  );
+  return { dir, bin };
+}
+
+test("a lane round runs under its flag and --grep, and files its blob and status for the merge", () => {
+  const { dir, bin } = laneRoundFixture(0);
+  writeLaneVerdict(dir, "destructive", { tests: 2, runs: [{ name: "destructive", env: {}, files: ["a.spec.ts", "b.spec.ts"], tests: 2 }] });
+  writeFileSync(join(dir, "lane-destructive.grep"), "(?=.*(?:@destructive))(?=.*(?:@stable))");
+  const r = sourced(
+    `RUN_DIR=${JSON.stringify(dir)}; cd ${JSON.stringify(join(dir, "wd"))}; cp -R ${JSON.stringify(join(REPO_ROOT, "scripts"))} scripts; ln -s ${JSON.stringify(join(REPO_ROOT, "node_modules"))} node_modules
+set +e; run_lane_round destructive destructive "a.spec.ts b.spec.ts" ${JSON.stringify(join(dir, "logs", "lane.log"))}; echo "RC=$?"`,
+    { PATH: `${bin}:${process.env.PATH}`, RETRIES: "1" },
+  );
+  assert.match(r.stdout, /RC=0/, r.stderr);
+  const call = readFileSync(join(dir, "npx.log"), "utf8");
+  assert.match(call, /^flag=1\| blob=1 retries=1 args=playwright test --grep \(\?=\.\*\(\?:@destructive\)\)\(\?=\.\*\(\?:@stable\)\) a\.spec\.ts b\.spec\.ts$/m);
+  assert.ok(existsSync(join(dir, "all-blobs", "lane-destructive-destructive-report-abc.zip")), "the blob is filed under the lane's prefix");
+  assert.equal(readFileSync(join(dir, "logs", "lane-destructive-destructive.status"), "utf8").trim(), "0");
+
+  const red = laneRoundFixture(1);
+  writeLaneVerdict(red.dir, "destructive", { tests: 1, runs: [{ name: "destructive", env: {}, files: ["a.spec.ts"], tests: 1 }] });
+  writeFileSync(join(red.dir, "lane-destructive.grep"), "(?=.*(?:@destructive))(?=.*(?:@stable))");
+  const f = sourced(
+    `RUN_DIR=${JSON.stringify(red.dir)}; cd ${JSON.stringify(join(red.dir, "wd"))}; cp -R ${JSON.stringify(join(REPO_ROOT, "scripts"))} scripts; ln -s ${JSON.stringify(join(REPO_ROOT, "node_modules"))} node_modules
+set +e; run_lane_round destructive destructive "a.spec.ts" ${JSON.stringify(join(red.dir, "logs", "lane.log"))}; echo "RC=$?"`,
+    { PATH: `${red.bin}:${process.env.PATH}` },
+  );
+  assert.match(f.stdout, /RC=1/, f.stderr);
+  assert.equal(readFileSync(join(red.dir, "logs", "lane-destructive-destructive.status"), "utf8").trim(), "1");
+});
+
+test("the serving lane starts each variant with its switches, in order, and a failure reddens the run", () => {
+  const dir = makeTempDir("run-e2e-serving-lane-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeLaneVerdict(dir, "serving", {
+    tests: 3,
+    runs: [
+      { name: "trusted", env: { LANGFLOW_SERVING_TRUST_PROXY_HEADERS: "true" }, files: ["iso.spec.ts"], tests: 2 },
+      { name: "untrusted", env: { LANGFLOW_SERVING_TRUST_PROXY_HEADERS: "false" }, files: ["untr.spec.ts"], tests: 1 },
+    ],
+  });
+  const log = join(dir, "calls.log");
+  // The machine-facing functions replaced after sourcing: what the lane decides is under
+  // test, not the starter.
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)}; TEST_JOB_FAILED=0`,
+      `start_backend_for_shard() { echo "start $1 $2 extra=[$BACKEND_EXTRA_ENV]" >> ${JSON.stringify(log)}; }`,
+      `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
+      `run_lane_round() { echo "round $1 $2 files=[$3] url=$PLAYWRIGHT_BASE_URL" >> ${JSON.stringify(log)}; [ "$2" = trusted ]; }`,
+      `target_ssh() { echo "stop" >> ${JSON.stringify(log)}; cat > /dev/null; }`,
+      `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
+    ].join("\n"),
+    { E2E_LANES: "serving", BASE_PORT: "7870", TARGET_SSH: "local" },
+  );
+  assert.match(r.stdout, /FAILED=1/, r.stderr);
+  assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
+    "start lane-serving-trusted 7878 extra=[LANGFLOW_SERVING_TRUST_PROXY_HEADERS='true' ]",
+    "round serving trusted files=[iso.spec.ts] url=http://localhost:7878/",
+    "stop",
+    "start lane-serving-untrusted 7878 extra=[LANGFLOW_SERVING_TRUST_PROXY_HEADERS='false' ]",
+    "round serving untrusted files=[untr.spec.ts] url=http://localhost:7878/",
+    "stop",
+  ]);
+
+  // Nothing selected: no backend at all.
+  writeLaneVerdict(dir, "serving", { tests: 0, runs: [] });
+  const idle = sourced(`RUN_DIR=${JSON.stringify(dir)}; start_backend_for_shard() { echo STARTED; }; phase_lanes`, { E2E_LANES: "serving" });
+  assert.doesNotMatch(idle.stdout, /STARTED/);
+  assert.match(idle.stdout, /nothing selected, no variant started/);
+});
+
+test("a variant whose backend never comes up records a failed status and no blob", () => {
+  const dir = makeTempDir("run-e2e-serving-down-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeLaneVerdict(dir, "serving", { tests: 1, runs: [{ name: "required", env: {}, files: ["req.spec.ts"], tests: 1 }] });
+  const r = sourced(
+    `RUN_DIR=${JSON.stringify(dir)}; TEST_JOB_FAILED=0; start_backend_for_shard() { return 1; }; run_lane_round() { echo RAN; }; phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
+    { E2E_LANES: "serving", TARGET_SSH: "local" },
+  );
+  assert.match(r.stdout, /FAILED=1/, r.stderr);
+  assert.doesNotMatch(r.stdout, /RAN/);
+  assert.equal(readFileSync(join(dir, "logs", "lane-serving-required.status"), "utf8").trim(), "1");
+});
+
+test("the destructive lane runs on shard 1 only, after its round and before its backend stops", () => {
+  const body = readFileSync(SCRIPT, "utf8");
+  const shard = body.slice(body.indexOf("run_shard() {"), body.indexOf("phase_shards() {"));
+  const round = shard.indexOf('npx playwright test --grep "$STABLE_GREP"');
+  const lane = shard.indexOf('status="$(destructive_after_round "$idx" "$status" "$log")"');
+  const stop = shard.lastIndexOf("backend_stopper");
+  assert.ok(round > 0 && lane > round && stop > lane, "order: @stable round, destructive lane, backend stop");
+  assert.equal(sourced("echo $DESTRUCTIVE_SHARD").stdout.trim(), "1");
+});
+
+test("a destructive failure fails its shard, on shard 1 only and only when the lane selected something", () => {
+  const dir = makeTempDir("run-e2e-destructive-after-");
+  writeLaneVerdict(dir, "destructive", { tests: 1, runs: [{ name: "destructive", env: {}, files: ["a.spec.ts"], tests: 1 }] });
+  const after = (idx, status, roundRc, lanes = "destructive") => sourced(
+    `RUN_DIR=${JSON.stringify(dir)}; run_lane_round() { echo "ROUND $1 $3" >&2; return ${roundRc}; }; destructive_after_round ${idx} ${status} /dev/null`,
+    { E2E_LANES: lanes },
+  );
+  const red = after(1, 0, 1);
+  assert.equal(red.stdout, "1", red.stderr);
+  assert.match(red.stderr, /ROUND destructive a\.spec\.ts/);
+  assert.equal(after(1, 0, 0).stdout, "0", "a green lane leaves a green shard green");
+  assert.equal(after(1, 2, 0).stdout, "2", "the round's own failure is kept");
+  assert.equal(after(1, 2, 1).stdout, "2", "and not overwritten by the lane's");
+  const other = after(2, 0, 1);
+  assert.equal(other.stdout, "0");
+  assert.doesNotMatch(other.stderr, /ROUND/, "only DESTRUCTIVE_SHARD runs the lane");
+  assert.doesNotMatch(after(1, 0, 1, "serving").stderr, /ROUND/, "nor when the lane is off");
+  writeLaneVerdict(dir, "destructive", { tests: 0, runs: [] });
+  assert.doesNotMatch(after(1, 0, 1).stderr, /ROUND/, "nor when nothing is promoted");
+});
+
+test("a lane round that collects nothing is red, never a valid empty blob", () => {
+  // No --pass-with-no-tests: a round starts only when the listing found tests, so zero
+  // collected is a loss (#1764's shape per lane), and Playwright's own exit says so.
+  const body = readFileSync(SCRIPT, "utf8");
+  const fn = body.slice(body.indexOf("run_lane_round() {"), body.indexOf("destructive_after_round() {"));
+  assert.ok(fn.includes("npx playwright test"), "could not isolate run_lane_round");
+  assert.doesNotMatch(fn.replace(/^\s*#.*$/gm, ""), /--pass-with-no-tests/);
+});
+
+test("a shard working copy needs no idx in its caller's scope", () => {
+  // `local idx="$1" wd=".../shard-$idx"` expanded the CALLER's idx: right inside
+  // run_shard, `idx: unbound variable` for the serving lane, whose first live run
+  // died there (#2142).
+  const dir = makeTempDir("run-e2e-workdir-");
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)}; unset idx; prepare_shard_workdir lane-serving-trusted && echo MADE`);
+  assert.match(r.stdout, /MADE/, r.stderr);
+  assert.ok(existsSync(join(dir, "shard-lane-serving-trusted", "scripts", "run-e2e.sh")), "the copy is in the variant's own directory");
+  assert.ok(existsSync(join(dir, "shard-lane-serving-trusted", "node_modules")), "node_modules is linked");
+});
+
+test("a serving variant that dies with its backend up still stops it, so the next one can start", () => {
+  const dir = makeTempDir("run-e2e-serving-abort-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeLaneVerdict(dir, "serving", {
+    tests: 2,
+    runs: [
+      { name: "trusted", env: {}, files: ["iso.spec.ts"], tests: 1 },
+      { name: "required", env: {}, files: ["req.spec.ts"], tests: 1 },
+    ],
+  });
+  const log = join(dir, "calls.log");
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)}; TEST_JOB_FAILED=0`,
+      `start_backend_for_shard() { echo "start $1" >> ${JSON.stringify(log)}; }`,
+      `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
+      // The first variant aborts the subshell outright, as a `set -e` failure would.
+      `run_lane_round() { echo "round $2" >> ${JSON.stringify(log)}; [ "$2" = trusted ] && exit 3; return 0; }`,
+      `target_ssh() { echo "stop" >> ${JSON.stringify(log)}; cat > /dev/null; }`,
+      `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
+    ].join("\n"),
+    { E2E_LANES: "serving", TARGET_SSH: "local" },
+  );
+  assert.match(r.stdout, /FAILED=1/, r.stderr);
+  assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), ["start lane-serving-trusted", "round trusted", "stop", "start lane-serving-required", "round required", "stop"]);
 });

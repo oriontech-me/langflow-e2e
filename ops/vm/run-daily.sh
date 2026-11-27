@@ -274,6 +274,15 @@ main() {
   export TARGET_SSH=local
   export BASE_PORT=7870   # what the rehearsal measured; 7860-7863 were the tunnel's
   export SHARDS=4         # peak load 16.8 on 16 vCPU, 12 Langflow processes — measured
+  # The scheduled lanes beside the shards (#2142): the tests carrying @stable AND
+  # @destructive run on shard 1's backend after its round; those carrying @stable AND
+  # @serving run after the shards, once per serving-identity variant, on port 7878 (the
+  # default BASE_PORT+8, clear of this lane's 7870-7873 and the shadow's 7880-7883). A
+  # lane with nothing promoted starts nothing. Only this lane: run-e2e.sh keeps them off
+  # for the shadow and on-demand runs.
+  #
+  # Rollback: drop this line.
+  export E2E_LANES="destructive serving"
   # Adopted 2026-10-02 (#2159). The matrix balances on this lane's own timings, from the
   # ledger, not on reports/spec-durations.json: the Actions daily was its only writer and
   # it was switched off that day, so the tracked table is frozen and every spec added

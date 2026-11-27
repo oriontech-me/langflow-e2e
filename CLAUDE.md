@@ -185,9 +185,9 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 | `@workspace` | Flow/folder/canvas management |
 | `@database` | Tests with persistent saved state |
 | `@mainpage` | Home/dashboard UI tests |
-| `@destructive` | Test mutates account-wide state. **Lane selector**: excluded from every normal run by `grepInvert`; run alone with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive` (workers pinned to 1). **Never combine with `@stable`** (#1010) |
+| `@destructive` | Test mutates account-wide state. **Lane selector**: excluded from every normal run by `grepInvert`; run alone with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive` (workers pinned to 1). **Scheduled**: the VM daily runs `@stable` + `@destructive` on shard 1's backend after its round (#2142) |
 | `@enterprise` | Targets a Langflow **Enterprise** instance. **Lane selector**, serial (login is rate-limited per IP): `PW_ENTERPRISE=1 npx playwright test --grep @enterprise` with `PLAYWRIGHT_BASE_URL` pointed at the instance. **Never combine with `@stable`** (#1010) |
-| `@serving` | **Lane selector**, the only parallel one: the OSS nightly under serving-plane end-user identity. Start it with `./scripts/start-langflow-serving-identity.sh`, then `PW_SERVING_IDENTITY=1 npx playwright test --grep @serving`. **Never combine with `@stable`** (#1010) |
+| `@serving` | **Lane selector**, the only parallel one: the OSS nightly under serving-plane end-user identity. Start it with `./scripts/start-langflow-serving-identity.sh`, then `PW_SERVING_IDENTITY=1 npx playwright test --grep @serving`. **Scheduled**: the VM daily runs `@stable` + `@serving` after the shards, one backend per variant (`scripts/lib/scheduled-lanes.mjs`, #2142) |
 | `@instance-migration` | **Lane selector**, serial: a source Langflow with instance migration (*Settings > Migration*) and its two destinations (not the schema-upgrade migration). Start it with `./scripts/start-langflow-instance-migration.sh`, then `PW_INSTANCE_MIGRATION=1 npx playwright test --grep @instance-migration`. **Never combine with `@stable`** (#1010) |
 
 Lane precedence when several flags are set: `@enterprise` > `@instance-migration` > `@serving` > `@destructive`, resolved in `tests/fixtures/lane.ts`. Full lane contracts: [`docs/infra/tags.md`](docs/infra/tags.md).
