@@ -2014,7 +2014,7 @@
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
 | `core-functionality/a2a/` | 21 | 17 | 0 | 1 | 3 |
 | `core-functionality/evals/` | 3 | 3 | 0 | 0 | 0 |
-| `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
+| `flow-functionality/` | 60 | 56 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -2027,7 +2027,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **996** | **866 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **998** | **868 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2043,7 +2043,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 988 `test()` calls carrying the `@stable` tag, distributed across 339 spec
+> 989 `test()` calls carrying the `@stable` tag, distributed across 340 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2903,6 +2903,7 @@
 - [x] should keep a lock saved while a node update lands mid-save → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] an evaluation's version is Protected: the API refuses its delete, the history shows the badge and a disabled Delete, and a plain version still deletes → `flow-version-protected.spec.ts`
 - [x] a frozen component serves its cached output instead of recomputing → `freeze-and-state.spec.ts`
 - [x] freezing a component also freezes every component upstream of it → `freeze-and-state.spec.ts`
 - [x] unfreezing releases the whole path and the component recomputes → `freeze-and-state.spec.ts`
