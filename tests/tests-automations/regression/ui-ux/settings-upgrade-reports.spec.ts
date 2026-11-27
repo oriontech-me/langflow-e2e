@@ -17,6 +17,8 @@ import { OUTDATED_SAFE_CHAT_OUTPUT_ID, buildOutdatedSafeFlow } from "../../../he
 
 const OUTDATED_FIXTURE = "tests/assets/flows/outdated_flow.json";
 const SEARCH_LABEL = "Search names, owners, projects, or labels";
+/** The page's copy for `check_running`: the only refusal worth clicking again for. */
+const LOCK_REFUSAL = "A check is already running on this server";
 /** How long one check may run once it starts (242 s measured with 30 flows). */
 const CHECK_RUN_MS = 600_000;
 /** How long to wait for another check to release the lock, separately. */
@@ -76,8 +78,8 @@ test.describe("Settings — Upgrade reports", () => {
 
   /**
    * Runs a check from the page and returns the report id. The page either reports the
-   * report ready or shows an alert (e.g. another check holds the lock); an alert waits
-   * and clicks again on LOCK_WAIT_MS, while a running check gets CHECK_RUN_MS.
+   * report ready or shows an alert; the lock refusal waits and clicks again on
+   * LOCK_WAIT_MS, any other alert fails, and a running check gets CHECK_RUN_MS.
    */
   async function checkFromPage(page: Page): Promise<string> {
     await page.goto("/settings/upgrade-reports");
@@ -92,7 +94,11 @@ test.describe("Settings — Upgrade reports", () => {
       await page.getByRole("button", { name: "Check upgrade" }).click();
       await expect(feedback.getByText(ready).or(refused)).toBeVisible({ timeout: CHECK_RUN_MS });
       if (await feedback.getByText(ready).isVisible()) break;
-      expect(Date.now(), `the check kept being refused: ${await refused.innerText()}`).toBeLessThan(lockDeadline);
+      // Every failure shows the same alert; only the lock refusal is retried, anything
+      // else (check_failed, timeout, invalid_target_version…) fails here with its text.
+      const alert = await refused.innerText();
+      expect(alert, "the check failed for a reason other than the lock").toContain(LOCK_REFUSAL);
+      expect(Date.now(), `the check kept being refused: ${alert}`).toBeLessThan(lockDeadline);
       await new Promise((r) => setTimeout(r, 5_000));
     }
     await expect(page).toHaveURL(/[?&]report=[0-9a-f-]{36}/);
@@ -111,7 +117,7 @@ test.describe("Settings — Upgrade reports", () => {
     "a check from the page reports both flows, and its preview matches the API and changes nothing",
     { tag: ["@destructive", "@settings", "@database"] },
     async ({ page, request }) => {
-      test.setTimeout(LOCK_WAIT_MS + CHECK_RUN_MS + 120_000);
+      test.setTimeout(LOCK_WAIT_MS + CHECK_RUN_MS + 180_000);
       const before = { breaking: await storedData(request, breaking.id), safe: await storedData(request, safe.id) };
       let reportId = "";
 
@@ -155,7 +161,7 @@ test.describe("Settings — Upgrade reports", () => {
     "apply from the page under maintenance updates the flow and keeps a retained recovery version",
     { tag: ["@destructive", "@settings", "@database"] },
     async ({ page, request }) => {
-      test.setTimeout(LOCK_WAIT_MS + CHECK_RUN_MS + 120_000);
+      test.setTimeout(LOCK_WAIT_MS + CHECK_RUN_MS + 180_000);
       const edgesBefore = (await storedData(request, safe.id)).edges;
       try {
         await test.step("check and preview the safe flow", async () => {

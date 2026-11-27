@@ -45,8 +45,8 @@ Because of 2 and 4, the two instance-wide operations (a check, an applied repair
 
 Tests 1–3: `@stable` `@api` `@database`. Tests 4–5: `@destructive` `@api` `@database`.
 
-No functional tag fits better than the issue's `@components` for an instance-administration API, so the
-cross-cutting pair is used, as the `api/instance/` siblings do. Tests 1–3 never run a check and never turn
+No functional tag fits an instance-administration API (the issue suggested `@components`, which names canvas
+component configuration), so only cross-cutting tags are used, as the `api/instance/` siblings do. Tests 1–3 never run a check and never turn
 maintenance on: they only preview and probe refusals, take seconds, and are `@stable`.
 
 **Tests 4–5 are `@destructive` and therefore not `@stable`** (CLAUDE.md: never combine the two).

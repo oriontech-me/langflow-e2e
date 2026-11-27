@@ -51,8 +51,9 @@ with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive`.
 Output, one edge). Teardown deletes both and turns maintenance off through the API if it is on.
 
 A *check from the page* types the server's `main_version` into *Target release*, clicks *Check upgrade*, and
-waits for either the ready message or the refusal alert (up to 600 s for a running check). On a refusal (another
-check holds the lock) it waits 5 s and clicks again, for at most 300 s.
+waits for either the ready message or the alert (up to 600 s for a running check). Only the lock refusal (*"A
+check is already running on this server…"*) waits 5 s and clicks again, for at most 300 s; any other alert
+(`check_failed`, `timeout`, `invalid_target_version`…) fails the test at once with its text.
 
 **Test 1 — a check from the page reports both flows, and its preview matches the API and changes nothing.**
 
