@@ -285,6 +285,14 @@
 - [x] (`@destructive`) *Settings › Upgrade reports*: a check from the page reports both flows (the page's report is the API's), and its preview — after searching the run's flows, the list pages 20 at a time — shows *Ready for update* / *Manual repair required* with the API's target fingerprint, changing nothing → `ui-ux/settings-upgrade-reports.spec.ts`
 - [x] (`@destructive`) From the page, maintenance is turned on through its confirmation, the reviewed update is applied and reads *Updated*, and the API shows the flow updated with unchanged edges and a retained recovery version → `ui-ux/settings-upgrade-reports.spec.ts`
 
+#### 1.19 Database maintenance mode (1.14)
+
+> Upstream #16181 / #16583. Maintenance refuses writes **per caller**, instance-wide: a regular user's writes and runs get `503 "This instance is in maintenance mode."`, a superuser's still go through. Every test that turns it on runs in the serial `@destructive` lane; only the superuser gate is `@stable`.
+
+- [x] A regular user reads the status (without `set_by`) and is refused `403` on `POST /maintenance/on` and `/off` → `api/instance/api-maintenance-mode.spec.ts`
+- [x] (`@destructive`) On with a reason records it and the superuser in `set_by`; a regular user's flow update, flow create, variable create, run (`POST /build/{id}/flow`) and even `POST /maintenance/off` are refused `503` with the exact body, while their reads and sign-in work and the superuser still creates and updates a flow; off lifts it and the user's writes go through again → `api/instance/api-maintenance-mode.spec.ts`
+- [x] (`@destructive`) *Settings › Upgrade reports* (opened on an imported empty report): on through the confirmation dialog with a reason shows *Maintenance is on.*, the reason, and the changes-paused notice, which the flow editor shows too; off through its dialog removes the notice → `api/instance/api-maintenance-mode.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
