@@ -84,15 +84,15 @@ enabled, so nothing fires.
 **Test 3 — a saved timezone outside the list is shown and kept when the list opens.**
 
 1. The flow is created with Daily and timezone `posix/America/New_York` (not in the 599 options). The row reads
-   that timezone, `reason: pending`. Where the server's tzdata has no `posix/` tree, the row reads
-   `config_invalid` with the unknown-timezone message and the test skips with that reason (see the API doc's
-   *Notes*).
+   that timezone, `reason: pending`. Where the server does not load the zone (no `posix/` tree in its tzdata,
+   see the API doc's *Notes*), the row reads `config_invalid` with the unknown-timezone message: that is asserted
+   instead, an annotation records it, and the canvas and stored-node steps below run on every host.
 2. On the canvas, `value-dropdown-dropdown_str_timezone` shows `posix/America/New_York`.
 3. Open the timezone list (an option is visible) and close it with `Escape` without picking (no option left):
    the value still shows the zone.
 4. Make an edit that saves the node without touching the timezone (switch the type to Weekly), and poll the
    stored flow until the node reads Weekly: its `timezone` is still `posix/America/New_York`, and so is the
-   trigger row's.
+   trigger row's (with the Weekly cron, where the server loads the zone).
 
 ---
 
@@ -119,6 +119,8 @@ enabled, so nothing fires.
 ## Preconditions *(required)*
 
 - Langflow `1.14.0.dev30` or later. Earlier builds skip with the reason.
+- For Test 3's row checks, a server whose tzdata ships the `posix/` tree (the nightly image); elsewhere they are
+  replaced by the refusal and annotated.
 
 ---
 

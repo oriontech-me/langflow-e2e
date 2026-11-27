@@ -295,34 +295,21 @@ test.describe("Triggers API — the Schedule picker is compiled on the server", 
   );
 
   test(
-    "a timezone that loads but is not listed is kept, on save and through Update",
+    "a timezone outside the list is accepted as typed, and kept on save where the server loads it",
     { tag: ["@stable", "@api", "@integrations"] },
-    async ({ request }) => {
+    async ({ request }, testInfo) => {
       const component = findCatalogComponent(catalog, "ScheduleTrigger") as unknown as { template: Template };
-      const options = component.template.timezone.options as string[];
-      expect(options.length, "the catalog lists the picker's zones").toBeGreaterThan(100);
-      expect(options, "the zone must be outside the list for this to test anything").not.toContain(UNLISTED_TZ);
+      const timezone = component.template.timezone as Template[string] & { options?: string[]; combobox?: boolean };
 
-      const nodeId = "ScheduleTrigger-unlisted";
-      const flowId = await saveFlow(
-        request,
-        "unlisted tz",
-        graph(nodeId, { schedule_type: "Daily", times_of_day: ["08:00"], timezone: UNLISTED_TZ }),
-      );
-      const row = await nodeTrigger(request, flowId, nodeId);
-      // The zone loads only where the server's tzdata ships the legacy posix/ tree (the
-      // nightly image does; the Python tzdata package and some hosts do not). The server
-      // answers that itself, so a host without it skips with the server's own words.
-      test.skip(
-        row.reason === "config_invalid" && row.last_error === UNKNOWN_TZ_MESSAGE,
-        `${UNLISTED_TZ} does not load on this server (its tzdata has no posix/ tree): nothing outside the list to keep`,
-      );
-
-      await test.step("flow save keeps it on the row", async () => {
-        expect({ timezone: row.config.timezone, reason: row.reason }).toEqual({ timezone: UNLISTED_TZ, reason: "pending" });
+      await test.step("the timezone input is a combobox, and the zone is outside its list", async () => {
+        // The clearing #16322 fixed was a non-combobox dropdown hiding and clearing a saved
+        // value outside its options; `combobox: true` is the server-side half of that fix.
+        expect(timezone.combobox, "the timezone input accepts values outside its options").toBe(true);
+        expect((timezone.options ?? []).length, "the catalog lists the picker's zones").toBeGreaterThan(100);
+        expect(timezone.options, "the zone must be outside the list for this to test anything").not.toContain(UNLISTED_TZ);
       });
 
-      await test.step("the editor's Update keeps it on the node", async () => {
+      await test.step("the editor's Update returns the node with the zone and the combobox intact", async () => {
         const node = structuredClone(nodeOf(graph("ScheduleTrigger-tzupdate", { schedule_type: "Daily", timezone: UNLISTED_TZ })));
         const res = await request.post("/api/v1/custom_component", {
           headers,
@@ -330,7 +317,31 @@ test.describe("Triggers API — the Schedule picker is compiled on the server", 
         });
         const raw = await res.text();
         expect(res.status(), `POST /api/v1/custom_component — ${raw.slice(0, 300)}`).toBe(200);
-        expect(JSON.parse(raw).data.template.timezone.value, "Update must not clear an unlisted zone").toBe(UNLISTED_TZ);
+        const returned = JSON.parse(raw).data.template.timezone as { value?: unknown; combobox?: boolean };
+        expect({ value: returned.value, combobox: returned.combobox }).toEqual({ value: UNLISTED_TZ, combobox: true });
+      });
+
+      await test.step("flow save keeps it on the row where the server loads the zone", async () => {
+        const nodeId = "ScheduleTrigger-unlisted";
+        const flowId = await saveFlow(
+          request,
+          "unlisted tz",
+          graph(nodeId, { schedule_type: "Daily", times_of_day: ["08:00"], timezone: UNLISTED_TZ }),
+        );
+        const row = await nodeTrigger(request, flowId, nodeId);
+        const refused = row.reason === "config_invalid" && row.last_error === UNKNOWN_TZ_MESSAGE;
+        if (refused) {
+          // Only the system tzdata's legacy posix/ tree carries this zone (the nightly
+          // image has it; the Python tzdata package and some hosts do not). Recorded,
+          // not skipped, so a host that never loads it stays visible in the report.
+          testInfo.annotations.push({
+            type: "row check not applicable",
+            description: `the server refused ${UNLISTED_TZ} as unknown (likely no posix/ tree in its tzdata); the row half was not checked`,
+          });
+        }
+        expect(
+          refused ? { reason: row.reason, last_error: row.last_error } : { timezone: row.config.timezone, reason: row.reason },
+        ).toEqual(refused ? { reason: "config_invalid", last_error: UNKNOWN_TZ_MESSAGE } : { timezone: UNLISTED_TZ, reason: "pending" });
       });
     },
   );

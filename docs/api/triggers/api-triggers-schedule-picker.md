@@ -18,7 +18,7 @@ asks for a **schedule type** instead of a cron: *At regular intervals*, *Once*, 
 row's `config` carries the timing the scheduler runs on.
 
 The suite only touched this as compatibility (`api-triggers-lifecycle` and `api-triggers-run-identity` send
-`schedule_type: "Custom (cron)"`). This file pins the picker's server contract, and in particular the defects
+`schedule_type: "Custom (cron)"`). This file pins the picker's server contract, and in particular the five defects
 #16322's own history names (six tests):
 
 1. **Compiled on the server.** The cron used to be compiled only when the canvas sent a field refresh, so a flow
@@ -118,14 +118,20 @@ template, `field: "schedule_type"` and the picked value.
 **Test 4 — an unknown timezone reads config_invalid with its reason.** Daily with `Etc/Unknown` →
 `config_invalid` and the unknown-timezone message.
 
-**Test 5 — a timezone that loads but is not listed is kept, on save and through Update.** The defect #16322
-names is *Update* clearing a zone that loads but is not listed; flow save never compared against the list.
+**Test 5 — a timezone outside the list is accepted as typed, and kept on save where the server loads it.** The
+clearing #16322 fixed lived in the canvas: a non-combobox dropdown hid a saved value outside its options and
+cleared it. The server-side half of the fix is the timezone input's `combobox: true`; the server's *Update*
+copies the saved value whatever the list holds (measured: it returns even `Etc/Unknown` unchanged), so *Update*
+alone cannot show the defect. The canvas half is the UI spec's Test 3.
 
-1. `posix/America/New_York` is absent from the catalog's timezone options.
-2. A Daily flow with it: the row keeps it with `reason: pending`. If the server answers `config_invalid` with the
-   unknown-timezone message instead, its tzdata has no `posix/` tree and the test **skips with that reason**
-   (see *Notes*).
-3. `POST /api/v1/custom_component` with a node holding it → the returned template keeps it.
+1. The catalog's timezone input has `combobox: true`, lists more than 100 zones, and not
+   `posix/America/New_York`.
+2. `POST /api/v1/custom_component` with a node holding that zone → the returned timezone keeps the value and
+   `combobox: true`.
+3. A Daily flow with that zone: where the server loads it, the row keeps it with `reason: pending`. Where it
+   does not (no `posix/` tree in the server's tzdata, see *Notes*), the row reads `config_invalid` with the
+   unknown-timezone message; that is asserted instead, and an annotation records that the row half was not
+   checked. No skip, so steps 1–2 run on every host and a host that never loads the zone stays visible.
 
 **Test 6 — a node saved before the picker keeps its own cron, on save and through Update.**
 
@@ -149,7 +155,8 @@ names is *Update* clearing a zone that loads but is not listed; flow save never 
 - **Custom survives:** the refreshed template keeps the per-run cron on Daily (hidden) and on Custom (shown), and
   the saved node runs it. A refresh that overwrote the cron (the pre-fix `update_build_config`) returns the
   Daily-compiled cron.
-- **Timezone:** the unknown zone refused with its message; the unlisted zone kept by flow save and by *Update*.
+- **Timezone:** the unknown zone refused with its message; the timezone input stays a combobox (a regression to
+  `combobox: false` fails steps 1–2 of Test 5); the unlisted zone kept on the row where the server loads it.
 - **Legacy:** the row keeps `5 4 * * *`, and *Update* opens it on Custom with that cron. A regression to the
   picker defaults opens `Weekly`.
 
@@ -160,8 +167,10 @@ names is *Update* clearing a zone that loads but is not listed; flow save never 
 - `posix/America/New_York` loads where the server's system tzdata ships the legacy `posix/` tree: the nightly
   image does (`/usr/share/zoneinfo/posix`), the Python `tzdata` package does not, macOS does not, and newer
   Debian/Ubuntu move it to `tzdata-legacy`. It is never in `available_timezones()`. Test 5 asks the server: where
-  the zone does not load, the row reads `config_invalid` with the unknown-timezone message and the test skips
-  with that reason instead of failing. The canvas spec's timezone test does the same.
+  the zone does not load, the row reads `config_invalid` with the unknown-timezone message, which is asserted in
+  place of the kept zone and recorded as an annotation. The cause is inferred, not measured: a server that began
+  requiring list membership would answer the same, and the annotation in every run would be the place to see it.
+  The canvas spec's timezone test does the same for its row checks only.
 - *Update* and the field refresh use the catalog's own component code, which the custom-code policy accepts
   whether or not custom components are allowed.
 
@@ -178,7 +187,8 @@ names is *Update* clearing a zone that loads but is not listed; flow save never 
 ## Preconditions *(required)*
 
 - Langflow `1.14.0.dev30` or later (the picker). Earlier builds skip with the reason.
-- For Test 5, a server whose tzdata ships the `posix/` tree (the nightly image); elsewhere it skips with the reason.
+- For Test 5's row half, a server whose tzdata ships the `posix/` tree (the nightly image); elsewhere that half is
+  replaced by the refusal and annotated.
 
 ---
 
@@ -186,7 +196,9 @@ names is *Update* clearing a zone that loads but is not listed; flow save never 
 
 - `src/lfx/src/lfx/components/triggers/schedule_trigger.py` — the component: `update_build_config` (the field refresh), `update_frontend_node` (the legacy rule), `_picker_disagrees`
 - `src/backend/base/langflow/services/triggers/reconciliation.py` — flow save compiles the pick onto the row (`_apply_schedule_pick`, `schedule_pick_error`)
-- `src/backend/base/langflow/services/triggers/service.py` — the enable refusal and `blocked_actions`
+- `src/backend/base/langflow/services/triggers/service.py` — the enable refusal
+- `src/backend/base/langflow/services/triggers/capabilities.py` — `allowed_actions` / `blocked_actions`
+- `src/backend/base/langflow/services/triggers/error_codes.py` — `UNKNOWN_TIMEZONE_ERROR`, the asserted message
 - `src/lfx/src/lfx/base/triggers/schedule.py` — `picker_timing`, `schedule_timing`, the picker messages and `timezone_options`
 - `src/backend/base/langflow/services/triggers/schedule_config.py` — `validate_schedule_config`, the unknown-timezone refusal
 - `src/backend/base/langflow/services/triggers/scheduler.py` — runs the stored timing

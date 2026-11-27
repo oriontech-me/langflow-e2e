@@ -208,7 +208,7 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
   test(
     "a saved timezone outside the list is shown and kept when the list opens",
     { tag: ["@stable", "@components", "@integrations"] },
-    async ({ page, request }) => {
+    async ({ page, request }, testInfo) => {
       const flowId = await openScheduleFlow(page, request, {
         schedule_type: "Daily",
         times_of_day: ["08:00"],
@@ -218,15 +218,20 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
 
       let row: TriggerRead | undefined;
       await expect.poll(async () => (row = await triggerRow(request, flowId)) !== undefined).toBe(true);
-      // The zone loads only where the server's tzdata ships the legacy posix/ tree; the
-      // server says so itself (see the API spec), and then there is nothing to keep.
-      test.skip(
-        row!.reason === "config_invalid" && row!.last_error === UNKNOWN_TZ_MESSAGE,
-        `${UNLISTED_TZ} does not load on this server (its tzdata has no posix/ tree): nothing outside the list to keep`,
-      );
+      // Only the row depends on the server loading the zone (its tzdata's legacy posix/
+      // tree; see the API spec). The canvas and the stored node are checked on every host.
+      const refused = row!.reason === "config_invalid" && row!.last_error === UNKNOWN_TZ_MESSAGE;
+      if (refused) {
+        testInfo.annotations.push({
+          type: "row check not applicable",
+          description: `the server refused ${UNLISTED_TZ} as unknown (likely no posix/ tree in its tzdata); the row checks were not made`,
+        });
+      }
 
-      await test.step("the row holds the unlisted zone", async () => {
-        expect({ timezone: row!.config.timezone, reason: row!.reason }).toEqual({ timezone: UNLISTED_TZ, reason: "pending" });
+      await test.step("the row holds the unlisted zone, where the server loads it", async () => {
+        expect(
+          refused ? { reason: row!.reason, last_error: row!.last_error } : { timezone: row!.config.timezone, reason: row!.reason },
+        ).toEqual(refused ? { reason: "config_invalid", last_error: UNKNOWN_TZ_MESSAGE } : { timezone: UNLISTED_TZ, reason: "pending" });
       });
 
       await test.step("the canvas shows it", async () => {
@@ -252,12 +257,13 @@ test.describe("Triggers on the canvas — the Schedule picker", () => {
             { message: "the autosave stores Weekly and the unlisted zone", timeout: 20_000 },
           )
           .toEqual({ type: "Weekly", timezone: UNLISTED_TZ });
+        // On a host that refuses the zone the row is config_invalid either way; nothing to compare.
         await expect
           .poll(async () => {
-            const row = await triggerRow(request, flowId);
-            return row && { timezone: row.config.timezone, cron: row.config.cron };
+            const after = await triggerRow(request, flowId);
+            return refused ? after?.config.timezone : after && { timezone: after.config.timezone, cron: after.config.cron };
           })
-          .toEqual({ timezone: UNLISTED_TZ, cron: "0 8 * * 1-5" });
+          .toEqual(refused ? UNLISTED_TZ : { timezone: UNLISTED_TZ, cron: "0 8 * * 1-5" });
       });
     },
   );
