@@ -260,6 +260,19 @@
 - [x] Export: a UTF-8 CSV attachment with a BOM, CRLF lines and formula-leading cells prefixed with `'` (CSV injection); re-importing it reproduces commas, quotes, embedded newlines, non-ASCII text and `null` exactly, and the formula row with its apostrophe (lossy by design) → `api/evals/api-datasets.spec.ts`
 - [x] Ownership: another user gets `404 "Dataset not found"` on all eight per-id operations and an empty list, the owner's dataset is unchanged, and the other user may reuse the same name (unique per user) → `api/evals/api-datasets.spec.ts`
 
+
+#### 1.17 Evals API — evaluations and runs (1.14)
+
+> The scoring half of evals (#2564): the **14** operations of `/api/v1/evaluations` and `/api/v1/evaluation-runs`, keyless by construction — an echo flow (Chat Input → Chat Output) built from the live catalog, a six-row dataset each of whose rows a different rule decides, and the text scorers, which call no model. Runs execute server-side, so the row `error` and `failed_items` are the verdict, not the flow-error gate. Contract and measurements: `docs/api/evals/api-evaluations.md`.
+
+- [x] `check` reports the echo as evaluable (one Chat Output, nothing blocking) and blocks a flow with no output with `no_output`; an evaluation of that flow is still **created**, but starting its run is `422 no_output`; an unknown flow is `404` → `api/evals/api-evaluations.spec.ts`
+- [x] `estimate` counts the dataset's rows and **zero** LLM calls, judge calls, tokens and cost for text scorers → `api/evals/api-evaluations.spec.ts`
+- [x] Validation refuses an `llm_judge` with no model, duplicate scorer names, an unknown text-scorer config key and an empty scorer list (`422`, asserted on `loc` — LE-2462 redacts the scorer type in `msg`); an unknown evaluation and run are `404` → `api/evals/api-evaluations.spec.ts`
+- [x] A keyless run: `202 queued` on the pinned draft and the dataset's revision, `409` on a second start, then `completed` with `passed_items: 4`, `rows.decided: 5` of 6, `pass_rate 0.8`, means `0.6`/`0.8`, and every row's score as predicted (contains-only passes at the 0.5 threshold, `gamma`/`GAMMA` passes case-insensitively, a row with no expected is undecided); the CSV export, the evaluation, the list and the run history agree; the Playground history stays empty → `api/evals/api-evaluations.spec.ts`
+- [x] `case_sensitive: true` fails the case-only mismatch, and `POST /evaluations?run=true` answers with the **run**, not the evaluation → `api/evals/api-evaluations.spec.ts`
+- [x] Cancel stops a run mid-way (`cancelled`, `finished_at` set), the results stop growing and the list and export hold exactly the scored rows; cancelling again is `409` → `api/evals/api-evaluations.spec.ts`
+- [x] A run snapshots the draft as a version **retained** for the evaluation, a second run of the unchanged flow reuses it, an edit leaves the finished run's config alone, and deleting the evaluation keeps the version but releases it (`retained: false`) → `api/evals/api-evaluations.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
