@@ -293,6 +293,17 @@
 - [x] (`@destructive`) On with a reason records it and the superuser in `set_by`; a regular user's flow update, flow create, variable create, run (`POST /build/{id}/flow`) and even `POST /maintenance/off` are refused `503` with the exact body, while their reads and sign-in work and the superuser still creates and updates a flow; off lifts it and the user's writes go through again → `api/instance/api-maintenance-mode.spec.ts`
 - [x] (`@destructive`) *Settings › Upgrade reports* (opened on an imported empty report): on through the confirmation dialog with a reason shows *Maintenance is on.*, the reason, and the changes-paused notice, which the flow editor shows too; off through its dialog removes the notice → `api/instance/api-maintenance-mode.spec.ts`
 
+#### 1.20 Scoped API keys on OSS — unavailable, and keys stay full-access (1.14)
+
+> Upstream #16000. On OSS the authorization service does not support key scopes, so the feature degrades to "not available". A refusal is the safe direction: a key with a stored policy cannot authenticate while authorization is off, so an accepted write would lock the key out rather than restrict it. Queued admission (a job whose key is deleted while queued) is unreachable on the in-process backend and belongs to #2574.
+
+- [x] `GET /api/v1/api_key/permission-options` answers `{supported: false}` with empty roles, resource actions and scope types → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] `PATCH /api/v1/api_key/{id}/permissions` with a well-formed policy is refused `403 "Scoped API keys require enabled authorization"` and the key keeps `permissions: null`; an empty policy is `422`, `null` is allowed, an unknown key is `404` → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] `POST /api/v1/api_key/` with `permissions` is refused with the same `403` and creates no key → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] After a refused restriction the key keeps full owner access: on a cookie-less context (no header and a bogus key refused `403`) it creates a flow owned by its owner, runs it on v1 and v2 with the sentinels echoed, and `total_uses` counts exactly those three calls → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] *Settings › API keys* shows the Permissions column as "Full owner access"; its dialog shows the unavailable notice, holds no form control, keeps *Save permissions* disabled and sends no permission write → `api/auth/api-key-permissions-oss.spec.ts`
+- [x] The create-key modal has no scope step: its creation request carries no `permissions` and the key it creates is unrestricted → `api/auth/api-key-permissions-oss.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
@@ -980,6 +991,13 @@
 - [x] A hyphenated API key is cleared from the draft: no `localStorage` value holds it, the offer reads *"…secret fields need to be entered again."*, and the restored field is empty → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
 - [!] An alphanumeric API key is cleared from the draft too — **declared failing** (`test.fail()`), a known defect: `removeApiKeys` keeps a key matching `/^[A-Z][A-Z0-9_]*$/i` in plain text (owner #2578, no upstream report yet) → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
 - [x] A flow too large to keep a local copy (> 2 000 000 characters) stores no draft and warns *"This flow is too large to keep a local copy of your unsaved changes…"* on the next edit while the conflict stands → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
+
+#### 12.8 Protected flow versions (1.14)
+
+> Upstream #16578. A version something still needs is **retained**: the one an evaluation ran (`"evaluation"`) or an upgrade repair's recovery point (`"admin-upgrade-repair"`). The repair needs database maintenance, so that case is `@destructive`.
+
+- [x] An evaluation run retains its version: `DELETE` is refused `409` with the reason in the detail and the version stays listed; the version history shows *Protected* with the reason in its tooltip and a disabled *Delete* (same tooltip), while a plain snapshot has no badge, an enabled *Delete*, and deletes through the confirmation → `flow-functionality/flow-version-protected.spec.ts`
+- [x] (`@destructive`) An upgrade repair's recovery version (`admin-upgrade-repair`) is refused `409` the same way and shows *Protected* with the repair's own reason → `flow-functionality/flow-version-protected.spec.ts`
 
 ---
 
@@ -2003,7 +2021,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 131 | 124 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 140 | 133 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 101 | 99 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -2016,7 +2034,7 @@
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
 | `core-functionality/a2a/` | 21 | 17 | 0 | 1 | 3 |
 | `core-functionality/evals/` | 3 | 3 | 0 | 0 | 0 |
-| `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
+| `flow-functionality/` | 60 | 56 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -2029,7 +2047,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **993** | **863 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **1004** | **874 (87%)** | **68 (7%)** | **17 (2%)** | **45 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2045,13 +2063,19 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 987 `test()` calls carrying the `@stable` tag, distributed across 338 spec
+> 995 `test()` calls carrying the `@stable` tag, distributed across 341 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/auth/
+- [x] permission-options states that scoped keys are unsupported, with no options → `api-key-permissions-oss.spec.ts`
+- [x] a key's permissions cannot be set, and a refused write leaves the key unchanged → `api-key-permissions-oss.spec.ts`
+- [x] a key cannot be created with permissions, and the refusal creates nothing → `api-key-permissions-oss.spec.ts`
+- [x] after a refused restriction the key keeps full owner access: it creates and runs a flow → `api-key-permissions-oss.spec.ts`
+- [x] Settings › API keys shows the permissions read-only: full owner access, an unavailable notice, Save disabled → `api-key-permissions-oss.spec.ts`
+- [x] the create-key modal has no scope step, and the key it creates is full-access → `api-key-permissions-oss.spec.ts`
 - [x] the session probe answers anonymous and authenticated alike, and says which → `api-session-auth-lifecycle.spec.ts`
 - [x] login takes a form body and refuses an empty one → `api-session-auth-lifecycle.spec.ts`
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
@@ -2261,6 +2285,7 @@
 - [x] the three health routes are not synonyms of each other → `api-instance-identity.spec.ts`
 - [x] version and config answer unauthenticated, the catalog and starter projects do not → `api-instance-identity.spec.ts`
 - [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
+- [x] a regular user can read the status but cannot turn maintenance on or off → `api-maintenance-mode.spec.ts`
 - [x] preview is read-only: ready for the safe flow, manual for the breaking one → `api-upgrade-reports.spec.ts`
 - [x] apply outside maintenance is refused and writes nothing → `api-upgrade-reports.spec.ts`
 - [x] every upgrade-report and repair route refuses a non-superuser → `api-upgrade-reports.spec.ts`
@@ -2904,6 +2929,7 @@
 - [x] should keep a lock saved while a node update lands mid-save → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] an evaluation's version is Protected: the API refuses its delete, the history shows the badge and a disabled Delete, and a plain version still deletes → `flow-version-protected.spec.ts`
 - [x] a frozen component serves its cached output instead of recomputing → `freeze-and-state.spec.ts`
 - [x] freezing a component also freezes every component upstream of it → `freeze-and-state.spec.ts`
 - [x] unfreezing releases the whole path and the component recomputes → `freeze-and-state.spec.ts`
