@@ -450,6 +450,17 @@
 - [x] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode (Text→Message, Word Count→JSON override, JSON Select Keys, Table Filter) → `core-components/data-operations-component.spec.ts`
 - [x] Legacy operations components link/redirect to Data Operations (banner resolves the replacement, link filters the sidebar, old names still find the new component, legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
 
+#### 3.11 Decision Model and Smart Router's decision mode (1.14)
+
+> Langflow 1.14's decision models (`langflow-ai/langflow` #15861, #16330, #16122): a typed question (Choice, Boolean, Score) answered by a provider's decision endpoint, the distribution and confidence kept as evidence (#2571). Neither component had a spec. Tests 1–3 call no model; 4–7 use OpenAI `gpt-6-luna`, and 7 needs tracing on. Contract and measurements: `docs/core-components/decision-model-and-smart-router.md`.
+
+- [x] Smart Router's routing mode, through `custom_component/update` as the editor applies it: Decision Model hides the language model and shows the decision fields, and each decision type sets its own outputs (Choice `category_N_result` + `default_result`, Boolean `yes_result`/`no_result`, Score `level_N_result`); back to Language Model restores the default → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] Decision Model's type decides its fields: Boolean hides the options and shows what yes and no mean; Choice and Score show the options → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] The decision catalog lists only decision models (`gpt-6-luna` with choice/boolean/score), the fields are typed apart (`decision` vs `language`), and a decision is refused before any call when Smart Router lacks its Else output or a minimum probability, or the model is switched off in Model Providers — each with its exact message → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] A Decision Model answers a Boolean (billing → `probability_true` above 0.5) and a Choice (crash → `selected_option: "technical"`, probabilities over the declared ids only) with structured evidence → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] Smart Router in decision mode fires the chosen route (a refund request → the Billing output) and leaves the other routes and the Else empty → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] The output inspection renders the decision: the pick marked among the declared options, the model, type and question → `core-components/decision-model-and-smart-router.spec.ts`
+- [x] The trace records a Decision Model span carrying the decision, and the trace view renders it with the same request id → `core-components/decision-model-and-smart-router.spec.ts`
 ---
 
 ## core-functionality/ — Core and Operational Logic
