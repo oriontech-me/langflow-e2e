@@ -11,7 +11,8 @@ import {
   type RateLimitMock,
   startRateLimitMock,
 } from "../../../helpers/mocks/rate-limit-openai-mock";
-import { providerConfigMap } from "../../../helpers/provider-setup/provider-config";
+import { hasProviderEnvKeys, missingProviderEnvKeys } from "../../../helpers/provider-setup";
+import { langflowProviderName } from "../../../helpers/provider-setup/provider-config";
 import { resolveTestTargets } from "../../../helpers/provider-setup/test-targets";
 
 // Batch Run (`BatchRunComponent`, llm_operations) — one model call per table row, in
@@ -136,13 +137,19 @@ test.describe("Batch Run — on a real provider", () => {
       { tag: ["@stable", "@components", "@model-provider"] },
       async ({ request }) => {
         test.skip(!!skipReason, skipReason ?? "");
+        // Same gates as the agent specs: a target with no provider (a MODEL_TEST_ID not in
+        // models.json) or no key in the environment is skipped with the reason.
+        test.skip(!options.provider, `no provider resolved for ${label}: run the Collect models sweep or set MODEL_TEST_PROVIDER`);
+        const provider = options.provider!;
+        test.skip(
+          !hasProviderEnvKeys(provider),
+          `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
+        );
         test.setTimeout(BUILD_TIMEOUT_MS + 60_000);
         const headers = { Authorization: await getAuthToken(request) };
         const catalog = await fetchComponentCatalog(request, headers);
         const flows: string[] = [];
-        const providerName = options.provider
-          ? providerConfigMap[options.provider].providerTestId.replace(/^provider-item-/, "")
-          : "";
+        const providerName = langflowProviderName(provider);
         const rows = ["Reply with one word: red", "Reply with one word: blue", "Reply with one word: green", "Reply with one word: white"];
 
         try {
@@ -277,9 +284,10 @@ test.describe("Batch Run — batches and the rate-limit retry, against a local m
       await test.step("the mock saw three batches of 2, 2 and 1, at least the delay apart", async () => {
         const requests = mock.completions();
         expect(requests.every((r) => r.status === 200)).toBe(true);
-        // Requests of one batch arrive together; the next batch waits for the slowest
-        // response (300 ms) plus the delay (1 s).
-        const groups = groupsByArrival(requests, 500);
+        // Requests of one batch are sent together; the next batch waits for the slowest
+        // response (300 ms) plus the delay (1 s), so ≥ 1 300 ms. A 1 s window tolerates a
+        // backend stall between two sends of one batch and still separates the batches.
+        const groups = groupsByArrival(requests, 1_000);
         expect(groups.map((g) => g.map((r) => r.user).sort())).toEqual([
           [rows[0], rows[1]].sort(),
           [rows[2], rows[3]].sort(),
@@ -323,6 +331,15 @@ test.describe("Batch Run — batches and the rate-limit retry, against a local m
             `requests for ${row}`,
           ).toEqual([...Array(CLIENT_ATTEMPTS).fill(429), 200]);
         }
+      });
+
+      await test.step("the retry came from Batch Run, not from the client: no row succeeded before every row's last 429", async () => {
+        // The client retries each row on its own schedule; Batch Run retries only once the
+        // whole batch has settled. A fourth client attempt would interleave with the 429s.
+        const requests = mock.completions();
+        const lastRefusal = Math.max(...requests.filter((r) => r.status === 429).map((r) => r.at));
+        const firstSuccess = Math.min(...requests.filter((r) => r.status === 200).map((r) => r.at));
+        expect(firstSuccess, "the first 200 comes after the last 429").toBeGreaterThan(lastRefusal);
       });
 
       await test.step("after the 429s the batch size dropped from 3 to 1: the retries ran one after another", async () => {

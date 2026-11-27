@@ -79,6 +79,27 @@ test("the mock answers models, echoes completions, and rate-limits each message 
   }
 });
 
+test("a delayed reply takes at least the configured delay, and a 429 is not delayed", async () => {
+  const mock = await startRateLimitMock({ [MOCK_HOST_ENV]: "127.0.0.1" });
+  try {
+    const base = `http://127.0.0.1:${new URL(mock.baseUrlForLangflow).port}/v1`;
+    const ask = () =>
+      fetch(`${base}/chat/completions`, {
+        method: "POST",
+        body: JSON.stringify({ model: MOCK_MODEL_ID, messages: [{ role: "user", content: "d" }] }),
+      });
+    mock.reset({ rateLimitFirstPerMessage: 1, responseDelayMs: 250 });
+    let t0 = Date.now();
+    assert.equal((await ask()).status, 429);
+    assert.ok(Date.now() - t0 < 200, "the 429 answers at once");
+    t0 = Date.now();
+    assert.equal((await ask()).status, 200);
+    assert.ok(Date.now() - t0 >= 240, `the reply waited the delay (took ${Date.now() - t0} ms)`);
+  } finally {
+    await mock.close();
+  }
+});
+
 test("starting fails naming the variable when no address qualifies", async () => {
   await assert.rejects(startRateLimitMock({}, { lo: [iface("127.0.0.1", true)] }), new RegExp(MOCK_HOST_ENV));
 });

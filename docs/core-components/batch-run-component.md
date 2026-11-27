@@ -27,7 +27,9 @@ The spec builds **Create List → Batch Run** over the API (Create List's *Table
 
 **Measured (`1.14.0.dev39`), and what changed relative to the issue:**
 
-1. **The OpenAI SDK under the model retries a `429` by itself**: 3 attempts per request, honouring `Retry-After`.
+1. **The OpenAI SDK under the model retries a `429` by itself**: 3 attempts per request (`max_retries=2`), with its
+   own jittered backoff. The spec sends `Retry-After: 0`, which the SDK ignores (it honours only 0 < value ≤ 60) and
+   Batch Run reads as a 0 s backoff.
    Batch Run only sees a `429` that came back 3 times in a row; 2 in a row succeed with `max_rate_limit_retries: 0`.
    So the mock's `429` count is per row, and the retry tests use 3.
 2. With 3 rows each refused 3 times, `batch_size: 3` and `max_rate_limit_retries: 1`, Batch Run retries every row
@@ -44,9 +46,14 @@ The spec builds **Create List → Batch Run** over the API (Create List's *Table
 6. The model field (`ModelInput`) has no options in the component catalog: the editor reads them from
    `POST /api/v1/custom_component/update` (`field: "model"`), per user. The spec reads them the same way and puts the
    matching option in `model.value`.
-7. Langflow reaches the mock at the test host's RFC-1918 address: loopback is blocked by its SSRF layer, and the
-   private ranges are admitted by `LANGFLOW_SSRF_ALLOWED_HOSTS` on every lane. Measured from the Podman container to
-   the Mac's LAN address. `E2E_MOCK_HOST_FROM_LANGFLOW` overrides the address.
+7. Langflow reaches the mock at the test host's first non-internal RFC-1918 address: loopback is blocked by its
+   SSRF layer, and the private ranges are admitted by `LANGFLOW_SSRF_ALLOWED_HOSTS`, which every starter and lane
+   sets. **Measured only** from a Podman container to a Mac's LAN address. Expected to hold, **unmeasured**, for a
+   service container on a hosted runner (the PR lane) and for a native Langflow on the QA VM. Known not to hold, and
+   covered by `E2E_MOCK_HOST_FROM_LANGFLOW` (documented in `.env.example`): Langflow on another machine
+   (`run-e2e.sh` with `TARGET_SSH=<alias>`), rootless Podman with pasta on Linux, and a host whose first private
+   interface is a VPN. With no usable address the block fails at `beforeAll`, naming the variable, rather than
+   skipping.
 
 ---
 
@@ -54,10 +61,16 @@ The spec builds **Create List → Batch Run** over the API (Create List's *Table
 
 All four tests: `@stable` `@components` `@model-provider`.
 
-`@model-provider` is the provider tag the issue asked for (#1216): it makes the file provider-dependent for the PR
-lane (`scripts/provider-dependent-specs.mjs`), which forces the *Collect models* sweep when the file changes and
-excludes it when only an import changed. Test 1 is parametrized over `resolveTestTargets({ tier: "any-completion" })`
-and skips with the provider-health reason on a dry or unchecked provider. Tests 2–4 need no key.
+`@model-provider` is the provider tag the issue asked for (#1216). The file also consumes model data
+(`resolveTestTargets`), so for the PR lane (`scripts/provider-dependent-specs.mjs`) any impact on it — a change to the
+file or to anything it imports — forces the *Collect models* sweep; it is never excluded. Tests 2–4 need no key but
+run only when that sweep succeeds.
+
+Test 1 is parametrized over `resolveTestTargets({ tier: "any-completion" })`. It skips with the provider-health
+reason on a dry or unchecked provider, when no provider resolved (a `MODEL_TEST_ID` not in `models.json`), and when
+the provider's key is missing from the environment — the same gates as the agent specs. A resolved, keyed provider
+whose model is **not** in the picker fails instead of skipping: the sweep configures and enables it, so its absence
+is a broken lane, not a missing key.
 
 ---
 
@@ -81,7 +94,7 @@ options and take `OpenAI Compatible / e2e-mock-model`, which proves Langflow rea
 
 1. 5 rows, `batch_size: 2`, `delay_between_batches: 1`, `enable_metadata: true`, mock responses taking 300 ms. Each
    row comes back as `[text, "ECHO:" + text, index]`, in order, with exactly the five metadata fields.
-2. The mock's requests, grouped by arrival (< 500 ms apart), are the rows `{1,2}`, `{3,4}`, `{5}`, each batch
+2. The mock's requests, grouped by arrival (< 1 000 ms apart), are the rows `{1,2}`, `{3,4}`, `{5}`, each batch
    starting ≥ 1 250 ms after the previous one.
 3. 2 rows with `enable_metadata: false`: no row has a `metadata` key.
 
@@ -90,7 +103,9 @@ options and take `OpenAI Compatible / e2e-mock-model`, which proves Langflow rea
 
 1. The build succeeds; every row is echoed, in order.
 2. Each row's requests are exactly `429, 429, 429, 200`.
-3. The three `200`s arrive ≥ 250 ms apart: the retry ran one request at a time.
+3. Every `200` arrives after the last `429`: the client retries each row on its own schedule, Batch Run only once
+   the whole batch has settled, so this tells Batch Run's retry from a fourth client attempt.
+4. The three `200`s arrive ≥ 250 ms apart: the retry ran one request at a time.
 
 **Test 4 — with no retries left, the rate limit fails the build.** 1 row refused 3 times,
 `max_rate_limit_retries: 0`: the build is invalid, its error holds `Error code: 429` and the mock's message, and the
@@ -116,8 +131,11 @@ and stops the mock.
 ## Notes
 
 - Test 2's timing thresholds have margin: the measured gap between batches is ~1 310 ms against 1 250 asserted, and
-  the one-at-a-time retries ~310 ms apart against 250. Requests of one batch arrive within a few ms (grouped at
-  500 ms).
+  the one-at-a-time retries ~310 ms apart against 250. Requests of one batch arrive within a few ms; the 1 000 ms
+  grouping window tolerates a backend stall between two sends, and a Batch Run that ignored the delay would still
+  merge the batches (~300 ms apart).
+- Create List is `legacy = True` upstream: hidden from the sidebar, still in the catalog the spec builds from. If a
+  release drops it from the catalog, `buildCatalogFlow` fails naming it (the Text I/O precedent).
 - The 3-attempt figure belongs to the OpenAI SDK's default (`max_retries=2`), which Batch Run does not expose. If a
   release changes it, tests 3 and 4 fail on the per-row sequence, which names the new count; `CLIENT_ATTEMPTS` is the
   one constant to update.
@@ -144,13 +162,16 @@ and stops the mock.
   it).
 - Test 1: a configured provider (the *Collect models* sweep) and a fresh health record, or it skips with the reason.
 - Tests 2–4: the test host reachable from Langflow at an RFC-1918 address, or `E2E_MOCK_HOST_FROM_LANGFLOW` set.
+- Batch Run's `delay_between_batches` and `max_rate_limit_retries` exist from 1.14 only: on a 1.13 or older image
+  tests 2–4 fail at `buildCatalogFlow` with `"BatchRunComponent" has no field …`, which names the version gap.
 
 ---
 
 ## External dependencies *(required)*
 
 - `src/lfx/src/lfx/components/llm_operations/batch_run.py` — the component: batches, delay, retry, halving, metadata, the output rows
-- `src/lfx/src/lfx/components/processing/create_list.py` — the table source (its *Table* output)
+- `src/lfx/src/lfx/components/processing/create_list.py` — the table source (its *Table* output; `legacy`)
+- `src/bundles/openai-compatible/src/lfx_openai_compatible/discovery.py` — the provider's `/models` discovery, which the mock answers
 - `src/lfx/src/lfx/base/models/unified_models/build_config.py` — `handle_model_input_update`, which fills the model options
 - `src/lfx/src/lfx/base/models/unified_models/instantiation.py` — `get_llm`, which builds the model from the selected option
 - `src/backend/base/langflow/api/v1/endpoints.py` — `custom_component/update`, which fills the model options
