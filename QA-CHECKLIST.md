@@ -1977,9 +1977,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 110 | 0 | 92 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
+| `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **968** | **838 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **976** | **846 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1995,7 +1995,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 965 `test()` calls carrying the `@stable` tag, distributed across 333 spec
+> 974 `test()` calls carrying the `@stable` tag, distributed across 335 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2275,6 +2275,12 @@
 - [x] a webhook delivery runs as the flow owner: the owner's connection needs the opt-in, the instance's does not, another user's never resolves → `api-triggers-run-identity.spec.ts`
 - [x] a trigger that names its connection fails closed before any run, and runs again as soon as the owner opts in → `api-triggers-run-identity.spec.ts`
 - [x] a schedule trigger imported through flow JSON fires on its cron and runs as the flow owner → `api-triggers-run-identity.spec.ts`
+- [x] each schedule type compiles on the server from a flow saved through the API → `api-triggers-schedule-picker.spec.ts`
+- [x] an unusable pick stores no timing, reads config_invalid, and enabling it is refused with the picker's reason → `api-triggers-schedule-picker.spec.ts`
+- [x] a custom cron survives switching the type away and back → `api-triggers-schedule-picker.spec.ts`
+- [x] an unknown timezone reads config_invalid with its reason → `api-triggers-schedule-picker.spec.ts`
+- [x] a timezone outside the list is accepted as typed, and kept on save where the server loads it → `api-triggers-schedule-picker.spec.ts`
+- [x] a node saved before the picker keeps its own cron, on save and through Update → `api-triggers-schedule-picker.spec.ts`
 - [x] the signing secret is answered once, never read back, and a rotation retires the old one at once while the address stays → `api-triggers-webhook-ingress.spec.ts`
 - [x] a signed delivery is accepted once, runs, and reaches the flow through event_payload → `api-triggers-webhook-ingress.spec.ts`
 - [x] every refusal answers the same 404, byte for byte, and writes no ledger row → `api-triggers-webhook-ingress.spec.ts`
@@ -2537,6 +2543,9 @@
 - [x] the Triggers category holds Schedule and Inbound Webhook, and every trigger row is marked apart from the actions → `trigger-placement.spec.ts`
 - [x] with a trigger on the canvas every other trigger is blocked in the palette, and removing it unblocks them → `trigger-placement.spec.ts`
 - [x] pasting or duplicating a trigger leaves it out with a notice, and keeps the rest of the selection → `trigger-placement.spec.ts`
+- [x] the picker shows only the fields its type needs, and the saved node reads back what it showed → `trigger-schedule-picker.spec.ts`
+- [x] a typed cron survives switching the type away and back → `trigger-schedule-picker.spec.ts`
+- [x] a saved timezone outside the list is shown and kept when the list opens → `trigger-schedule-picker.spec.ts`
 - [x] reaches Settings › Triggers and lists, searches and filters the caller's triggers → `triggers-settings-page.spec.ts`
 - [x] renders each row's menu from the server's actions, blocks with a reason, and deletes only after confirming → `triggers-settings-page.spec.ts`
 - [x] gives a superuser an operator view across users, with a provider bulk previewed by a dry run and per-row admin actions → `triggers-settings-page.spec.ts`
