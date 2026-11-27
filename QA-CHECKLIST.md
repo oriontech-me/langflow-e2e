@@ -972,6 +972,13 @@
 - [!] An alphanumeric API key is cleared from the draft too — **declared failing** (`test.fail()`), a known defect: `removeApiKeys` keeps a key matching `/^[A-Z][A-Z0-9_]*$/i` in plain text (owner #2578, no upstream report yet) → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
 - [x] A flow too large to keep a local copy (> 2 000 000 characters) stores no draft and warns *"This flow is too large to keep a local copy of your unsaved changes…"* on the next edit while the conflict stands → `flow-functionality/multi-edit/multi-edit-run-and-draft.spec.ts`
 
+#### 12.8 Protected flow versions (1.14)
+
+> Upstream #16578. A version something still needs is **retained**: the one an evaluation ran (`"evaluation"`) or an upgrade repair's recovery point (`"admin-upgrade-repair"`). The repair needs database maintenance, so that case is `@destructive`.
+
+- [x] An evaluation run retains its version: `DELETE` is refused `409` with the reason in the detail and the version stays listed; the version history shows *Protected* with the reason in its tooltip and a disabled *Delete* (same tooltip), while a plain snapshot has no badge, an enabled *Delete*, and deletes through the confirmation → `flow-functionality/flow-version-protected.spec.ts`
+- [x] (`@destructive`) An upgrade repair's recovery version (`admin-upgrade-repair`) is refused `409` the same way and shows *Protected* with the repair's own reason → `flow-functionality/flow-version-protected.spec.ts`
+
 ---
 
 ## mcp/ — Model Context Protocol
