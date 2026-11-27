@@ -4895,3 +4895,41 @@ test("the destructive lane runs on shard 1 only, after its round and before its 
   assert.match(shard, /\[ "\$idx" = "\$DESTRUCTIVE_SHARD" \] && lane_enabled destructive/);
   assert.equal(sourced("echo $DESTRUCTIVE_SHARD").stdout.trim(), "1");
 });
+
+test("a shard working copy needs no idx in its caller's scope", () => {
+  // `local idx="$1" wd=".../shard-$idx"` expanded the CALLER's idx: right inside
+  // run_shard, `idx: unbound variable` for the serving lane, whose first live run
+  // died there (#2142).
+  const dir = makeTempDir("run-e2e-workdir-");
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)}; unset idx; prepare_shard_workdir lane-serving-trusted && echo MADE`);
+  assert.match(r.stdout, /MADE/, r.stderr);
+  assert.ok(existsSync(join(dir, "shard-lane-serving-trusted", "scripts", "run-e2e.sh")), "the copy is in the variant's own directory");
+  assert.ok(existsSync(join(dir, "shard-lane-serving-trusted", "node_modules")), "node_modules is linked");
+});
+
+test("a serving variant that dies with its backend up still stops it, so the next one can start", () => {
+  const dir = makeTempDir("run-e2e-serving-abort-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeLaneVerdict(dir, "serving", {
+    tests: 2,
+    runs: [
+      { name: "trusted", env: {}, files: ["iso.spec.ts"], tests: 1 },
+      { name: "required", env: {}, files: ["req.spec.ts"], tests: 1 },
+    ],
+  });
+  const log = join(dir, "calls.log");
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)}; TEST_JOB_FAILED=0`,
+      `start_backend_for_shard() { echo "start $1" >> ${JSON.stringify(log)}; }`,
+      `prepare_shard_workdir() { mkdir -p "$RUN_DIR/shard-$1"; }`,
+      // The first variant aborts the subshell outright, as a `set -e` failure would.
+      `run_lane_round() { echo "round $2" >> ${JSON.stringify(log)}; [ "$2" = trusted ] && exit 3; return 0; }`,
+      `target_ssh() { echo "stop" >> ${JSON.stringify(log)}; cat > /dev/null; }`,
+      `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
+    ].join("\n"),
+    { E2E_LANES: "serving", TARGET_SSH: "local" },
+  );
+  assert.match(r.stdout, /FAILED=1/, r.stderr);
+  assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), ["start lane-serving-trusted", "round trusted", "stop", "start lane-serving-required", "round required", "stop"]);
+});

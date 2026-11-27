@@ -2200,11 +2200,16 @@ run_serving_variant() {
   for kv in $env; do extra="$extra${kv%%=*}=$(shq "${kv#*=}") "; done
   BACKEND_EXTRA_ENV="$extra"
   start_backend_for_shard "lane-serving-$run" "$port" || { printf '1\n' > "$RUN_DIR/logs/lane-serving-$run.status"; return 1; }
+  # Stopped on ANY exit of this subshell, a `set -e` abort included: a variant that
+  # dies with its backend up leaves the port taken, and the next variant's starter
+  # then refuses (measured on the first live run of this lane).
+  # Expanded NOW: the trap fires after this function returns, when its locals are gone.
+  # shellcheck disable=SC2064
+  trap "target_ssh $(shq "$(backend_stop_env "$port") bash -s") < $(shq "$REPO_DIR/$(backend_stopper)") >> $(shq "$log") 2>&1 || true" EXIT
   prepare_shard_workdir "lane-serving-$run"
   cd "$wd"
   export CI=true PLAYWRIGHT_BASE_URL="http://${host}:${port}/"
   run_lane_round serving "$run" "$files" "$log" || status=$?
-  target_ssh "$(backend_stop_env "$port") bash -s" < "$REPO_DIR/$(backend_stopper)" >> "$log" 2>&1 || true
   return "$status"
 }
 
@@ -2503,7 +2508,11 @@ start_backend_for_shard() {
 # copying hundreds of megabytes per shard buys nothing; everything else is a real
 # copy because collect-models writes into it.
 prepare_shard_workdir() {
-  local idx="$1" wd="$RUN_DIR/shard-$idx"
+  # Two statements, not one: `local` expands every argument before assigning any, so
+  # `local idx="$1" wd=".../shard-$idx"` read the CALLER's idx — right for run_shard,
+  # which has one, and `idx: unbound variable` for any other caller (#2142).
+  local idx="$1"
+  local wd="$RUN_DIR/shard-$idx"
   rm -rf "$wd"; mkdir -p "$wd"
   tar -cf - \
     --exclude=node_modules --exclude=.git --exclude=runs \
