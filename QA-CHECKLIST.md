@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-26
+> **Last updated:** 2026-11-27
 
 ---
 
@@ -1927,7 +1927,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 113 | 106 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 117 | 110 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1952,7 +1952,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **957** | **827 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **961** | **831 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1968,7 +1968,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 954 `test()` calls carrying the `@stable` tag, distributed across 331 spec
+> 958 `test()` calls carrying the `@stable` tag, distributed across 332 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2163,6 +2163,10 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+- [x] the legacy global-variable header is refused in every mode, before the body is validated → `workflows-v2-globals-transport.spec.ts`
+- [x] body globals replace the stored variable in sync mode → `workflows-v2-globals-transport.spec.ts`
+- [x] stream and background refuse body globals with MODE_UNSUPPORTED_FIELDS → `workflows-v2-globals-transport.spec.ts`
+- [x] v1 run still honours the legacy global-variable header → `workflows-v2-globals-transport.spec.ts`
 - [x] batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working → `workflows-v2-job-lifecycle.spec.ts`
 - [x] batch create refuses a duplicate endpoint_name with its own message → `workflows-v2-job-lifecycle.spec.ts`
 - [x] a completed background run reports the session it was given → `workflows-v2-job-lifecycle.spec.ts`
