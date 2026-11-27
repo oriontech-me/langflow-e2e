@@ -1940,7 +1940,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 117 | 110 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 124 | 117 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1965,7 +1965,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **961** | **831 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **968** | **838 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1981,7 +1981,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 958 `test()` calls carrying the `@stable` tag, distributed across 332 spec
+> 965 `test()` calls carrying the `@stable` tag, distributed across 333 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2080,6 +2080,13 @@
 - [x] duplicates a dataset into an independent copy → `api-datasets.spec.ts`
 - [x] exports a spreadsheet-safe CSV that round-trips everything else → `api-datasets.spec.ts`
 - [x] another user can neither see nor change the dataset → `api-datasets.spec.ts`
+- [x] check reports an evaluable flow and blocks a flow with no output → `api-evaluations.spec.ts`
+- [x] estimate counts the rows and no model calls for text scorers → `api-evaluations.spec.ts`
+- [x] refuses invalid scorers and unknown ids → `api-evaluations.spec.ts`
+- [x] a keyless run scores every row by exact_match, contains and the threshold → `api-evaluations.spec.ts`
+- [x] case_sensitive exact_match fails a case-only mismatch → `api-evaluations.spec.ts`
+- [x] cancel stops a run, and a finished run cannot be cancelled again → `api-evaluations.spec.ts`
+- [x] a run pins a retained flow version, and deleting the evaluation releases it → `api-evaluations.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
