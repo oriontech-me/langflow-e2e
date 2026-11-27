@@ -2023,7 +2023,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 140 | 133 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
-| `core-components/` — Core Components | 101 | 99 | 1 | 0 | 1 |
+| `core-components/` — Core Components | 105 | 103 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 43 | 38 | 1 | 1 | 3 |
@@ -2047,7 +2047,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **1004** | **874 (87%)** | **68 (7%)** | **17 (2%)** | **45 (4%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **1008** | **878 (87%)** | **68 (7%)** | **17 (2%)** | **45 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2063,7 +2063,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 995 `test()` calls carrying the `@stable` tag, distributed across 341 spec
+> 999 `test()` calls carrying the `@stable` tag, distributed across 342 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2387,6 +2387,10 @@
 - [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — body table accepts key + value cell entries when method is POST → `api-request-component-regression.spec.ts`
 - [x] API Request component — flow state persists in database after autosave (URL, method, headers) → `api-request-component-regression.spec.ts`
+- [x] N rows in, N non-empty outputs in order, with metadata (<label>) → `batch-run-component.spec.ts`
+- [x] rows run in batches of batch_size with the delay between them, in order, with and without metadata → `batch-run-component.spec.ts`
+- [x] a 429 the client gives up on is retried by Batch Run, one request at a time, and every row still comes back in order → `batch-run-component.spec.ts`
+- [x] with no retries left, the rate limit fails the build with the provider's 429 → `batch-run-component.spec.ts`
 - [x] Show Beta Components toggle controls visibility of beta components in the sidebar → `beta-components-toggle-regression.spec.ts`
 - [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
