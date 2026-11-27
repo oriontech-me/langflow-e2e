@@ -1987,6 +1987,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 46 | 0 | 0 | 0 |
 | `core-functionality/a2a/` | 21 | 17 | 0 | 1 | 3 |
+| `core-functionality/evals/` | 3 | 3 | 0 | 0 | 0 |
 | `flow-functionality/` | 58 | 54 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
@@ -2000,7 +2001,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **983** | **853 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **986** | **856 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2016,7 +2017,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 977 `test()` calls carrying the `@stable` tag, distributed across 336 spec
+> 980 `test()` calls carrying the `@stable` tag, distributed across 337 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2505,6 +2506,11 @@
 - [x] API request with no token returns 401 or 403 → `session-expired.spec.ts`
 - [x] UI shows login page when auto_login is unavailable (session cannot be established) → `session-expired.spec.ts`
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
+
+#### core-functionality/evals/
+- [x] the evaluations entry, pages and Evaluate button follow the evals flag → `evals-ui.spec.ts`
+- [x] a dataset created from a bundled example shows all its rows, and an added row persists → `evals-ui.spec.ts`
+- [x] the Evaluate stepper runs a keyless evaluation and the result view agrees with the API → `evals-ui.spec.ts`
 
 #### core-functionality/integrations/
 - [x] each site-bound provider lists its scopes ticked, locks the required ones, and names its setup guide → `connection-oauth-site-bound.spec.ts`
