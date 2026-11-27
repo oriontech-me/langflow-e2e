@@ -30,12 +30,26 @@
 #                                  file in the state directory)
 #   LANGFLOW_WORKER_READY_TIMEOUT_S  how long to wait for the registration (default 120;
 #                                  measured boot on the QA VM: ~18 s)
+#   LANGFLOW_WORKER_API_ENVIRON    where the API process's environment is read from
+#                                  (default /proc/<API PID>/environ; overridable for tests)
+#
+# The worker runs under the API PROCESS'S OWN ENVIRONMENT, read from /proc. In scaled
+# mode the worker is the process that executes the flow, so its settings are the ones
+# a spec meets: the SSRF allow-list, tracing, the SQLite pragmas, custom components,
+# the fake OAuth registrations, the lane's mirrored service variables. The API gets all
+# of that partly from its caller and partly inline from start-langflow-source.sh, and a
+# copy kept here would drift from both (review of #2574). Where /proc is absent (a
+# developer's macOS) the worker gets the source starter's identity block only, and the
+# starter says so.
 set -euo pipefail
 
 PORT="${LANGFLOW_PORT:-}"
 [ -n "${PORT}" ] || { echo "ERROR: LANGFLOW_PORT is required: the worker shares that instance's database." >&2; exit 2; }
 STATE_ROOT="${LANGFLOW_SRC_STATE_ROOT:-/tmp}"
 STATE_DIR="${LANGFLOW_SRC_STATE_DIR:-${STATE_ROOT}/langflow-source-${PORT}}"
+# Absolute, as the source starter makes it: the launch below runs from inside it, and a
+# relative database path would then name another file than the API's.
+[ -d "${STATE_DIR}" ] && STATE_DIR="$(cd "${STATE_DIR}" && pwd)"
 API_PID_FILE="${STATE_DIR}/langflow.pid"
 PID_FILE="${STATE_DIR}/worker.pid"
 LOG_FILE="${STATE_DIR}/worker.log"
@@ -81,15 +95,33 @@ LAUNCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%S)"
 # start without credentials (measured on the lane's first live run: "Username and
 # password must be set"). The API gets them inline from its starter, so a worker
 # launched beside it inherits none of them.
+API_PID="$(cat "${API_PID_FILE}")"
+API_ENVIRON="${LANGFLOW_WORKER_API_ENVIRON:-/proc/${API_PID}/environ}"
+API_ENV=()
+if [ -r "${API_ENVIRON}" ]; then
+  # NUL-separated, as the kernel writes it; a read loop rather than mapfile, which
+  # bash 3.2 (a developer's macOS) lacks.
+  while IFS= read -r -d '' kv; do API_ENV+=("${kv}"); done < "${API_ENVIRON}"
+fi
 cd "${STATE_DIR}"
-LANGFLOW_AUTO_LOGIN=true \
-LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
-LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
-LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}" \
-LANGFLOW_BACKGROUND_BACKEND=scaled \
-LANGFLOW_CONFIG_DIR="${STATE_DIR}/data" \
-LANGFLOW_DATABASE_URL="${DATABASE_URL}" \
-  ${WORKER_CMD} < /dev/null >> "${LOG_FILE}" 2>&1 &
+if [ "${#API_ENV[@]}" -gt 0 ]; then
+  echo "The worker runs under the API's own environment (${#API_ENV[@]} variables from ${API_ENVIRON})."
+  env -i "${API_ENV[@]}" \
+    LANGFLOW_BACKGROUND_BACKEND=scaled \
+    LANGFLOW_CONFIG_DIR="${STATE_DIR}/data" \
+    LANGFLOW_DATABASE_URL="${DATABASE_URL}" \
+    ${WORKER_CMD} < /dev/null >> "${LOG_FILE}" 2>&1 &
+else
+  echo "NOTE: cannot read the API's environment (${API_ENVIRON}); the worker gets the source starter's identity block only, and may run flows under other settings than the API."
+  LANGFLOW_AUTO_LOGIN=true \
+  LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
+  LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
+  LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}" \
+  LANGFLOW_BACKGROUND_BACKEND=scaled \
+  LANGFLOW_CONFIG_DIR="${STATE_DIR}/data" \
+  LANGFLOW_DATABASE_URL="${DATABASE_URL}" \
+    ${WORKER_CMD} < /dev/null >> "${LOG_FILE}" 2>&1 &
+fi
 WORKER_PID=$!
 echo "${WORKER_PID}" > "${PID_FILE}"
 echo "Starting a Langflow worker beside port ${PORT} (PID ${WORKER_PID}, logs: ${LOG_FILE})..."
@@ -97,11 +129,12 @@ echo "Starting a Langflow worker beside port ${PORT} (PID ${WORKER_PID}, logs: $
 # Whether a worker registered since the launch. SQLite only: that is the database every
 # lane here uses. Any other URL is not checked, and the starter says so.
 registered() {
+  local path
   case "${DATABASE_URL}" in
-    sqlite:///*) ;;
+    sqlite:///* | sqlite+*:///*) path="${DATABASE_URL#*:///}" ;;
     *) return 2 ;;
   esac
-  python3 - "${DATABASE_URL#sqlite:///}" "${LAUNCHED_AT}" <<'PY'
+  python3 - "${path}" "${LAUNCHED_AT}" <<'PY'
 import sqlite3, sys
 from datetime import datetime, timezone, timedelta
 path, launched = sys.argv[1], datetime.fromisoformat(sys.argv[2]).replace(tzinfo=timezone.utc)

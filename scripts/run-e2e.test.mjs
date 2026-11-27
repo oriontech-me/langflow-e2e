@@ -4718,7 +4718,16 @@ test("E2E_LANES takes only the lanes the table knows, and serving only where it 
   }
   // The default serving port sits beside the shards', never on them.
   assert.equal(sourced('echo "$LANE_PORT"', { BASE_PORT: "7870" }).stdout.trim(), "7878");
-  assert.equal(sourced("echo ok", { E2E_LANES: "destructive serving background" }).stdout.trim(), "ok");
+  assert.equal(sourced("echo ok", { E2E_LANES: "destructive serving background", TARGET_SSH: "local", LANGFLOW_SRC_RUN_CMD: "/v/bin/langflow run" }).stdout.trim(), "ok");
+  for (const [env, why] of [
+    [{ E2E_LANES: "background", TARGET_SSH: "qa-box", LANGFLOW_SRC_RUN_CMD: "/v/bin/langflow run" }, /runs only on a local target \(TARGET_SSH=local\): a remote worker would die with its ssh session/],
+    [{ E2E_LANES: "background", TARGET_SSH: "local", LANGFLOW_SRC_RUN_CMD: "" }, /needs LANGFLOW_SRC_RUN_CMD ending in ' run'/],
+    [{ E2E_LANES: "serving", SERVING_PORT: "7999" }, /SERVING_PORT is now LANE_PORT .* set LANE_PORT=7999 instead/],
+  ]) {
+    const r = sourced("echo ok", env);
+    assert.equal(r.status, 1, JSON.stringify(env));
+    assert.match(r.stderr, why, JSON.stringify(env));
+  }
 });
 
 test("a serving variant's switches reach the starter, quoted, and a shard's launch carries none", () => {
@@ -5037,7 +5046,7 @@ test("a worker that does not start reddens the run, records the variant's status
       targetSshStub(log),
       `phase_lanes; echo "FAILED=$TEST_JOB_FAILED"`,
     ].join("\n"),
-    { E2E_LANES: "background", TARGET_SSH: "local", WORKER_START_RC: "1" },
+    { E2E_LANES: "background", TARGET_SSH: "local", LANGFLOW_SRC_RUN_CMD: "/v/bin/langflow run", WORKER_START_RC: "1" },
   );
   assert.match(r.stdout, /FAILED=1/, r.stderr);
   assert.match(r.stderr, /lane background\/worker: the worker did not start/);
@@ -5045,14 +5054,24 @@ test("a worker that does not start reddens the run, records the variant's status
   assert.deepEqual(calls.slice(0, 2), ["start", "start-worker"]);
   assert.ok(!calls.includes("RAN"), "no round without its worker");
   assert.ok(calls.includes("stop-backend"), "the instance is stopped");
+  assert.ok(calls.indexOf("stop-worker") > -1 && calls.indexOf("stop-worker") < calls.indexOf("stop-backend"), `the worker is stopped before the instance it holds: ${calls}`);
   assert.equal(readFileSync(join(dir, "logs", "lane-background-worker.status"), "utf8").trim(), "1");
 });
 
-test("the run's own cleanup stops a lane's worker as well as its instance", () => {
-  const body = readFileSync(SCRIPT, "utf8");
-  for (const fn of ["cleanup() {", "phase_hygiene() {"]) {
-    const text = body.slice(body.indexOf(fn), body.indexOf("\n}\n", body.indexOf(fn)));
-    assert.match(text, /lane_enabled serving \|\| lane_enabled background/, fn);
-    assert.ok(text.indexOf("stop-langflow-worker.sh") < text.indexOf('backend_stop_env "$LANE_PORT"'), `${fn}: the worker is stopped before the instance it holds`);
-  }
+test("the run's own cleanup stops a lane's worker, then its instance, and only when a variant lane ran", () => {
+  const dir = makeTempDir("run-e2e-lane-cleanup-");
+  const cleanupCalls = (lanes) => {
+    const log = join(dir, `cleanup-${lanes.replace(/\W+/g, "_") || "none"}.log`);
+    writeFileSync(log, "");
+    const r = sourced(
+      [targetSshStub(log), `SHARD_TOTAL=1 WITH_ECHO=0 WITH_OLLAMA=0 KEEP_BACKENDS=0; HELD_SESSIONS=(); set +e; cleanup; echo DONE`].join("\n"),
+      { E2E_LANES: lanes, TARGET_SSH: "local", LANGFLOW_SRC_RUN_CMD: "/v/bin/langflow run" },
+    );
+    assert.match(r.stdout, /DONE/, r.stderr);
+    return readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+  };
+  // One shard's stop, then the lane port's worker and instance, in that order.
+  assert.deepEqual(cleanupCalls("background"), ["stop-backend", "stop-worker", "stop-backend"]);
+  assert.deepEqual(cleanupCalls("serving"), ["stop-backend", "stop-worker", "stop-backend"]);
+  assert.deepEqual(cleanupCalls("destructive"), ["stop-backend"], "no variant lane, no lane port to clear");
 });

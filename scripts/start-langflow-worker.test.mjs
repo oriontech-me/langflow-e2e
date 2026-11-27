@@ -44,7 +44,10 @@ function setup({ mode = "register", api = true } = {}) {
   const db = join(state, "data", "langflow.db");
   spawnSync("python3", ["-c", `import sqlite3; c=sqlite3.connect(${JSON.stringify(db)}); c.execute("CREATE TABLE worker_registry (owner TEXT PRIMARY KEY, pid INT, host TEXT, started_at TEXT, last_heartbeat TEXT, state TEXT, current_job_id TEXT)"); c.commit()`]);
   if (mode === "stale") {
-    spawnSync("python3", ["-c", `import sqlite3; c=sqlite3.connect(${JSON.stringify(db)}); c.execute("INSERT INTO worker_registry VALUES ('worker:1:old', 1, 'h', '2026-01-01 00:00:00+00:00', '2026-01-01 00:00:00+00:00', 'idle', NULL)"); c.commit()`]);
+    // Ten seconds before the launch, in the NAIVE UTC form a real 1.14 worker writes
+    // ('2026-11-27 23:18:47.169119', measured): past the starter's 2 s tolerance, near
+    // enough that reading it as local time, or dropping the tolerance, would show.
+    spawnSync("python3", ["-c", `import sqlite3, datetime; c=sqlite3.connect(${JSON.stringify(db)}); t=(datetime.datetime.utcnow()-datetime.timedelta(seconds=10)).isoformat(sep=" "); c.execute("INSERT INTO worker_registry VALUES ('worker:1:old', 1, 'h', ?, ?, 'idle', NULL)", (t, t)); c.commit()`]);
   }
   if (api) {
     const sleeper = spawn("sleep", ["300"], { detached: true, stdio: "ignore" });
@@ -55,7 +58,7 @@ function setup({ mode = "register", api = true } = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   const envLog = join(root, "worker-env.log");
-  const register = `python3 -c 'import sqlite3, os, datetime; c=sqlite3.connect(os.environ["LANGFLOW_DATABASE_URL"][len("sqlite:///"):]); now=datetime.datetime.now(datetime.timezone.utc).isoformat(sep=" "); c.execute("INSERT INTO worker_registry VALUES (?,?,?,?,?,?,NULL)", ("worker:%d:x" % os.getpid(), os.getpid(), "h", now, now, "idle")); c.commit()'`;
+  const register = `python3 -c 'import sqlite3, os, datetime; c=sqlite3.connect(os.environ["LANGFLOW_DATABASE_URL"][len("sqlite:///"):]); now=datetime.datetime.utcnow().isoformat(sep=" "); c.execute("INSERT INTO worker_registry VALUES (?,?,?,?,?,?,NULL)", ("worker:%d:x" % os.getpid(), os.getpid(), "h", now, now, "idle")); c.commit()'`;
   writeFileSync(
     join(bin, "langflow"),
     `#!/usr/bin/env bash
@@ -185,11 +188,35 @@ test("the worker's identity defaults are the source starter's, so the two never 
   const source = readFileSync(join(HERE, "start-langflow-source.sh"), "utf8");
   const worker = readFileSync(START, "utf8");
   for (const name of ["LANGFLOW_SUPERUSER", "LANGFLOW_SUPERUSER_PASSWORD", "LANGFLOW_DEACTIVATE_TRACING"]) {
-    const re = new RegExp(`^${name}="\\$\\{${name}:-([^}]*)\\}"`, "m");
+    const re = new RegExp(`^\\s*${name}="\\$\\{${name}:-([^}]*)\\}"`, "m");
     const s = source.match(re);
     assert.ok(s, `the source starter no longer sets ${name} this way`);
     assert.equal(worker.match(re)?.[1], s[1], name);
   }
   assert.match(source, /^LANGFLOW_AUTO_LOGIN=true \\$/m);
-  assert.match(worker, /^LANGFLOW_AUTO_LOGIN=true \\$/m);
+  assert.match(worker, /^\s*LANGFLOW_AUTO_LOGIN=true \\$/m);
+});
+
+test("where the API's environment can be read, the worker runs under it and under nothing else", () => {
+  // The VM's /proc/<pid>/environ, stood in for by a file of the same shape: in scaled
+  // mode the worker executes the flows, so the API's SSRF list, tracing and identity
+  // are what it must carry — not the caller's environment, not the fallback defaults.
+  const ctx = setup();
+  const environ = join(ctx.root, "api.environ");
+  writeFileSync(environ, [`PATH=${process.env.PATH}`, "LANGFLOW_SUPERUSER=api-admin", "LANGFLOW_SUPERUSER_PASSWORD=from-the-api", "LANGFLOW_AUTO_LOGIN=true", "LANGFLOW_SSRF_ALLOWED_HOSTS=10.0.0.0/8", ""].join("\0"));
+  const r = run(START, ctx, { LANGFLOW_WORKER_API_ENVIRON: environ, LANGFLOW_SUPERUSER_PASSWORD: "from-the-caller" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /runs under the API's own environment \(5 variables from /);
+  spawned.push(pidOf(ctx));
+  const env = readFileSync(ctx.envLog, "utf8");
+  assert.match(env, /^AUTO_LOGIN=true SUPERUSER=api-admin PASSWORD=from-the-api$/m, "the API's values, not the caller's");
+  assert.match(env, new RegExp(`BACKEND=scaled CONFIG=${ctx.state}/data DB=sqlite:///${ctx.state}/data/langflow.db`), "and the shared database on top");
+  run(STOP, ctx);
+
+  // Unreadable, it says what the worker does NOT share.
+  const fb = setup();
+  const fallback = run(START, fb, { LANGFLOW_WORKER_API_ENVIRON: join(ctx.root, "missing") });
+  assert.match(fallback.stdout, /NOTE: cannot read the API's environment/);
+  spawned.push(pidOf(fb));
+  run(STOP, fb);
 });

@@ -543,6 +543,8 @@ require_flag CHECK_TARGET_VERSION "$CHECK_TARGET_VERSION"
 # the run reporting green over tests it never ran (#1012).
 check_lanes() {
   local lane
+  # Renamed to LANE_PORT in #2574; an old export would otherwise be ignored in silence.
+  [ -z "${SERVING_PORT:-}" ] || { echo "SERVING_PORT is now LANE_PORT (it serves every lane with variants); set LANE_PORT=$SERVING_PORT instead" >&2; exit 1; }
   for lane in $E2E_LANES; do
     case "$lane" in
       destructive) ;;
@@ -556,6 +558,19 @@ check_lanes() {
         case "$LANE_PORT" in '' | *[!0-9]*) echo "LANE_PORT must be a port number, got: '$LANE_PORT'" >&2; exit 1 ;; esac
         if [ "$LANE_PORT" -ge "$BASE_PORT" ] && [ "$LANE_PORT" -lt $((BASE_PORT + SHARDS)) ]; then
           echo "LANE_PORT=$LANE_PORT is one of the shards' ports ($BASE_PORT..$((BASE_PORT + SHARDS - 1)))" >&2; exit 1
+        fi
+        if [ "$lane" = background ]; then
+          # The worker is started by a session that returns once it registers, and a
+          # remote process dies with its ssh session (difference 2 above): only a
+          # local target keeps it. The VM daily is local.
+          [ "$TARGET_IS_LOCAL" = "1" ] \
+            || { echo "E2E_LANES names background, which runs only on a local target (TARGET_SSH=local): a remote worker would die with its ssh session" >&2; exit 1; }
+          # scripts/start-langflow-worker.sh derives the worker's command from the one
+          # that serves the instance; a clone served by `uv run` has none to derive.
+          case "${LANGFLOW_SRC_RUN_CMD:-}" in
+            *" run") ;;
+            *) echo "E2E_LANES names background, which needs LANGFLOW_SRC_RUN_CMD ending in ' run' (the worker's command is derived from it), got: '${LANGFLOW_SRC_RUN_CMD:-}'" >&2; exit 1 ;;
+          esac
         fi
         ;;
       *) echo "E2E_LANES may name destructive, serving and background, got: '$lane'" >&2; exit 1 ;;
