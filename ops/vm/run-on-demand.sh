@@ -811,6 +811,17 @@ ondemand_clear_pulled() {
   if [ -n "$left" ]; then printf '%s' "$left" > "$OD_STATE/pulled-image"; else rm -f "$OD_STATE/pulled-image"; fi
 }
 
+# Whether uv's no-solution paragraph ($1) says the request needs an lfx version other
+# than the pinned one ($2): "you require lfx==X" with X not $2 (#2547 review).
+ondemand_lfx_pin_conflicts() {
+  local v
+  while IFS= read -r v; do
+    v="${v#you require lfx==}"; v="${v%.}"
+    [ -n "$v" ] && [ "$v" != "$2" ] && return 0
+  done < <(printf '%s\n' "$1" | grep -oE 'you require lfx==[0-9][0-9A-Za-z.]*' || true)
+  return 1
+}
+
 # The published version into $STATE/venv, where the build would put the image: asked of
 # PyPI first, so a version it does not have is refused in seconds and before the venv
 # is touched, then installed by scripts/prepare-target-dist.sh -- the daily's own
@@ -918,12 +929,11 @@ ondemand_install() {
         | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"* \
         | "lfx was pinned to "*)
         ondemand_fail 4 build_failed "langflow==$OD_VERSION installed but cannot be served, not a test result: ${said:-no reason given}" ;;
-      # uv names lfx as a requirement of the request ("you require lfx==...") while lfx
-      # is pinned to langflow's version, not to what langflow-base requires (its JSON
-      # was unreadable): the conflict is the pin, and asking again cannot help. With
-      # lfx==<langflow-base's requirement> uv says the same words for index lag, so
-      # that case keeps the reading below.
-      *) if [ -n "$nosol" ] && [ -n "$pin" ] && [[ "$nosol" == *"you require lfx"* ]] && [[ " $pin " == *" lfx "* ]]; then
+      # uv concluding that the request needs an lfx other than the one pinned ("you
+      # require lfx==<another>"): the pin itself is the conflict, so asking again cannot
+      # help. Index lag or a release defect names the pinned version only, and keeps the
+      # reading below.
+      *) if [ -n "$nosol" ] && [[ " $pin " == *" lfx"[\ =]* ]] && ondemand_lfx_pin_conflicts "$nosol" "${lfx_pin:-$OD_VERSION}"; then
            ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION with $pin_said: the lfx pin this executor added contradicts the release's own requirements, so asking again will not help (an executor defect, not the release's); uv said: $nosol"
          fi
          [ -z "$nosol" ] || ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION${pin_said:+ with $pin_said}: the release's own requirements, or an index that has not caught up with a release published minutes ago (ask again shortly); uv said: $nosol"

@@ -1039,6 +1039,15 @@ test("a conflict uv pins on the executor's lfx pin is not blamed on the index", 
       unsatisfiable.` });
   assert.equal(lag.status, 3, lag.log);
   assert.match(lag.result["req-v"].REASON, /with langflow-base==1\.14\.0\.dev35 and lfx==1\.14\.0\.dev36 \(langflow-base's own requirement\): the release's own requirements, or an index that has not caught up .*\(ask again shortly\)/);
+  // A final or an rc keeps the bare same-version pin; uv names it ("you require
+  // lfx==<the version>") when the index lags behind one of lfx's own requirements too.
+  const rcLag = onDemand({ request: vreq(), distExit: 2, distError: `could not install langflow==${V} — uv's reason is above.`,
+    distNoSolution: `  × No solution found when resolving dependencies:
+  ╰─▶ Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,
+      and you require lfx==1.13.1rc0, we can conclude that your requirements
+      are unsatisfiable.` });
+  assert.equal(rcLag.status, 3, rcLag.log);
+  assert.match(rcLag.result["req-v"].REASON, /with langflow-base==1\.13\.1rc0 and lfx==1\.13\.1rc0: the release's own requirements, or an index that has not caught up .*\(ask again shortly\)/);
   // A conflict that names no pin of ours keeps the old reading, index lag included.
   const other = onDemand({ request: nightlyReq, distExit: 2, distNoSolution: true, distError: `could not install langflow==${NIGHTLY} — uv's reason is above.` });
   assert.match(other.result["req-v"].REASON, /the release's own requirements, or an index that has not caught up .*\(ask again shortly\)/);
