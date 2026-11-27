@@ -2158,8 +2158,12 @@ run_lane_round() {
   blobdir="$wd/blob-lane-$lane-$run"
   rm -rf "$blobdir"
   info "lane $lane/$run: running $(lane_field "$lane" "(v.runs.find((r) => r.name === '$run') || {}).tests || 0") test(s)"
+  # PW_SHARD_FILE_LEVEL is what makes playwright.config.ts write a blob at all; the
+  # destructive round inherits it from its shard and a serving variant does not, so
+  # it is set here, for every round (measured: the first serving round wrote JSON to
+  # its log and no blob).
   # shellcheck disable=SC2086  # $files is a space-separated list of spec paths
-  ( env "$flag=1" PLAYWRIGHT_RETRIES="$RETRIES" PLAYWRIGHT_BLOB_OUTPUT_DIR="$blobdir" \
+  ( env "$flag=1" PW_SHARD_FILE_LEVEL=1 PLAYWRIGHT_RETRIES="$RETRIES" PLAYWRIGHT_BLOB_OUTPUT_DIR="$blobdir" \
     npx playwright test --grep "$filter" --pass-with-no-tests $files ) >> "$log" 2>&1 || rc=$?
   for blob in "$blobdir"/*.zip; do
     [ -e "$blob" ] || continue

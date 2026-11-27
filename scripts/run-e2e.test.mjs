@@ -4795,7 +4795,8 @@ function laneRoundFixture(exitCode = 0) {
   writeFileSync(
     join(bin, "npx"),
     `#!/usr/bin/env bash
-printf 'flag=%s|%s retries=%s args=%s\\n' "\${PW_DESTRUCTIVE:-}" "\${PW_SERVING_IDENTITY:-}" "\${PLAYWRIGHT_RETRIES-unset}" "$*" >> ${JSON.stringify(join(dir, "npx.log"))}
+printf 'flag=%s|%s blob=%s retries=%s args=%s\\n' "\${PW_DESTRUCTIVE:-}" "\${PW_SERVING_IDENTITY:-}" "\${PW_SHARD_FILE_LEVEL:-}" "\${PLAYWRIGHT_RETRIES-unset}" "$*" >> ${JSON.stringify(join(dir, "npx.log"))}
+[ -n "\${PW_SHARD_FILE_LEVEL:-}" ] || exit 0  # the config writes no blob without it
 mkdir -p "$PLAYWRIGHT_BLOB_OUTPUT_DIR" && : > "$PLAYWRIGHT_BLOB_OUTPUT_DIR/report-abc.zip"
 exit ${exitCode}
 `,
@@ -4815,7 +4816,7 @@ set +e; run_lane_round destructive destructive "a.spec.ts b.spec.ts" ${JSON.stri
   );
   assert.match(r.stdout, /RC=0/, r.stderr);
   const call = readFileSync(join(dir, "npx.log"), "utf8");
-  assert.match(call, /^flag=1\| retries=1 args=playwright test --grep \(\?=\.\*\(\?:@destructive\)\)\(\?=\.\*\(\?:@stable\)\) --pass-with-no-tests a\.spec\.ts b\.spec\.ts$/m);
+  assert.match(call, /^flag=1\| blob=1 retries=1 args=playwright test --grep \(\?=\.\*\(\?:@destructive\)\)\(\?=\.\*\(\?:@stable\)\) --pass-with-no-tests a\.spec\.ts b\.spec\.ts$/m);
   assert.ok(existsSync(join(dir, "all-blobs", "lane-destructive-destructive-report-abc.zip")), "the blob is filed under the lane's prefix");
   assert.equal(readFileSync(join(dir, "logs", "lane-destructive-destructive.status"), "utf8").trim(), "0");
 
