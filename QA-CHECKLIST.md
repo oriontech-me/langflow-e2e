@@ -2012,7 +2012,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 134 | 127 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 140 | 133 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 101 | 99 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -2038,7 +2038,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **998** | **868 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **1004** | **874 (87%)** | **68 (7%)** | **17 (2%)** | **45 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2054,13 +2054,19 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 989 `test()` calls carrying the `@stable` tag, distributed across 340 spec
+> 995 `test()` calls carrying the `@stable` tag, distributed across 341 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/auth/
+- [x] permission-options states that scoped keys are unsupported, with no options → `api-key-permissions-oss.spec.ts`
+- [x] a key's permissions cannot be set, and a refused write leaves the key unchanged → `api-key-permissions-oss.spec.ts`
+- [x] a key cannot be created with permissions, and the refusal creates nothing → `api-key-permissions-oss.spec.ts`
+- [x] after a refused restriction the key keeps full owner access: it creates and runs a flow → `api-key-permissions-oss.spec.ts`
+- [x] Settings › API keys shows the permissions read-only: full owner access, an unavailable notice, Save disabled → `api-key-permissions-oss.spec.ts`
+- [x] the create-key modal has no scope step, and the key it creates is full-access → `api-key-permissions-oss.spec.ts`
 - [x] the session probe answers anonymous and authenticated alike, and says which → `api-session-auth-lifecycle.spec.ts`
 - [x] login takes a form body and refuses an empty one → `api-session-auth-lifecycle.spec.ts`
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
