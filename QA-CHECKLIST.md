@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-11-26
+> **Last updated:** 2026-11-27
 
 ---
 
@@ -1849,6 +1849,19 @@
 - [x] Approving `["jira.issue_created", "schedule"]` leaves exactly those two trigger components in the catalog and the sidebar, pauses the `pending` rows of the denied provider kinds (`policy_blocked`) while the approved one stays `pending`, refuses enabling a denied kind over its own connection with the policy's `403` and two `trigger:policy_denied` rows, and lets the approved kind reach its own first gate (`409 background_runs_not_allowed`) → governance/trigger-policy-enforcement.spec.ts
 - [ ] A provider trigger that arms and fires: a `ready` connection for any of the nine needs a provider account (#2503), and a push kind also a public HTTPS ingress; so do a provider push activation, a poll round, Discord's gateway, pausing an `active` provider trigger by policy and a dispatch refused under a provider kind
 
+#### 24.23 The Schedule picker (#2569)
+
+> Since `1.14.0.dev30` (upstream #16322) the Schedule trigger asks for a schedule type instead of a cron, and flow save compiles it on the server. API half: `api/triggers/api-triggers-schedule-picker.spec.ts`; canvas half: `core-functionality/integrations/trigger-schedule-picker.spec.ts`.
+
+- [x] Each type compiles on the server from a flow saved through the API only, to exactly one timing key: `interval_minutes`, `run_at`, a `crons` list for times at different minutes (`0 8,12` + `30 18`), a 12-hour time, compacted weekdays (`1-3,5`), month days and a custom cron, each in its picked timezone → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] An unusable pick (Weekly with no days, an unreadable time) stores `cron: ""` and reads `config_invalid` with the picker's message, switching a Daily flow to it drops the old cron, and `enable` is refused `409` with that message, not a cron error → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] A custom cron survives switching the type away and back: the stored node keeps it while a Daily pick runs, and switching the stored node back runs it again → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] A timezone that loads but is not listed (`posix/America/New_York`) is kept on the row; an unknown one reads `config_invalid` with its reason → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] A node saved before the picker keeps its own cron on save, and the editor's *Update* opens it on *Custom (cron)* with that cron; a typed node keeps its type; a picker-less node on the default cron opens on the defaults → `api/triggers/api-triggers-schedule-picker.spec.ts`
+- [x] The canvas shows exactly each type's fields, swapping them on every pick, and the stored node and the compiled row agree with the last pick → `core-functionality/integrations/trigger-schedule-picker.spec.ts`
+- [x] A cron typed into *Custom (cron)* is shown again after switching to Daily and back, and is what the node and the row store → `core-functionality/integrations/trigger-schedule-picker.spec.ts`
+- [x] A saved timezone outside the list is shown, survives opening and closing the list, and is still stored after a save → `core-functionality/integrations/trigger-schedule-picker.spec.ts`
+
 ---
 
 ## instance-migration/ — Instance Migration (1.13)
@@ -1927,7 +1940,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 113 | 106 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 117 | 110 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -1950,9 +1963,9 @@
 | `governance/` — Catalog and Provider Policy | 24 | 0 | 22 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 110 | 0 | 92 | 5 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
-| `integrations/` — Dedicated Integrations | 170 | 147 | 0 | 2 | 21 |
+| `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **957** | **827 (86%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **969** | **839 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
