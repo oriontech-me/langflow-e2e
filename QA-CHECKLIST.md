@@ -469,6 +469,15 @@
 - [x] Smart Router in decision mode fires the chosen route (a refund request → the Billing output) and leaves the other routes and the Else empty → `core-components/decision-model-and-smart-router.spec.ts`
 - [x] The output inspection renders the decision: the pick marked among the declared options, the model, type and question → `core-components/decision-model-and-smart-router.spec.ts`
 - [x] The trace records a Decision Model span carrying the decision, and the trace view renders it with the same request id → `core-components/decision-model-and-smart-router.spec.ts`
+
+#### 3.12 Batch Run (1.14 rate-limit retry)
+
+> Upstream #16024 (#2572). Test 1 runs on the lane's real provider; tests 2–4 point the model at a local OpenAI-compatible mock Langflow calls (`tests/helpers/mocks/rate-limit-openai-mock.ts`), which echoes each row, records arrival times and answers `429` on demand. The OpenAI SDK retries a `429` 3 times by itself before Batch Run sees it (measured).
+
+- [x] On a real provider, N rows in give N non-empty answers, in order (`text`, `batch_index`), each with its metadata → `core-components/batch-run-component.spec.ts`
+- [x] Rows run in batches of `batch_size` (5 rows at 2 → 2, 2, 1, each batch together) with `delay_between_batches` between them, every row echoed in order; metadata only when enabled → `core-components/batch-run-component.spec.ts`
+- [x] A `429` the client gives up on (3 per row) is retried by Batch Run once, one request at a time (batch size halved), and every row still comes back in order → `core-components/batch-run-component.spec.ts`
+- [x] With `max_rate_limit_retries: 0`, the same `429`s fail the build with the provider's error, and nothing is retried → `core-components/batch-run-component.spec.ts`
 ---
 
 ## core-functionality/ — Core and Operational Logic
