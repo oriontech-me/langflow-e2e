@@ -285,6 +285,14 @@
 - [x] (`@destructive`) *Settings › Upgrade reports*: a check from the page reports both flows (the page's report is the API's), and its preview — after searching the run's flows, the list pages 20 at a time — shows *Ready for update* / *Manual repair required* with the API's target fingerprint, changing nothing → `ui-ux/settings-upgrade-reports.spec.ts`
 - [x] (`@destructive`) From the page, maintenance is turned on through its confirmation, the reviewed update is applied and reads *Updated*, and the API shows the flow updated with unchanged edges and a retained recovery version → `ui-ux/settings-upgrade-reports.spec.ts`
 
+#### 1.19 Database maintenance mode (1.14)
+
+> Upstream #16181 / #16583. Maintenance refuses writes **per caller**, instance-wide: a regular user's writes and runs get `503 "This instance is in maintenance mode."`, a superuser's still go through. Every test that turns it on runs in the serial `@destructive` lane; only the superuser gate is `@stable`.
+
+- [x] A regular user reads the status (without `set_by`) and is refused `403` on `POST /maintenance/on` and `/off` → `api/instance/api-maintenance-mode.spec.ts`
+- [x] (`@destructive`) On with a reason records it and the superuser in `set_by`; a regular user's flow update, flow create, variable create, run (`POST /build/{id}/flow`) and even `POST /maintenance/off` are refused `503` with the exact body, while their reads and sign-in work and the superuser still creates and updates a flow; off lifts it and the user's writes go through again → `api/instance/api-maintenance-mode.spec.ts`
+- [x] (`@destructive`) *Settings › Upgrade reports* (opened on an imported empty report): on through the confirmation dialog with a reason shows *Maintenance is on.*, the reason, and the changes-paused notice, which the flow editor shows too; off through its dialog removes the notice → `api/instance/api-maintenance-mode.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
@@ -1993,7 +2001,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 131 | 124 | 1 | 4 | 2 |
+| `api/flows/` — REST API | 134 | 127 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 101 | 99 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
@@ -2019,7 +2027,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **993** | **863 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **996** | **866 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2035,7 +2043,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 987 `test()` calls carrying the `@stable` tag, distributed across 338 spec
+> 988 `test()` calls carrying the `@stable` tag, distributed across 339 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2251,6 +2259,7 @@
 - [x] the three health routes are not synonyms of each other → `api-instance-identity.spec.ts`
 - [x] version and config answer unauthenticated, the catalog and starter projects do not → `api-instance-identity.spec.ts`
 - [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
+- [x] a regular user can read the status but cannot turn maintenance on or off → `api-maintenance-mode.spec.ts`
 - [x] preview is read-only: ready for the safe flow, manual for the breaking one → `api-upgrade-reports.spec.ts`
 - [x] apply outside maintenance is refused and writes nothing → `api-upgrade-reports.spec.ts`
 - [x] every upgrade-report and repair route refuses a non-superuser → `api-upgrade-reports.spec.ts`
