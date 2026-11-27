@@ -46,16 +46,17 @@ const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(
 test.describe("Flow versions — a retained version is Protected", () => {
   let headers: Record<string, string>;
   let catalog: Record<string, unknown>;
-  let evalsSkip: string | null = null;
+  /** The evals surface verdict; only test 1 depends on it. */
+  let evalsVerdict: Awaited<ReturnType<typeof readEvalsSurface>>;
   let datasets: DatasetTracker;
   let evaluations: EvaluationTracker;
   let flows: string[];
+  /** Set just before a test turns maintenance on: only that test's teardown turns it off. */
+  let maintenanceTouched = false;
 
   test.beforeAll(async ({ request }) => {
     headers = { Authorization: await getAuthToken(request) };
-    const verdict = await readEvalsSurface(request, headers);
-    if (verdict.state === "absent") evalsSkip = verdict.reason;
-    else if (verdict.state !== "enabled") throw new Error(`evals premise: ${verdict.reason}`);
+    evalsVerdict = await readEvalsSurface(request, headers);
     catalog = await fetchComponentCatalog(request, headers);
   });
 
@@ -63,15 +64,16 @@ test.describe("Flow versions — a retained version is Protected", () => {
     datasets = new DatasetTracker();
     evaluations = new EvaluationTracker();
     flows = [];
+    maintenanceTouched = false;
   });
 
   // Evaluations first: deleting one releases its version, and deleting a flow does not
-  // delete its evaluations. Maintenance off before anything else, whatever a test did.
+  // delete its evaluations. Maintenance off first, if this test turned it on.
   test.afterEach(async ({ page, request }) => {
     await page.goto("about:blank").catch(() => undefined);
     const failures: string[] = [];
-    const status = await request.get("/api/v1/maintenance/status", { headers });
-    if (status.ok() && (await status.json()).maintenance) {
+    const status = maintenanceTouched ? await request.get("/api/v1/maintenance/status", { headers }) : null;
+    if (status?.ok() && (await status.json()).maintenance) {
       const off = await request.post("/api/v1/maintenance/off", { headers });
       if (!off.ok()) failures.push(`maintenance off: ${off.status()}`);
     }
@@ -134,6 +136,15 @@ test.describe("Flow versions — a retained version is Protected", () => {
     await badge.hover();
     await expect(page.getByRole("tooltip")).toHaveText(reason);
 
+    // Close the badge's tooltip first, so the reason seen below can only come from Delete.
+    // Moving the pointer alone leaves it open (measured); hovering another row and
+    // pressing Escape close it.
+    await expect(async () => {
+      await page.getByRole("listitem").filter({ hasText: "Working version" }).hover();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("tooltip")).toHaveCount(0, { timeout: 1_000 });
+    }).toPass({ timeout: 10_000 });
+
     const { menu, deleteItem } = await openMenu(page, version);
     await expect(deleteItem).toHaveText("Delete");
     await expect(deleteItem, "a retained version's Delete is disabled").toBeDisabled();
@@ -152,7 +163,9 @@ test.describe("Flow versions — a retained version is Protected", () => {
     "an evaluation's version is Protected: the API refuses its delete, the history shows the badge and a disabled Delete, and a plain version still deletes",
     { tag: ["@stable", "@workspace", "@database", "@ui-ux"] },
     async ({ page, request }) => {
-      test.skip(evalsSkip !== null, evalsSkip ?? "");
+      const premise = evalsVerdict.state === "enabled" ? "" : evalsVerdict.reason;
+      test.skip(evalsVerdict.state === "absent", premise);
+      expect(evalsVerdict.state, `evals premise: ${premise}`).toBe("enabled");
       let retained!: VersionEntry;
       let plain!: VersionEntry;
       let flowId = "";
@@ -187,6 +200,9 @@ test.describe("Flow versions — a retained version is Protected", () => {
           retained_reason: "evaluation",
         });
         expect(plain).toMatchObject({ version_tag: "v2", description: "E2E plain snapshot", retained: false });
+        expect(plain, "a plain version carries no retained_reason (the list excludes None)").not.toHaveProperty(
+          "retained_reason",
+        );
       });
 
       await test.step("the API refuses to delete the retained version", async () => {
@@ -199,7 +215,9 @@ test.describe("Flow versions — a retained version is Protected", () => {
       });
 
       await test.step("v2 has no badge and its Delete is enabled", async () => {
+        await expect(row(page, plain)).toBeVisible();
         await expect(row(page, plain).getByTestId("version-protected-badge")).toHaveCount(0);
+        await expect(row(page, plain)).not.toContainText("Protected");
         const { deleteItem } = await openMenu(page, plain);
         await expect(deleteItem).toBeEnabled();
         await closeMenu(page);
@@ -208,8 +226,14 @@ test.describe("Flow versions — a retained version is Protected", () => {
       await test.step("deleting v2 from the history removes it; v1 stays", async () => {
         const { deleteItem } = await openMenu(page, plain);
         await deleteItem.click();
-        await expect(page.getByText(`This will permanently delete ${plain.version_tag}.`)).toBeVisible();
-        await page.getByRole("button", { name: "Delete", exact: true }).click();
+        // The confirmation is a portal with no dialog role: scope it by its title.
+        const confirm = page
+          .locator("div")
+          .filter({ has: page.getByText("Delete Version", { exact: true }) })
+          .filter({ hasText: `This will permanently delete ${plain.version_tag}.` })
+          .last();
+        await expect(confirm).toBeVisible();
+        await confirm.getByRole("button", { name: "Delete", exact: true }).click();
         await expect(row(page, plain)).toHaveCount(0);
         await expect(row(page, retained)).toBeVisible();
         expect((await versions(request, flowId)).map((v) => v.id)).toEqual([retained.id]);
@@ -238,6 +262,7 @@ test.describe("Flow versions — a retained version is Protected", () => {
         const ready = preview.results.find((r) => r.flow_id === flowId)!;
         expect(ready.status, "the repair is ready").toBe("ready");
 
+        maintenanceTouched = true;
         const on = await request.post("/api/v1/maintenance/on", { headers, data: { reason: "E2E #2566 repair" } });
         expect(on.status(), "maintenance turns on").toBe(200);
         try {
@@ -263,8 +288,9 @@ test.describe("Flow versions — a retained version is Protected", () => {
             retained_reason: "admin-upgrade-repair",
           });
         } finally {
-          const off = await request.post("/api/v1/maintenance/off", { headers });
-          expect(off.status(), "maintenance turns off").toBe(200);
+          // Best-effort: a failure here must not replace the step's own error. The
+          // afterEach turns it off again and does fail.
+          await request.post("/api/v1/maintenance/off", { headers }).catch(() => undefined);
         }
       });
 

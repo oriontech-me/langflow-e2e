@@ -32,9 +32,13 @@ way back from an upgrade repair.
    pointer: its tooltip sits on a wrapper, and opens only when the pointer arrives from outside that wrapper.
 5. The confirmation for deleting a plain version is a portal with no `dialog` role: *"Delete Version"*, *"This will
    permanently delete v2. This can't be undone."*, and *Cancel* / *Delete* buttons.
-6. **The issue's optional second source is covered** (#2567 landed first): an upgrade repair's recovery version is
+6. **No `page.allowHttpErrors()`** (the issue asked for one around the `409`): the refusal is driven through the
+   `request` fixture, which the HTTP error monitor does not watch (it listens on the page's responses only), and the
+   page itself never sends that `DELETE`, because its *Delete* is disabled.
+7. **The issue's optional second source is covered** (#2567 landed first): an upgrade repair's recovery version is
    retained as `admin-upgrade-repair`. That needs database maintenance, which is instance-wide, so it is a
-   separate `@destructive` test.
+   separate `@destructive` test. `api-upgrade-reports.spec.ts` already pins the recovery version's `retained` flag;
+   this test adds the refused `DELETE` and the history UI on top of it.
 
 ---
 
@@ -48,8 +52,8 @@ which needs database maintenance: that refuses every regular user's writes on th
 `@destructive` and therefore **not** `@stable` (CLAUDE.md: never combine the two). Run it with
 `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive` (one worker).
 
-Test 1 is skipped (with the reason) when the evals surface is absent on the instance, as the evals specs are
-(`readEvalsSurface`).
+Test 1 is skipped (with the reason) when the evals surface is absent on the instance, and fails when it is disabled or
+unreadable, as the evals specs do (`readEvalsSurface`). Test 2 does not depend on evals.
 
 ---
 
@@ -74,13 +78,14 @@ Test 1 is skipped (with the reason) when the evals surface is absent on the inst
 **Test 2 (`@destructive`) — an upgrade repair's recovery version is Protected with its own reason.**
 
 1. Create a repairable flow (`buildOutdatedSafeFlow`, from the frozen `outdated_flow.json` and the live catalog);
-   preview it (`ready`). Turn maintenance on, apply the repair (`updated`), and turn maintenance off in a `finally`.
+   preview it (`ready`). Turn maintenance on, apply the repair (`updated`), and turn maintenance off in a `finally`
+   (best effort, so it never replaces the step's own error; the teardown turns it off again and fails if it cannot).
    The flow has one version: the recovery point, `retained: true`, `retained_reason: "admin-upgrade-repair"`, its
    id the apply's `recovery_version_id`.
 2. `DELETE` it → `409` with the exact detail (reason `admin-upgrade-repair`); still listed.
 3. In the history, the badge and the disabled *Delete* carry the repair's reason.
 
-**Teardown (`afterEach`).** Turn maintenance off if it is on; delete the evaluations (which releases their
+**Teardown (`afterEach`).** Turn maintenance off if this test turned it on (test 1 never reads or changes it); delete the evaluations (which releases their
 versions), then the flows (their versions go with them), then the datasets.
 
 ---
@@ -89,8 +94,8 @@ versions), then the flows (their versions go with them), then the datasets.
 
 - **API:** the exact `409` detail naming the reason, and the version still listed. A server that stopped retaining
   would answer `204` and drop it.
-- **Fields:** `retained` / `retained_reason` as measured, for both sources, and `retained: false` on the plain
-  version (the control).
+- **Fields:** `retained` / `retained_reason` as measured, for both sources, and `retained: false` with no
+  `retained_reason` key on the plain version (the control).
 - **UI:** the badge only on the retained version, the reason text per source in both tooltips, *Delete* disabled on
   the retained version and enabled on the plain one, and the plain one actually deleted through the confirmation.
 
@@ -102,7 +107,10 @@ versions), then the flows (their versions go with them), then the datasets.
   while it is open; the spec closes it with `Escape` (pressed until the menu is gone: the first press may only close
   the tooltip) before the next row.
 - The tooltip on the disabled *Delete* is re-hovered from the *Export* item until it opens (pointer has to enter the
-  wrapper from outside).
+  wrapper from outside). Before the menu opens, the pointer leaves the badge and no tooltip is open, so the reason
+  seen there can only be the *Delete*'s.
+- The confirmation's *Delete* button is located inside the block titled *Delete Version*, since the portal has no
+  dialog role.
 - Each test's versions go with its flow; nothing is shared between the tests.
 
 ---
@@ -130,9 +138,15 @@ versions), then the flows (their versions go with them), then the datasets.
 - `src/backend/base/langflow/services/database/models/flow_version/exceptions.py` — `FlowVersionRetainedError`
 - `src/backend/base/langflow/services/evaluations/versioning.py` — the evaluation's retained version
 - `src/backend/base/langflow/services/flow_repair/retention.py` — `REPAIR_RETENTION_REASON`
+- `src/backend/base/langflow/services/flow_repair/service.py` — where the recovery version is created and retained
+- `src/backend/base/langflow/api/v1/upgrade_repairs.py` — preview and apply
+- `src/backend/base/langflow/api/utils/flow_utils.py` — deleting a flow deletes its versions, retained ones included (the teardown relies on it)
 - `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/FlowVersionSidebar/components/VersionListItem.tsx` — the badge, the tooltips, the disabled *Delete*
 - `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/FlowVersionSidebar/components/DeleteConfirmDialog.tsx` — the confirmation
 - `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/FlowVersionSidebar/utils.ts` — `protectedReasonText`
+- `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/FlowVersionSidebar/index.tsx` — the *Working version* row and where the confirmation mounts
+- `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarSegmentedNav.tsx` — the `sidebar-nav-versions` entry
+- `src/frontend/src/components/common/versionLabelComponent/index.tsx` — the "v1 — description" label the rows are located by
 - `src/frontend/src/locales/en.json` — the *Protected* label and the reason strings
 - `tests/helpers/api/evals/evaluations.ts` — the echo flow, the evaluation and its run
 - `tests/helpers/api/evals/datasets.ts` — the dataset and the evals surface verdict
