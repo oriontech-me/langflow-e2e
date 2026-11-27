@@ -1988,7 +1988,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 131 | 124 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
-| `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
+| `core-components/` — Core Components | 101 | 99 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 43 | 38 | 1 | 1 | 3 |
@@ -2012,7 +2012,7 @@
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 178 | 155 | 0 | 2 | 21 |
 | `instance-migration/` — Instance Migration | 26 | 2 | 21 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **986** | **856 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **993** | **863 (87%)** | **68 (7%)** | **17 (2%)** | **45 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2028,7 +2028,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 980 `test()` calls carrying the `@stable` tag, distributed across 337 spec
+> 987 `test()` calls carrying the `@stable` tag, distributed across 338 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2374,6 +2374,13 @@
 - [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
 - [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
 - [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
+- [x] Smart Router's routing mode swaps the language model for the decision fields, per decision type → `decision-model-and-smart-router.spec.ts`
+- [x] Decision Model's type decides which fields show → `decision-model-and-smart-router.spec.ts`
+- [x] decision models form their own catalog, and incomplete or switched-off decisions are refused → `decision-model-and-smart-router.spec.ts`
+- [x] Decision Model answers a Boolean and a Choice question with structured evidence → `decision-model-and-smart-router.spec.ts`
+- [x] Smart Router in decision mode fires the chosen route and leaves the others empty → `decision-model-and-smart-router.spec.ts`
+- [x] the output inspection shows the decision evidence → `decision-model-and-smart-router.spec.ts`
+- [x] the trace records the decision, and the trace view renders it → `decision-model-and-smart-router.spec.ts`
 - [x] two API Request nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
