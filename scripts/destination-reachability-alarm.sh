@@ -105,6 +105,8 @@ for f in "$SECRETS_FILE" "$LANE_FILE"; do
     . "$f"
   fi
 done
+# shellcheck source=lib/destination-token.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/destination-token.sh"
 
 case "$THRESHOLD" in
   ''|*[!0-9]*|0) echo "[reach] THRESHOLD='$THRESHOLD' is not a positive integer — using 3."; THRESHOLD=3 ;;
@@ -131,6 +133,23 @@ probe() {
     return 1
   fi
   local out rc=0
+  # The App's token first, when one is configured (#2518): in this shell, not a
+  # subshell, so the check below reads it. A configured App that is refused (3) or
+  # broken (2: an unreadable key, a bad id) is the credential being refused — falling
+  # through would leave the check with no token, which reads as "not confirmed", and a
+  # corrupt key would look reachable on every probe. No answer (4) or an incomplete App
+  # (5) leaves whatever static token is there for the check to judge.
+  local mint_err mint_rc=0
+  mint_err="$(mktemp)"
+  ISSUE_HOST="$host" destination_token_refresh "$(pwd)" 2> "$mint_err" || mint_rc=$?
+  if [ "$mint_rc" = "2" ] || [ "$mint_rc" = "3" ]; then
+    # "credential was refused" in both cases: the cause classifier below keys on it, and
+    # a broken key is a credential fault, never a network ticket.
+    echo "ports open, but the GitHub App credential was refused ($( [ "$mint_rc" = 3 ] && echo "by the destination" || echo "as broken, before anything was sent")) — $(grep -m 1 'mint-app-token' "$mint_err" | sed 's/^\[mint-app-token\] //')"
+    rm -f "$mint_err"
+    return 1
+  fi
+  rm -f "$mint_err"
   if [ -n "$CREDENTIAL_BIN" ]; then
     out="$("$CREDENTIAL_BIN" 2>&1)" || rc=$?
   else
