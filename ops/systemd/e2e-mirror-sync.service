@@ -1,0 +1,55 @@
+# Pushes the source repository's branches and tags to the destination the VM lane reads
+# (#2041), from this machine, next to its only consumer. Until now a launchd job on a
+# laptop did it, and launchd does not fire while a laptop sleeps.
+#
+# No alarm of its own: a sync that refuses or stops leaves the destination behind, and
+# e2e-mirror-freshness already says that out loud. This only says WHY, in the journal:
+#   journalctl -u e2e-mirror-sync.service --since today
+#
+# ROLLOUT, in two steps (the issue's plan):
+#   1. DRY_RUN=1 (below) for a week while the laptop keeps pushing: the journal's
+#      "status=dry_run, main=<sha>" lines are compared with the laptop's sync.log.
+#   2. Then the VM pushes: remove the DRY_RUN line, copy the unit again, daemon-reload,
+#      and unload the laptop's job (launchctl bootout, not delete). Two writers pushing
+#      the same source are idempotent, so the overlap is safe.
+# SEED THE MIRROR FIRST, before the timer is enabled in step 1: the first dry run
+# creates the mirror, and it is that first run that would otherwise refuse. A fresh
+# mirror fetches only what the source's refs reach today, so a destination branch whose
+# commits left the source (a deleted or force-pushed branch) reads as "never seen" — a
+# divergence the guard refuses (exit 2; nothing is lost, the sync just stops). Seeding
+# from the laptop's mirror shares what it has seen. Make the bundle RIGHT AFTER a
+# laptop sync that succeeded: a bundle carries only what some laptop ref reaches, so a
+# branch dropped before that sync can still be refused once (verify it by hand, then one
+# run with ALLOW_OVERWRITE=1). The same noise can recur during the week both writers
+# run, for a branch created and deleted between two VM cycles.
+#   laptop$ ~/git-mirrors/sync-langflow.sh manual && git -C ~/git-mirrors/langflow-e2e.git bundle create /tmp/mirror.bundle --all
+#   (copy it to the VM)
+#   vm# rm -rf /root/mirror/langflow-e2e.git    # only if a run already created one
+#   vm# git clone -q --bare /tmp/mirror.bundle /root/mirror/langflow-e2e.git
+#   vm# git -C /root/mirror/langflow-e2e.git remote set-url origin https://github.com/oriontech-me/langflow-e2e.git
+#   vm# git -C /root/mirror/langflow-e2e.git config --replace-all remote.origin.fetch '+refs/heads/*:refs/heads/*'
+#   vm# git -C /root/mirror/langflow-e2e.git config --add remote.origin.fetch '+refs/tags/*:refs/tags/*'
+#
+# The destination's credential is the GitHub App's, minted per push by
+# scripts/git-credential-destination.sh (#2518); without it every push is refused, and
+# the App needs Workflows: write, or a commit touching .github/workflows/ is refused
+# (measured on the laptop's own push, 2026-11-27).
+#
+# Install:
+#   cp ops/systemd/e2e-mirror-sync.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now e2e-mirror-sync.timer
+[Unit]
+Description=Push the e2e source's branches and tags to the destination
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# HOME and PATH for the reasons e2e-mirror-freshness.service gives: systemd sets no
+# HOME (#1715) and git and node look for it; the PATH is pinned, not inherited.
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Step 1 of the rollout. Delete this line for step 2.
+Environment=DRY_RUN=1
+WorkingDirectory=/root/e2e-qa
+ExecStart=/root/e2e-qa/ops/mirror/sync-mirror.sh

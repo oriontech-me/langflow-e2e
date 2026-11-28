@@ -85,7 +85,7 @@ test("every service declares HOME, because systemd sets none (#1715)", () => {
   // cron does, systemd does not, and run-e2e.sh builds the uv PATH out of $HOME under
   // `set -u` -- so the run dies before doing anything. Found by running a unit, not by
   // reading one.
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service", "e2e-on-demand-worker.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service", "e2e-on-demand-worker.service", "e2e-mirror-sync.service"]) {
     assert.ok(
       directives(read(unit), "Environment").some((v) => v === "HOME=/root"),
       `${unit} does not declare HOME`,
@@ -127,10 +127,10 @@ test("the timers are enablable and the services are not, by design", () => {
   // service with one invites `systemctl enable e2e-daily.service`, which would arm the
   // run with no schedule behind it; a timer without one makes `enable` a no-op that
   // warns and is easy to miss.
-  for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness.timer", "e2e-mirror-freshness-announce.timer"]) {
+  for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness.timer", "e2e-mirror-freshness-announce.timer", "e2e-mirror-sync.timer"]) {
     assert.deepEqual(directives(read(unit), "WantedBy"), ["timers.target"], `${unit}`);
   }
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service", "e2e-mirror-sync.service"]) {
     assert.doesNotMatch(read(unit), /^\[Install\]/m, `${unit} carries an [Install] section`);
   }
 });
@@ -287,4 +287,12 @@ test("the routine watchdog template runs the generic watchdog for its instance",
   assert.deepEqual(directives(unit, "ExecStart"), ["/root/e2e-qa/ops/vm/e2e-routine-watchdog.sh %i"]);
   assert.ok(directives(unit, "Environment").includes("HOME=/root"));
   assert.doesNotMatch(unit, /^\[Install\]/m);
+});
+
+test("the mirror sync starts as a dry run, every 15 minutes, and survives a reboot (#2041)", () => {
+  // Step 1 of the rollout: the VM verifies beside the laptop and pushes nothing. Lifting
+  // it is a deliberate edit to this file, not a default that drifts.
+  assert.ok(directives(read("e2e-mirror-sync.service"), "Environment").includes("DRY_RUN=1"));
+  assert.deepEqual(directives(read("e2e-mirror-sync.timer"), "OnCalendar"), ["*:0/15"]);
+  assert.deepEqual(directives(read("e2e-mirror-sync.timer"), "Persistent"), ["true"]);
 });
