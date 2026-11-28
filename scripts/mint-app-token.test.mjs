@@ -138,7 +138,9 @@ test("a refusal exits 3 and names its cause: key, installation, suspension, cloc
   mode = "skew";
   const skew = await cli(ENV());
   assert.equal(skew.status, 3);
-  assert.match(skew.stderr, /rejected the JWT's time claims — the clock is off: this clock is 1200 s ahead of the destination's/);
+  // The Date header has one-second precision, so 1200 s of skew reads as 1200 or 1201.
+  const ahead = Number(skew.stderr.match(/rejected the JWT's time claims — the clock is off: this clock is (\d+) s ahead of the destination's/)?.[1]);
+  assert.ok(ahead >= 1199 && ahead <= 1202, skew.stderr);
   assert.match(skew.stderr, /Fix the clock/);
 });
 
