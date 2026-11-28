@@ -266,6 +266,10 @@ routine_report() {
             # shellcheck disable=SC1090
             [ -r "$f" ] && . "$f"
           done
+          # The destination token, minted from the GitHub App when one is configured
+          # (#2518); otherwise the static one just read.
+          # shellcheck disable=SC1091
+          . "$RT_REPO/scripts/lib/destination-token.sh" && { destination_token_refresh "$RT_REPO" || true; }
           # The visibility too: a routine sets it with a plain assignment, and node reads
           # only the environment -- unexported, a red day reported nothing and said ok.
           export ROUTINE_ISSUE ROUTINE_SLACK ISSUE_HOST ISSUE_REPO ISSUE_CC GITHUB_TOKEN GH_TOKEN SLACK_WEBHOOK_URL 2>/dev/null

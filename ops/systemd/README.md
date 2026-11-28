@@ -321,7 +321,8 @@ What the repository cannot hold stays on the machine, in two files the wrapper r
 
 | File | Holds | Mode |
 |---|---|---|
-| `/root/.e2e-secrets` | provider keys, tokens, the Slack webhook | 600 |
+| `/root/.e2e-secrets` | provider keys, tokens, the Slack webhook; once the destination is reachable, the GitHub App's `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY_FILE` instead of a destination token (#2518) | 600 |
+| `/root/.e2e-app-key.pem` | the GitHub App's private key, from which every destination token is minted (`scripts/mint-app-token.mjs`); absent while temporary mode lasts | 600 |
 | `/root/.e2e-lane` | topology, no secrets: `ISSUE_HOST`, `ISSUE_REPO`, `ISSUE_CC`, `BACKUP_DEST` | 600 |
 
 The wrapper **refuses** to run when `.e2e-lane` is missing or leaves a key unset, and

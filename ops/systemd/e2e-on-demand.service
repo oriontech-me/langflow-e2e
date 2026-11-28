@@ -19,6 +19,12 @@ Wants=network-online.target
 Type=oneshot
 # systemd sets no HOME for a system service (#1715), and run-e2e.sh needs it.
 Environment=HOME=/root
+# The GitHub App's private key is out of this unit's reach (#2518 review): it runs a
+# branch's code or a published build with no consequence on the destination, and the
+# script already drops the App's three variables, but a root process could still read
+# the key file, or ask git's credential helper, which reads it, for a token. The "-"
+# tolerates the file's absence (temporary mode).
+InaccessiblePaths=-/root/.e2e-app-key.pem
 ExecStart=/root/e2e-qa/ops/vm/run-on-demand.sh
 # A whole run takes 26-33 min (316-353 s of build, 17-24 min of suite), measured on
 # the qa from 2026-10-05 to 10-10. The wrapper's own deadline, 80 min, stops a long
