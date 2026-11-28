@@ -160,7 +160,11 @@ test("bad switches and no destination are refused; a held lock ends the run quie
   assert.equal(lane.status, 1, "that host does not answer: verify_failed, nothing pushed");
 
   if (spawnSync("bash", ["-c", "command -v flock"]).status === 0) {
-    const held = spawnSync("bash", ["-c", `exec 9> "$1"; flock 9; bash "$2"`, "x", join(ctx.root, "lock"), SCRIPT], {
+    // The lock held by ANOTHER process, as a second timer firing would meet it. Holding
+    // it in the same shell and then running the script let bash exec the script in that
+    // very process, whose `exec 9>` closed the descriptor holding the lock (it passed on
+    // macOS only because it has no flock and skips this case).
+    const held = spawnSync("bash", ["-c", `( flock 9; sleep 5 ) 9> "$1" & sleep 1; bash "$2"; rc=$?; kill %1 2>/dev/null; exit $rc`, "x", join(ctx.root, "lock"), SCRIPT], {
       encoding: "utf8",
       env: { ...process.env, MIRROR_DIR: ctx.mirror, SOURCE_URL: ctx.source, DEST_URL: ctx.dest, CREDENTIAL_HELPER: "", MIRROR_LOCK: join(ctx.root, "lock") },
     });
