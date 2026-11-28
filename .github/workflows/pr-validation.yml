@@ -708,6 +708,7 @@ jobs:
           ENTERPRISE_SPECS=""
           SERVING_SPECS=""
           INSTANCE_MIGRATION_SPECS=""
+          BACKGROUND_WORKER_SPECS=""
           if [ "$HAS_SPECS" = "true" ]; then
             VERDICT=$(node scripts/destructive-only-selection.mjs --specs "$SPECS" --format=json) \
               || { echo "::error::lane classification failed — a spec in the selection could not be read"; exit 1; }
@@ -716,6 +717,7 @@ jobs:
             ENTERPRISE_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enterprise"]))')
             SERVING_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["serving"]))')
             INSTANCE_MIGRATION_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["instanceMigration"]))')
+            BACKGROUND_WORKER_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["backgroundWorker"]))')
           fi
           if [ "$DESTRUCTIVE_ONLY" = "true" ]; then
             echo "::warning::Every impacted spec is @destructive, so the normal lane is skipped for this PR — the destructive lane below is what runs them (workers=1). Read its result, not the normal run's absence (#1010)."
@@ -752,6 +754,12 @@ jobs:
           # source with the feature on plus a PostgreSQL and a bucket to copy into.
           if [ -n "$INSTANCE_MIGRATION_SPECS" ]; then
             echo "::warning::@instance-migration specs in this PR are NOT executed by CI (no instance-migration lane on the runner): $INSTANCE_MIGRATION_SPECS — run them locally against ./scripts/start-langflow-instance-migration.sh with PW_INSTANCE_MIGRATION=1, and record the result in the PR."
+          fi
+          # `@background-worker` (#2574): the same case — those specs need the
+          # database-backed background mode and a `langflow worker`, which only the VM
+          # daily's E2E_LANES starts.
+          if [ -n "$BACKGROUND_WORKER_SPECS" ]; then
+            echo "::warning::@background-worker specs in this PR are NOT executed by CI (no background-worker lane on the runner): $BACKGROUND_WORKER_SPECS — run them locally against a source instance with LANGFLOW_BACKGROUND_BACKEND=scaled (and ./scripts/start-langflow-worker.sh) with PW_BACKGROUND_WORKER=1, and record the result in the PR."
           fi
 
           {

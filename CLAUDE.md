@@ -189,8 +189,9 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 | `@enterprise` | Targets a Langflow **Enterprise** instance. **Lane selector**, serial (login is rate-limited per IP): `PW_ENTERPRISE=1 npx playwright test --grep @enterprise` with `PLAYWRIGHT_BASE_URL` pointed at the instance. **Never combine with `@stable`** (#1010) |
 | `@serving` | **Lane selector**, the only parallel one: the OSS nightly under serving-plane end-user identity. Start it with `./scripts/start-langflow-serving-identity.sh`, then `PW_SERVING_IDENTITY=1 npx playwright test --grep @serving`. **Scheduled**: the VM daily runs `@stable` + `@serving` after the shards, one backend per variant (`scripts/lib/scheduled-lanes.mjs`, #2142) |
 | `@instance-migration` | **Lane selector**, serial: a source Langflow with instance migration (*Settings > Migration*) and its two destinations (not the schema-upgrade migration). Start it with `./scripts/start-langflow-instance-migration.sh`, then `PW_INSTANCE_MIGRATION=1 npx playwright test --grep @instance-migration`. **Never combine with `@stable`** (#1010) |
+| `@background-worker` | **Lane selector**, serial: the database-backed background backend (`LANGFLOW_BACKGROUND_BACKEND=scaled`), whose jobs wait queued for a `langflow worker`. By hand: a source instance with that variable plus `./scripts/start-langflow-worker.sh`, then `PW_BACKGROUND_WORKER=1 npx playwright test --grep @background-worker`. **Scheduled**: the VM daily runs `@stable` + `@background-worker` after the shards, without and with a worker (#2574) |
 
-Lane precedence when several flags are set: `@enterprise` > `@instance-migration` > `@serving` > `@destructive`, resolved in `tests/fixtures/lane.ts`. Full lane contracts: [`docs/infra/tags.md`](docs/infra/tags.md).
+Lane precedence when several flags are set: `@enterprise` > `@instance-migration` > `@background-worker` > `@serving` > `@destructive`, resolved in `tests/fixtures/lane.ts`. Full lane contracts: [`docs/infra/tags.md`](docs/infra/tags.md).
 
 **Functional** (product area — use alongside cross-cutting tags)
 

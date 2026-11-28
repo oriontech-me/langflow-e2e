@@ -18,6 +18,14 @@
 //                run's own served artifact instead of a Docker image, so the lane tests
 //                the same build as the shards.
 //
+//   background   after the shards, on the same port as serving, once per variant: the
+//                database-backed background backend (LANGFLOW_BACKGROUND_BACKEND=scaled,
+//                upstream #13508) queues a v2 background run in the database and a
+//                separate `langflow worker` runs it. `queued` starts the instance with no
+//                worker (a job waits, and can be cancelled while it waits); `worker`
+//                starts one worker beside it (scripts/start-langflow-worker.sh, on the
+//                same database), so a queued job is picked up and run (#2574).
+//
 // `@enterprise` and `@instance-migration` stay unscheduled: the first is out of CI scope
 // by the 2026-08-26 decision (#1607), the second has its own routine.
 
@@ -47,6 +55,7 @@ export const SCHEDULED_LANES = {
     variants: [
       {
         name: "trusted",
+        worker: false,
         env: serving(true, false),
         specs: [
           "tests-automations/regression/serving/end-user-identity-isolation.spec.ts",
@@ -55,16 +64,30 @@ export const SCHEDULED_LANES = {
       },
       {
         name: "untrusted",
+        worker: false,
         env: serving(false, false),
         specs: ["tests-automations/regression/serving/end-user-identity-untrusted.spec.ts"],
       },
       {
         name: "required",
+        worker: false,
         env: serving(true, true),
         specs: ["tests-automations/regression/serving/end-user-identity-required.spec.ts"],
       },
     ],
   },
+};
+
+SCHEDULED_LANES.background = {
+  tag: "@background-worker",
+  flag: "PW_BACKGROUND_WORKER",
+  // No spec carries the tag yet: the lane exists so its specs (#2574's follow-up) have
+  // somewhere to run. Each one is mapped here when it is written; an unmapped one fails
+  // the run, as for serving.
+  variants: [
+    { name: "queued", worker: false, env: { LANGFLOW_BACKGROUND_BACKEND: "scaled" }, specs: [] },
+    { name: "worker", worker: true, env: { LANGFLOW_BACKGROUND_BACKEND: "scaled" }, specs: [] },
+  ],
 };
 
 export const LANE_NAMES = Object.keys(SCHEDULED_LANES);

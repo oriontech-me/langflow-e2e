@@ -461,16 +461,18 @@ test("playwright.config.ts still excludes @destructive from every non-destructiv
     path.join(import.meta.dirname, "..", "tests", "fixtures", "lane.ts"),
     "utf8",
   );
-  // The DEFAULT lane is the function's final return, so its grepInvert is the LAST one
-  // in the file. The first version matched the literal `/@destructive|@enterprise/,`
-  // anywhere in the module, and that literal was the @serving branch's, not the
-  // default's: it held only while no fifth branch existed, and broke the day
-  // `@instance-migration` (#2347) changed that branch while the default was fine.
-  const defaultLane = lane.slice(lane.lastIndexOf("grepInvert:"));
+  // Since #2574 the lanes are rows of one table (LANE_TABLE) and the DEFAULT lane — no
+  // flag set — excludes every row's tag, computed rather than spelled. So the wiring
+  // pinned here is: a row carries `@destructive`, and the no-winner return excludes the
+  // whole table. Earlier versions matched a literal regex, first anywhere in the
+  // module (it was the @serving branch's, and broke with #2347), then the last one.
+  assert.match(lane, /\{\s*flag:\s*"PW_DESTRUCTIVE",\s*tag:\s*"@destructive"/, "the lane table must still carry @destructive (#1326)");
+  const noWinner = lane.slice(lane.indexOf("if (!winner) {"), lane.indexOf("const others ="));
+  assert.ok(noWinner.length > 0, "could not isolate the default lane's return");
   assert.match(
-    defaultLane,
-    /^grepInvert:\s*\/[^/\n]*@destructive[^/\n]*\/,/,
-    "the default lane must still exclude @destructive — the partition input assumes it (#1326)",
+    noWinner,
+    /grepInvert:\s*anyOf\(LANE_TABLE\.map\(\(l\) => l\.tag\)\)/,
+    "the default lane must exclude every lane tag, @destructive included — the partition input assumes it (#1326)",
   );
 });
 

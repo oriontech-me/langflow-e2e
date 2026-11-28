@@ -19,7 +19,8 @@
 //
 //   node scripts/lane-selection.mjs runs <verdict.json>
 //       one tab-separated line per run to make: name, the instance environment
-//       (K=V, space-separated; "-" for a lane with no variants), the spec files.
+//       (K=V, space-separated; "-" for a lane with no variants), "worker" when the run
+//       needs a `langflow worker` beside its instance ("-" otherwise), the spec files.
 //
 // A lane selects NOTHING until its tests are promoted to @stable, and that is a normal
 // state, not a broken one: an empty declaration against an empty listing is verified
@@ -95,14 +96,14 @@ export function selectLane(name, report, declared) {
   const runs = [];
   const unmapped = [];
   if (!lane.variants) {
-    if (files.length) runs.push({ name, env: {}, files, tests });
+    if (files.length) runs.push({ name, env: {}, worker: false, files, tests });
   } else {
     const abs = (f) => path.resolve(root, f);
     const owner = new Map();
     for (const v of lane.variants) for (const s of v.specs) owner.set(abs(s), v.name);
     for (const v of lane.variants) {
       const mine = files.filter((f) => owner.get(abs(f)) === v.name);
-      if (mine.length) runs.push({ name: v.name, env: v.env, files: mine, tests: mine.reduce((a, f) => a + perFile.get(f), 0) });
+      if (mine.length) runs.push({ name: v.name, env: v.env, worker: !!v.worker, files: mine, tests: mine.reduce((a, f) => a + perFile.get(f), 0) });
     }
     for (const f of files) if (!owner.has(abs(f))) unmapped.push(f);
   }
@@ -126,7 +127,7 @@ export function runLines(verdict) {
   return (verdict?.runs || []).map((r) =>
     // "-" for no environment: tab is whitespace to `read`, so an EMPTY middle field
     // would collapse and hand the files to the env column.
-    [r.name, Object.entries(r.env || {}).map(([k, v]) => `${k}=${v}`).join(" ") || "-", r.files.join(" ")].join("\t"),
+    [r.name, Object.entries(r.env || {}).map(([k, v]) => `${k}=${v}`).join(" ") || "-", r.worker ? "worker" : "-", r.files.join(" ")].join("\t"),
   );
 }
 

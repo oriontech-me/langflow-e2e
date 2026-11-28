@@ -73,8 +73,8 @@ test("@stable inherited from a describe block keeps a test out of the candidates
   assert.deepEqual(selectCandidates([t]), []);
 });
 
-test("a lane-gated test is not a candidate, on any of the four selectors", () => {
-  for (const tag of ["@destructive", "@enterprise", "@serving", "@instance-migration"]) {
+test("a lane-gated test is not a candidate, on any of the five selectors", () => {
+  for (const tag of ["@destructive", "@enterprise", "@serving", "@instance-migration", "@background-worker"]) {
     const t = declared({ tags: [tag, "@regression"] });
     assert.deepEqual(laneTagsOf(t), [tag]);
     assert.deepEqual(
