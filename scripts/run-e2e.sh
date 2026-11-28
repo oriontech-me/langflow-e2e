@@ -1636,6 +1636,22 @@ phase_hygiene() {
 # The umbrella's credential, as a function so the DECISION can be exercised without a
 # real run: `ISSUE_CREDENTIAL_BIN` points the check at a stub. Refusal is fatal, and
 # everything else warns — see the caller for why the asymmetry.
+# The App's mint at the preflight, and what each outcome costs (#2518). A configured App
+# that is refused (3) or broken (2: a key that cannot be read, an id that is not one)
+# stops the run, as a refused static token does (#1950): the static token is gone once
+# the App is installed, so falling through would leave the check below with no token,
+# which only warns, and the day would pass with no umbrella. No answer (4) and an
+# incomplete App (5) only warn, as an unanswered static check does.
+preflight_destination_token() {
+  local rc=0
+  destination_token_refresh "$REPO_DIR" || rc=$?
+  case "$rc" in
+    0) ;;
+    2 | 3) die "the GitHub App credential for the destination is $( [ "$rc" = 3 ] && echo refused || echo broken) (mint exit $rc, cause above): the umbrella could not open. Fix it, or set CHECK_ISSUE_CREDENTIAL=0 to run without the umbrella." ;;
+    *) warn "the destination token could not be minted from the GitHub App (exit $rc, see above); the credential check below decides." ;;
+  esac
+}
+
 verify_issue_credential() {
   local rc=0 log="$RUN_DIR/logs/issue-credential.log"
   # No pipe, and that is not style. `node … | tee … || true` was the first version and
@@ -1868,11 +1884,11 @@ phase_preflight() {
   # EXPIRING only warn: a blip must not cost a day of data, and a credential with two
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
-    # Minted here when the App is configured (#2518), so the preflight asks about the
-    # credential the umbrella will actually use; a failed mint leaves the static one
-    # in place and the check below says what it is worth.
-    destination_token_refresh "$REPO_DIR" || warn "the destination token could not be minted from the GitHub App (see above)."
+    preflight_destination_token
     verify_issue_credential
+    # Out of the environment again until the umbrella: the suite and Langflow run in
+    # between, and nothing there needs the destination's credential (#2518 review).
+    destination_token_drop
   fi
 
   # The same question about the credential that pushes a removal to the source, which
@@ -3828,7 +3844,8 @@ phase_publish() {
     #
     # Minted again here (#2518): an App installation token lives one hour, and the
     # umbrella is written at the END of a run that can take about that long.
-    destination_token_refresh "$REPO_DIR" || warn "the destination token could not be minted from the GitHub App (see above); the umbrella uses whatever credential is left."
+    destination_token_refresh "$REPO_DIR" \
+      || warn "the destination token could not be minted from the GitHub App (see above); with the App configured there is no token left (the preflight's was dropped), so the umbrella will not open."
     RUN_ID="$RUN_ID" RUN_DIR="$RUN_DIR" \
     RUN_EMPTY="$RUN_EMPTY" RUN_UNREADABLE="$RUN_UNREADABLE" RUN_PARTIAL="$RUN_PARTIAL" \
     MERGE_OK="${MERGE_OK:-true}" \

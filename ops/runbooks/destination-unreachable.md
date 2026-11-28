@@ -150,14 +150,34 @@ export GITHUB_APP_ID=<App ID>
 export GITHUB_APP_INSTALLATION_ID=<installation ID>
 export GITHUB_APP_PRIVATE_KEY_FILE=/root/.e2e-app-key.pem
 EOF
-# The static token goes: with the App's three variables present, every consumer mints
-# its own, and a personal token left behind would only outlive the person.
-sed -i '/^export \(GH_TOKEN\|GITHUB_TOKEN\)=/d' /root/.e2e-secrets
 . /root/.e2e-lane
-git config --global "credential.https://${ISSUE_HOST}.helper" '/root/e2e-qa/scripts/git-credential-destination.sh'
-# A mint, end to end: prints "minted an installation token, expires …" or names the cause.
-( cd /root/e2e-qa && . /root/.e2e-secrets && . /root/.e2e-lane && export ISSUE_HOST && node scripts/mint-app-token.mjs > /dev/null )
+# A mint, end to end, BEFORE the static token goes: prints "minted an installation
+# token, expires …" or names the cause. Only on success does the static token leave:
+# with the App's three variables present every consumer mints its own, and a personal
+# token left behind would only outlive the person.
+if ( cd /root/e2e-qa && . /root/.e2e-secrets && export ISSUE_HOST && node scripts/mint-app-token.mjs > /dev/null ); then
+  sed -i '/^export \(GH_TOKEN\|GITHUB_TOKEN\)=/d' /root/.e2e-secrets
+  # The clone's own configuration, the host only, on an emptied list: another helper
+  # (store, cache) would otherwise keep each minted token and answer with it once it
+  # has expired.
+  git -C /root/e2e-qa config --replace-all "credential.https://${ISSUE_HOST}.helper" ''
+  git -C /root/e2e-qa config --add "credential.https://${ISSUE_HOST}.helper" /root/e2e-qa/scripts/git-credential-destination.sh
+  echo "the App's credential is installed"
+else
+  echo "the mint failed (cause above): fix it before going on; the static token is still in place"
+fi
 ```
+
+**What the key's placement does and does not protect (#2518 review).** The key is
+read only to mint: a minted token lives in a process's environment from its mint to its
+use (the daily drops it again after the preflight and mints a new one for the umbrella),
+and the shadow and on-demand units cannot reach the key file at all
+(`InaccessiblePaths=`). But the daily itself runs as root, and the suite, Langflow and
+the flows it runs are part of that run: a root process there can still read
+`/root/.e2e-app-key.pem`. A static token in `/root/.e2e-secrets` had the same exposure
+with a 7-day horizon; a key has none, so revoke and rotate it from the App's settings
+the moment it is suspected, and treat running the daily under its own user as the
+lasting fix.
 
 **2. Leave temporary mode.** When the network is back and the mint above works, undo
 step 2 before the next daily. On the VM, as root:
@@ -174,7 +194,7 @@ dest="https://${ISSUE_HOST:-}/${ISSUE_REPO:-}"
 # it tests anything.
 if [ -z "${ISSUE_HOST:-}" ] || [ -z "${ISSUE_REPO:-}" ]; then
   echo "ISSUE_HOST or ISSUE_REPO missing from /root/.e2e-lane: stop"
-elif ! GIT_TERMINAL_PROMPT=0 git ls-remote "$dest" HEAD >/dev/null; then
+elif ! GIT_TERMINAL_PROMPT=0 git -C /root/e2e-qa ls-remote "$dest" HEAD >/dev/null; then
   echo "git over HTTPS is refused: the credential is not in place, stay in temporary mode"
 elif ( . /root/.e2e-secrets; . /root/.e2e-lane; export ISSUE_HOST ISSUE_REPO
         . scripts/lib/destination-token.sh; destination_token_refresh "$PWD"

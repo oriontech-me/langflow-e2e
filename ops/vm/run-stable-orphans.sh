@@ -149,7 +149,7 @@ main() {
   # Only to a host the lane names: with no ISSUE_HOST the token stays here, and a cited
   # destination issue is undecided rather than asked of a host nobody chose.
   local rc=0 dest_host dest_token=""
-  dest_host="$( (set +u; orphans_load_publishing; printf '%s' "${ISSUE_HOST:-}") )"
+  dest_host="$( (set +u; orphans_load_publishing nomint; printf '%s' "${ISSUE_HOST:-}") )"
   [ -z "$dest_host" ] || dest_token="$( (set +u; orphans_load_publishing; printf '%s' "${GITHUB_TOKEN:-${GH_TOKEN:-}}") )"
   : > "$OR_WORK/outputs"
   (
@@ -248,13 +248,16 @@ orphans_node() {
 }
 
 orphans_load_publishing() {
+  # $1=nomint: read the files only (a caller that needs ISSUE_HOST, not a token).
   local f repo="${RT_REPO:-${E2E_ROUTINE_REPO:-/root/e2e-qa}}"
   for f in "${E2E_ROUTINE_SECRETS:-/root/.e2e-secrets}" "${E2E_ROUTINE_LANE:-/root/.e2e-lane}"; do
     # shellcheck disable=SC1090
     [ -r "$f" ] && . "$f"
   done
   # The destination token, minted from the GitHub App when one is configured (#2518).
-  # Always called in a subshell here, so the token never outlives its use.
+  # Every caller runs this in a subshell, so the export ends with that subshell (one
+  # caller hands the token on to the reconciler on purpose).
+  [ "${1:-}" = nomint ] && return 0
   # shellcheck disable=SC1091
   if [ -r "$repo/scripts/lib/destination-token.sh" ]; then
     . "$repo/scripts/lib/destination-token.sh"

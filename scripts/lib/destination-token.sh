@@ -17,8 +17,15 @@
 # only some, it says which are missing and leaves the static token in place.
 #
 # A mint that fails leaves the environment as it was and returns the minter's exit code
-# (2 configuration, 3 refused, 4 no answer), with the cause on stderr. The caller's own
-# credential check decides what that costs; this never exits the caller.
+# (2 configuration, 3 refused, 4 no answer), with the cause on stderr; an incomplete App
+# (some of the three inputs, not all) returns 5. The caller decides what each costs;
+# this never exits the caller. A configured App that answers 2 or 3 is broken, not
+# absent, and a caller that would otherwise fall through to "no token" must treat it so
+# (review of #2518: the daily's preflight stops on it, the alarm counts it as down).
+#
+# destination_token_drop unsets the two names again when THIS mint put them there, so a
+# minted token lives only between its mint and its use, and is not inherited by what
+# runs in between (the suite, Langflow, the flows it runs). A static token is left alone.
 destination_token_refresh() {
   local repo="${1:-${REPO_DIR:-.}}" token rc=0 have=0 name
   for name in GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_FILE; do
@@ -31,7 +38,7 @@ destination_token_refresh() {
       [ -n "${!name:-}" ] || missing="${missing:+$missing, }$name"
     done
     echo "WARNING: the GitHub App credential is incomplete (missing: $missing); the static token, if any, stays in use." >&2
-    return 2
+    return 5
   fi
   token="$(GITHUB_APP_ID="$GITHUB_APP_ID" GITHUB_APP_INSTALLATION_ID="$GITHUB_APP_INSTALLATION_ID" \
     GITHUB_APP_PRIVATE_KEY_FILE="$GITHUB_APP_PRIVATE_KEY_FILE" GITHUB_APP_API_URL="${GITHUB_APP_API_URL:-}" \
@@ -43,6 +50,13 @@ destination_token_refresh() {
   fi
   GITHUB_TOKEN="$token"
   GH_TOKEN="$token"
+  DESTINATION_TOKEN_MINTED=1
   export GITHUB_TOKEN GH_TOKEN
   return 0
+}
+
+destination_token_drop() {
+  [ "${DESTINATION_TOKEN_MINTED:-0}" = "1" ] || return 0
+  unset GITHUB_TOKEN GH_TOKEN
+  DESTINATION_TOKEN_MINTED=0
 }

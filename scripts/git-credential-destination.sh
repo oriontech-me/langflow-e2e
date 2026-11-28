@@ -4,15 +4,18 @@
 # leaves temporary mode: the destination takes no SSH, and a stored token would expire
 # within the hour.
 #
-# Installed by ops/runbooks/destination-unreachable.md, for the destination host only:
-#   git config --global credential.https://<ISSUE_HOST>.helper \
-#     '/root/e2e-qa/scripts/git-credential-destination.sh'
+# Installed by ops/runbooks/destination-unreachable.md, in the clone's own configuration
+# and for the destination host only, on an emptied helper list:
+#   git -C /root/e2e-qa config --replace-all credential.https://<ISSUE_HOST>.helper ''
+#   git -C /root/e2e-qa config --add credential.https://<ISSUE_HOST>.helper \
+#     /root/e2e-qa/scripts/git-credential-destination.sh
 #
 # git calls it as `<helper> get` with the request on stdin (protocol=, host=, ...). It
 # answers only `get`, only for the lane's ISSUE_HOST over https, and only when the App
 # path is configured; otherwise it prints nothing, which tells git to try the next
-# helper or to fail as it would without one. `store` and `erase` are ignored: the token
-# is never written anywhere.
+# helper or to fail as it would without one. `store` and `erase` are ignored: THIS helper
+# writes the token nowhere. git also sends `store` to every OTHER helper configured for
+# the host, which is why the runbook installs this one on a list it has just emptied.
 #
 # Inputs: the App's three variables and ISSUE_HOST, read from the same files the daily
 # reads (E2E_SECRETS, default /root/.e2e-secrets; E2E_LANE, default /root/.e2e-lane).

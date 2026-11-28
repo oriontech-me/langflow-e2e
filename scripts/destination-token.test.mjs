@@ -52,6 +52,9 @@ function sh(script, args, env, input = "") {
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
     child.on("close", (status) => resolve({ status, stdout, stderr }));
+    // A helper that exits without reading stdin (store, erase) closes the pipe first;
+    // the write must not turn that into an unhandled EPIPE.
+    child.stdin.on("error", () => {});
     child.stdin.end(input);
   });
 }
@@ -68,7 +71,7 @@ test("with no App configured, the static token is left exactly as it is", async 
 
 test("an incomplete App says what is missing and keeps the static token", async () => {
   const r = await refresh({ ...APP({ GITHUB_APP_INSTALLATION_ID: "", GITHUB_APP_PRIVATE_KEY_FILE: "" }), GITHUB_TOKEN: "static" });
-  assert.match(r.stdout, /^rc=2 GITHUB_TOKEN=static /);
+  assert.match(r.stdout, /^rc=5 GITHUB_TOKEN=static /);
   assert.match(r.stderr, /incomplete \(missing: GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY_FILE\)/);
 });
 
@@ -139,9 +142,49 @@ test("the reachability alarm reads a refused App as a refused credential", async
   const env = { ...APP({ GITHUB_APP_PRIVATE_KEY_FILE: WRONG_KEY }), STATE_DIR: state, SECRETS_FILE: secrets, LANE_FILE: lane, PROBE_PORTS: String(port), PROBE_TIMEOUT: "3", THRESHOLD: "1", ANNOUNCE: "0" };
   const r = await sh(`exec bash "$1"`, [ALARM], env);
   assert.match(r.stdout, /ports open, but the GitHub App credential was refused — the destination refused the App's JWT \(401/);
-  // And a good App lets the API check run with the minted token: it is the token that
-  // reaches check-issue-credential, which this fake does not serve, so it cannot confirm.
-  const good = await sh(`exec bash "$1"`, [ALARM], { ...env, ...APP() });
-  assert.doesNotMatch(good.stdout, /GitHub App credential was refused/);
-  assert.match(good.stdout, /ports open/);
+  // A broken App (an unreadable key) is down too: falling through would leave the check
+  // with no token, read as "not confirmed", and a corrupt key would look reachable.
+  const broken = await sh(`exec bash "$1"`, [ALARM], { ...env, ...APP({ GITHUB_APP_PRIVATE_KEY_FILE: join(dir, "no-key.pem") }) });
+  assert.match(broken.stdout, /ports open, but the GitHub App credential was rejected as broken — the private key file .* cannot be read/);
+  // A good App's token is what the credential check is handed.
+  const seenBy = join(dir, "check-saw");
+  const check = join(dir, "check.sh");
+  writeFileSync(check, `#!/bin/sh\nprintf '%s' "$GITHUB_TOKEN" > ${JSON.stringify(seenBy)}\nexit 0\n`, { mode: 0o755 });
+  const good = await sh(`exec bash "$1"`, [ALARM], { ...env, ...APP(), CREDENTIAL_BIN: check });
+  assert.match(good.stdout, /ports open, credential usable/);
+  assert.match(readFileSync(seenBy, "utf8"), /^ghs_minted_\d+$/);
+});
+
+/** run-e2e.sh's preflight decision, with the mint stubbed to answer `rc`. */
+const preflight = (rc) =>
+  sh(`source "$1"; destination_token_refresh() { return ${rc}; }; set +e; ( preflight_destination_token ); echo "EXIT=$?"`, [join(REPO, "scripts", "run-e2e.sh")], { TARGET_SSH: "unused" });
+
+test("the daily stops on a refused or broken App, and only warns on no answer or an incomplete one", async () => {
+  for (const [rc, exit, why] of [
+    [0, "0", null],
+    [3, "1", /GitHub App credential for the destination is refused \(mint exit 3/],
+    [2, "1", /GitHub App credential for the destination is broken \(mint exit 2/],
+    [4, "0", /could not be minted from the GitHub App \(exit 4/],
+    [5, "0", /could not be minted from the GitHub App \(exit 5/],
+  ]) {
+    const r = await preflight(rc);
+    assert.match(r.stdout, new RegExp(`EXIT=${exit}$`, "m"), `rc ${rc}: ${r.stdout}${r.stderr}`);
+    if (why) assert.match(r.stderr + r.stdout, why, `rc ${rc}`);
+  }
+});
+
+test("a minted token is dropped after its use, and a static one is left alone", async () => {
+  const minted = await sh(`. "$1"; set +e; destination_token_refresh "$2"; destination_token_drop; printf 'after=[%s]\n' "\${GITHUB_TOKEN:-}"`, [LIB, REPO], APP());
+  assert.match(minted.stdout, /^after=\[\]$/m);
+  const stat = await sh(`. "$1"; set +e; destination_token_refresh "$2"; destination_token_drop; printf 'after=[%s]\n' "\${GITHUB_TOKEN:-}"`, [LIB, REPO], { GITHUB_TOKEN: "static" });
+  assert.match(stat.stdout, /^after=\[static\]$/m);
+  // And the daily's preflight drops it right after the credential check.
+  const text = readFileSync(join(REPO, "scripts", "run-e2e.sh"), "utf8");
+  assert.match(text, /preflight_destination_token\n\s+verify_issue_credential\n(\s+#.*\n)*\s+destination_token_drop/);
+});
+
+test("the shadow and on-demand units cannot reach the App's private key", () => {
+  for (const unit of ["e2e-shadow.service", "e2e-on-demand.service"]) {
+    assert.match(readFileSync(join(REPO, "ops", "systemd", unit), "utf8"), /^InaccessiblePaths=-\/root\/\.e2e-app-key\.pem$/m, unit);
+  }
 });
