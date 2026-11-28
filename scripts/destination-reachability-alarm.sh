@@ -143,7 +143,9 @@ probe() {
   mint_err="$(mktemp)"
   ISSUE_HOST="$host" destination_token_refresh "$(pwd)" 2> "$mint_err" || mint_rc=$?
   if [ "$mint_rc" = "2" ] || [ "$mint_rc" = "3" ]; then
-    echo "ports open, but the GitHub App credential was $( [ "$mint_rc" = 3 ] && echo refused || echo rejected as broken) — $(grep -m 1 'mint-app-token' "$mint_err" | sed 's/^\[mint-app-token\] //')"
+    # "credential was refused" in both cases: the cause classifier below keys on it, and
+    # a broken key is a credential fault, never a network ticket.
+    echo "ports open, but the GitHub App credential was refused ($( [ "$mint_rc" = 3 ] && echo "by the destination" || echo "as broken, before anything was sent")) — $(grep -m 1 'mint-app-token' "$mint_err" | sed 's/^\[mint-app-token\] //')"
     rm -f "$mint_err"
     return 1
   fi

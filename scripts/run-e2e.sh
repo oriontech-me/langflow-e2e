@@ -1647,7 +1647,7 @@ preflight_destination_token() {
   destination_token_refresh "$REPO_DIR" || rc=$?
   case "$rc" in
     0) ;;
-    2 | 3) die "the GitHub App credential for the destination is $( [ "$rc" = 3 ] && echo refused || echo broken) (mint exit $rc, cause above): the umbrella could not open. Fix it, or set CHECK_ISSUE_CREDENTIAL=0 to run without the umbrella." ;;
+    2 | 3) die "the GitHub App credential for the destination is $( [ "$rc" = 3 ] && echo refused || echo broken) (mint exit $rc, cause above): the umbrella could not open. Fix it, or run with CREATE_ISSUE=0, which runs without the umbrella." ;;
     *) warn "the destination token could not be minted from the GitHub App (exit $rc, see above); the credential check below decides." ;;
   esac
 }

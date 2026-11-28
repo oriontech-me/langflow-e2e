@@ -141,11 +141,23 @@ test("the reachability alarm reads a refused App as a refused credential", async
   writeFileSync(lane, "ISSUE_HOST=127.0.0.1\nISSUE_REPO=org/repo\n");
   const env = { ...APP({ GITHUB_APP_PRIVATE_KEY_FILE: WRONG_KEY }), STATE_DIR: state, SECRETS_FILE: secrets, LANE_FILE: lane, PROBE_PORTS: String(port), PROBE_TIMEOUT: "3", THRESHOLD: "1", ANNOUNCE: "0" };
   const r = await sh(`exec bash "$1"`, [ALARM], env);
-  assert.match(r.stdout, /ports open, but the GitHub App credential was refused — the destination refused the App's JWT \(401/);
+  assert.match(r.stdout, /ports open, but the GitHub App credential was refused \(by the destination\) — the destination refused the App's JWT \(401/);
   // A broken App (an unreadable key) is down too: falling through would leave the check
-  // with no token, read as "not confirmed", and a corrupt key would look reachable.
-  const broken = await sh(`exec bash "$1"`, [ALARM], { ...env, ...APP({ GITHUB_APP_PRIVATE_KEY_FILE: join(dir, "no-key.pem") }) });
-  assert.match(broken.stdout, /ports open, but the GitHub App credential was rejected as broken — the private key file .* cannot be read/);
+  // with no token, read as "not confirmed", and a corrupt key would look reachable. A
+  // channel that accepts the post (a curl answering 200) makes the alarm record the
+  // cause it classified, which is what is asserted below.
+  const brokenState = join(dir, "alarm-state-broken");
+  mkdirSync(brokenState, { recursive: true });
+  const bin = join(dir, "alarm-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "curl"), "#!/bin/sh\ncat > /dev/null\nprintf 200\n", { mode: 0o755 });
+  const hooked = join(dir, "alarm-secrets-hook.env");
+  writeFileSync(hooked, 'export SLACK_WEBHOOK_URL="https://example.invalid/hook"\n');
+  const broken = await sh(`exec bash "$1"`, [ALARM], { ...env, ...APP({ GITHUB_APP_PRIVATE_KEY_FILE: join(dir, "no-key.pem") }), STATE_DIR: brokenState, SECRETS_FILE: hooked, PATH: `${bin}:${process.env.PATH}` });
+  assert.match(broken.stdout, /ports open, but the GitHub App credential was refused \(as broken, before anything was sent\) — the private key file .* cannot be read/);
+  // And it is filed as a credential fault, never as the network (#2518 review 2).
+  assert.match(broken.stdout, /\[reach\] posted:/);
+  assert.equal(readFileSync(join(brokenState, "destination-reachability.alerted"), "utf8").split("\n")[1], "credential");
   // A good App's token is what the credential check is handed.
   const seenBy = join(dir, "check-saw");
   const check = join(dir, "check.sh");

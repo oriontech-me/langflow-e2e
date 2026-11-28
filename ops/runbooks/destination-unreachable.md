@@ -144,6 +144,11 @@ ID and the installation ID on the destination organisation; the key stays off ev
 until Fyre reaches the destination again. On the VM, as root:
 
 ```bash
+# First the units that must NOT reach the key (InaccessiblePaths=), from this clone:
+# they are installed by copy, so an older copy would not carry the line.
+cp /root/e2e-qa/ops/systemd/e2e-shadow.service /root/e2e-qa/ops/systemd/e2e-on-demand.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl show e2e-shadow.service e2e-on-demand.service -p InaccessiblePaths   # both name the key
 install -m 600 /dev/stdin /root/.e2e-app-key.pem    # paste the .pem, then Ctrl-D
 cat >> /root/.e2e-secrets <<'EOF'
 export GITHUB_APP_ID=<App ID>
