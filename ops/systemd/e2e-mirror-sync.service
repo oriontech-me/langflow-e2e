@@ -1,0 +1,37 @@
+# Pushes the source repository's branches and tags to the destination the VM lane reads
+# (#2041), from this machine, next to its only consumer. Until now a launchd job on a
+# laptop did it, and launchd does not fire while a laptop sleeps.
+#
+# No alarm of its own: a sync that refuses or stops leaves the destination behind, and
+# e2e-mirror-freshness already says that out loud. This only says WHY, in the journal:
+#   journalctl -u e2e-mirror-sync.service --since today
+#
+# ROLLOUT, in two steps (the issue's plan):
+#   1. DRY_RUN=1 (below) for a week while the laptop keeps pushing: the journal's
+#      "status=dry_run, main=<sha>" lines are compared with the laptop's sync.log.
+#   2. Then the VM pushes: remove the DRY_RUN line, copy the unit again, daemon-reload,
+#      and unload the laptop's job (launchctl bootout, not delete). Two writers pushing
+#      the same source are idempotent, so the overlap is safe.
+# The destination's credential is the GitHub App's, minted per push by
+# scripts/git-credential-destination.sh (#2518); without it every push is refused, and
+# the App needs Workflows: write, or a commit touching .github/workflows/ is refused
+# (measured on the laptop's own push, 2026-11-27).
+#
+# Install:
+#   cp ops/systemd/e2e-mirror-sync.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now e2e-mirror-sync.timer
+[Unit]
+Description=Push the e2e source's branches and tags to the destination
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# HOME and PATH for the reasons e2e-mirror-freshness.service gives: systemd sets no
+# HOME (#1715) and git and node look for it; the PATH is pinned, not inherited.
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Step 1 of the rollout. Delete this line for step 2.
+Environment=DRY_RUN=1
+WorkingDirectory=/root/e2e-qa
+ExecStart=/root/e2e-qa/ops/mirror/sync-mirror.sh
