@@ -238,7 +238,9 @@ main() {
   OD_STARTED="$STAMP"; OD_HEAVY_LOCK=""; OD_CLEANING=0; OD_TOUCHED=0; OD_PARSE_ERR=""; OD_LOG_DIR="$LOG_DIR"
   # What can publish, unset wherever the secrets file is read: the provider pre-check and
   # the run.
-  OD_PUBLISHING=(SOURCE_PUSH_TOKEN GH_TOKEN GITHUB_TOKEN QA_E2E_AUTOMATION_TOKEN SUPABASE_SERVICE_ROLE_KEY SLACK_WEBHOOK_URL GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN)
+  # The GitHub App's three inputs too (#2518): with them, run-e2e.sh would mint the
+  # destination token this list exists to keep out of the run.
+  OD_PUBLISHING=(SOURCE_PUSH_TOKEN GH_TOKEN GITHUB_TOKEN QA_E2E_AUTOMATION_TOKEN SUPABASE_SERVICE_ROLE_KEY SLACK_WEBHOOK_URL GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_FILE)
 
   # --- one run at a time ------------------------------------------------------------
   # Before the request is read: a second start while one runs must not consume the

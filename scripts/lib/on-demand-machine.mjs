@@ -13,7 +13,7 @@ export const ONDEMAND = join(ROOT, "ops", "vm", "run-on-demand.sh");
 export const REAL_GIT = execFileSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 export const TARGET_SHA = "b".repeat(40);
 export const IMAGE = `langflow-ondemand:${"b".repeat(12)}`;
-export const PUBLISHING = ["SOURCE_PUSH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "QA_E2E_AUTOMATION_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "SLACK_WEBHOOK_URL"];
+export const PUBLISHING = ["SOURCE_PUSH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "QA_E2E_AUTOMATION_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "SLACK_WEBHOOK_URL", "GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID", "GITHUB_APP_PRIVATE_KEY_FILE"];
 export const GOOD_REQUEST = "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=anthropic\nONDEMAND_REQUESTED_BY=victor\n";
 // A published version, as the worker writes it: every key, the ref empty.
 export const VERSION = "1.13.1rc0";

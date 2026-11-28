@@ -125,22 +125,42 @@ Two things must be true, and the alarm tells them apart:
   no longer takes SSH, and since 2026-11-17 a personal token lasts at most 7 days, so a
   token on the VM is not a fix (#2490). The credential is a GitHub App's, and what the
   VM holds is the App's private key, not a token: an installation token expires one
-  hour after it is minted, so the VM has to mint a fresh one before each use. That
-  minting does not exist yet (#2518). The third message above means this part is
+  hour after it is minted, so the VM mints a fresh one before each use (#2518:
+  `scripts/mint-app-token.mjs`, wired into the daily, the routines and this alarm by
+  `scripts/lib/destination-token.sh`, and into git by
+  `scripts/git-credential-destination.sh`). The third message above means this part is
   missing: stay in temporary mode until it is installed.
 
-**Do not run the block below until #2518 is merged and the VM mints its own token.**
-An installation token pasted in by hand, wherever git and the API read it, passes both
-checks, because it is valid when they run, and is refused within the hour: the next
-daily would then die in its credential preflight with temporary mode already gone
-(#2519). Do not read the API check's answer as proof of a lasting credential either: its
-`EXPIRING` verdict comes only from the `github-authentication-token-expiration` response
-header, and nothing here shows that the destination sends it for an installation token.
-Without the header, a token that dies within the hour reads
-`ok: the credential works, and carries no expiry date`.
+**Install the App's key, never a token.** An installation token pasted in by hand,
+wherever git and the API read it, passes both checks, because it is valid when they
+run, and is refused within the hour: the next daily would then die in its credential
+preflight with temporary mode already gone (#2519). Do not read the API check's answer
+as proof of a lasting credential either: its `EXPIRING` verdict comes only from the
+`github-authentication-token-expiration` response header, and nothing here shows that
+the destination sends it for an installation token.
 
-When the network is back and the VM mints its own token, undo step 2 before the next
-daily. On the VM, as root:
+**1. Install the App's credential.** You need the App's private key (a `.pem`), its App
+ID and the installation ID on the destination organisation; the key stays off every VM
+until Fyre reaches the destination again. On the VM, as root:
+
+```bash
+install -m 600 /dev/stdin /root/.e2e-app-key.pem    # paste the .pem, then Ctrl-D
+cat >> /root/.e2e-secrets <<'EOF'
+export GITHUB_APP_ID=<App ID>
+export GITHUB_APP_INSTALLATION_ID=<installation ID>
+export GITHUB_APP_PRIVATE_KEY_FILE=/root/.e2e-app-key.pem
+EOF
+# The static token goes: with the App's three variables present, every consumer mints
+# its own, and a personal token left behind would only outlive the person.
+sed -i '/^export \(GH_TOKEN\|GITHUB_TOKEN\)=/d' /root/.e2e-secrets
+. /root/.e2e-lane
+git config --global "credential.https://${ISSUE_HOST}.helper" '/root/e2e-qa/scripts/git-credential-destination.sh'
+# A mint, end to end: prints "minted an installation token, expires …" or names the cause.
+( cd /root/e2e-qa && . /root/.e2e-secrets && . /root/.e2e-lane && export ISSUE_HOST && node scripts/mint-app-token.mjs > /dev/null )
+```
+
+**2. Leave temporary mode.** When the network is back and the mint above works, undo
+step 2 before the next daily. On the VM, as root:
 
 ```bash
 cd /root/e2e-qa
@@ -156,7 +176,8 @@ if [ -z "${ISSUE_HOST:-}" ] || [ -z "${ISSUE_REPO:-}" ]; then
   echo "ISSUE_HOST or ISSUE_REPO missing from /root/.e2e-lane: stop"
 elif ! GIT_TERMINAL_PROMPT=0 git ls-remote "$dest" HEAD >/dev/null; then
   echo "git over HTTPS is refused: the credential is not in place, stay in temporary mode"
-elif ( . /root/.e2e-secrets; . /root/.e2e-lane; export ISSUE_HOST ISSUE_REPO GH_TOKEN GITHUB_TOKEN
+elif ( . /root/.e2e-secrets; . /root/.e2e-lane; export ISSUE_HOST ISSUE_REPO
+        . scripts/lib/destination-token.sh; destination_token_refresh "$PWD"
         node scripts/check-issue-credential.mjs ); [ $? -eq 3 ]; then
   # 3 is the one answer the daily dies on. 2 (could not tell) only warns there, so it
   # does not hold you here either; the line above says which it was.
@@ -182,9 +203,10 @@ the block again; every step is safe to repeat.
 Both checks run as root in this shell, which is not quite the daily's environment. If
 the git check fails here while the daily's credential is wired somewhere this shell
 does not see, the block errs on the safe side and keeps temporary mode. The API check
-reads the token as the daily does today, `GITHUB_TOKEN` or `GH_TOKEN` from
-`/root/.e2e-secrets`. That only proves a token works at the moment it runs; with the
-App, the token is minted from its key, and #2518 decides how this check reads it.
+reads the token as the daily does: minted from the App's key when its three variables
+are in `/root/.e2e-secrets` (`scripts/lib/destination-token.sh`, #2518), else the static
+`GITHUB_TOKEN` or `GH_TOKEN` there. A minted token passing proves the KEY works, which
+is the lasting credential; a static one passing proves only the moment.
 The saved `/root/e2e-qa.origin.before`, left by outages before #2490, is removed on
 the way.
 

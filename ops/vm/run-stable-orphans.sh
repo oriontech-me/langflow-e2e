@@ -248,11 +248,18 @@ orphans_node() {
 }
 
 orphans_load_publishing() {
-  local f
+  local f repo="${RT_REPO:-${E2E_ROUTINE_REPO:-/root/e2e-qa}}"
   for f in "${E2E_ROUTINE_SECRETS:-/root/.e2e-secrets}" "${E2E_ROUTINE_LANE:-/root/.e2e-lane}"; do
     # shellcheck disable=SC1090
     [ -r "$f" ] && . "$f"
   done
+  # The destination token, minted from the GitHub App when one is configured (#2518).
+  # Always called in a subshell here, so the token never outlives its use.
+  # shellcheck disable=SC1091
+  if [ -r "$repo/scripts/lib/destination-token.sh" ]; then
+    . "$repo/scripts/lib/destination-token.sh"
+    destination_token_refresh "$repo" || true
+  fi
 }
 
 # One key of the reconciler's $GITHUB_OUTPUT (single-line keys only).

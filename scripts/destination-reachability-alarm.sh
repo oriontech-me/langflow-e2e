@@ -105,6 +105,8 @@ for f in "$SECRETS_FILE" "$LANE_FILE"; do
     . "$f"
   fi
 done
+# shellcheck source=lib/destination-token.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/destination-token.sh"
 
 case "$THRESHOLD" in
   ''|*[!0-9]*|0) echo "[reach] THRESHOLD='$THRESHOLD' is not a positive integer — using 3."; THRESHOLD=3 ;;
@@ -134,6 +136,19 @@ probe() {
   if [ -n "$CREDENTIAL_BIN" ]; then
     out="$("$CREDENTIAL_BIN" 2>&1)" || rc=$?
   else
+    # The App's token first, when one is configured (#2518): in this shell, not a
+    # subshell, so the check below reads it. A refusal of the App itself is the
+    # credential being refused; a mint that could not be decided leaves whatever
+    # static token is there for the check to judge.
+    local mint_err mint_rc=0
+    mint_err="$(mktemp)"
+    ISSUE_HOST="$host" destination_token_refresh "$(pwd)" 2> "$mint_err" || mint_rc=$?
+    if [ "$mint_rc" = "3" ]; then
+      echo "ports open, but the GitHub App credential was refused — $(grep -m 1 'mint-app-token' "$mint_err" | sed 's/^\[mint-app-token\] //')"
+      rm -f "$mint_err"
+      return 1
+    fi
+    rm -f "$mint_err"
     out="$(ISSUE_HOST="$host" ISSUE_REPO="${ISSUE_REPO:-}" node scripts/check-issue-credential.mjs 2>&1)" || rc=$?
   fi
   case "$rc" in

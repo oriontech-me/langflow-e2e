@@ -137,6 +137,9 @@ main() {
   # consequence.
   unset SOURCE_PUSH_TOKEN GH_TOKEN GITHUB_TOKEN QA_E2E_AUTOMATION_TOKEN SUPABASE_SERVICE_ROLE_KEY SLACK_WEBHOOK_URL
   unset GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+  # And the GitHub App's inputs (#2518): with them, run-e2e.sh would mint the very token
+  # unset above.
+  unset GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_FILE
   mkdir -p "$STATE/no-gh-login"
   export GH_CONFIG_DIR="$STATE/no-gh-login"
   if [ -r "$LANE" ]; then

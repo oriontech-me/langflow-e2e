@@ -95,6 +95,9 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
+# The destination credential minted from a GitHub App when one is configured (#2518).
+# shellcheck source=lib/destination-token.sh
+. "$REPO_DIR/scripts/lib/destination-token.sh"
 
 # The machine hosting Langflow, the echo endpoint and Ollama. No default on purpose.
 TARGET_SSH="${TARGET_SSH:-}"
@@ -1865,6 +1868,10 @@ phase_preflight() {
   # EXPIRING only warn: a blip must not cost a day of data, and a credential with two
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
+    # Minted here when the App is configured (#2518), so the preflight asks about the
+    # credential the umbrella will actually use; a failed mint leaves the static one
+    # in place and the check below says what it is worth.
+    destination_token_refresh "$REPO_DIR" || warn "the destination token could not be minted from the GitHub App (see above)."
     verify_issue_credential
   fi
 
@@ -3818,6 +3825,10 @@ phase_publish() {
     # nothing ran, not which test broke" on a run whose every shard had finished.
     # That is the sentence phase_verdict was changed to stop saying; the change only
     # reaches a reader if it reaches the surfaces a reader opens. (#1726)
+    #
+    # Minted again here (#2518): an App installation token lives one hour, and the
+    # umbrella is written at the END of a run that can take about that long.
+    destination_token_refresh "$REPO_DIR" || warn "the destination token could not be minted from the GitHub App (see above); the umbrella uses whatever credential is left."
     RUN_ID="$RUN_ID" RUN_DIR="$RUN_DIR" \
     RUN_EMPTY="$RUN_EMPTY" RUN_UNREADABLE="$RUN_UNREADABLE" RUN_PARTIAL="$RUN_PARTIAL" \
     MERGE_OK="${MERGE_OK:-true}" \
