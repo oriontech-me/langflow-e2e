@@ -57,13 +57,20 @@ for flag in DRY_RUN ALLOW_OVERWRITE; do
 done
 
 if [ -z "${DEST_URL:-}" ]; then
-  # shellcheck disable=SC1090
-  [ -r "$LANE_FILE" ] && . "$LANE_FILE"
-  if [ -z "${ISSUE_HOST:-}" ] || [ -z "${ISSUE_REPO:-}" ]; then
+  # Only the two names, read in a subshell: anything else the lane file sets (a DRY_RUN,
+  # a MIRROR_DIR) must never override the unit's own switches (#2041 review).
+  DEST_URL="$( (set +u; ISSUE_HOST="" ISSUE_REPO=""
+    # shellcheck disable=SC1090
+    [ -r "$LANE_FILE" ] && . "$LANE_FILE" > /dev/null 2>&1
+    [ -n "${ISSUE_HOST:-}" ] && [ -n "${ISSUE_REPO:-}" ] && printf 'https://%s/%s' "$ISSUE_HOST" "$ISSUE_REPO") )"
+  if [ -z "$DEST_URL" ]; then
     say "ERROR: no destination: set DEST_URL, or ISSUE_HOST and ISSUE_REPO in $LANE_FILE"
     exit 1
   fi
-  DEST_URL="https://${ISSUE_HOST}/${ISSUE_REPO}"
+fi
+if [ -n "$CREDENTIAL_HELPER" ] && [ ! -x "$CREDENTIAL_HELPER" ]; then
+  say "ERROR: the credential helper $CREDENTIAL_HELPER is not there or not executable (it ships with #2518's minting); set CREDENTIAL_HELPER= to use git's own configuration"
+  exit 1
 fi
 
 # Never a prompt: a unit has no terminal, and a prompt would hang the timer's run.
@@ -78,8 +85,12 @@ fi
 # One sync at a time: a slow push still running when the next timer fires must not
 # race a second prune against it.
 if command -v flock > /dev/null 2>&1; then
-  exec 9> "${MIRROR_LOCK:-/tmp/e2e-mirror-sync.lock}"
+  lock="${MIRROR_LOCK:-}"
+  [ -n "$lock" ] || { [ -w /run/lock ] && lock=/run/lock/e2e-mirror-sync.lock || lock=/tmp/e2e-mirror-sync.lock; }
+  exec 9> "$lock"
   flock -n 9 || { say "another sync is still running; this one ends"; exit 0; }
+else
+  say "NOTE: no flock here, so nothing stops two syncs from overlapping"
 fi
 
 if [ ! -d "$MIRROR_DIR" ]; then
@@ -101,6 +112,14 @@ if ! fetch_out="$(git -C "$MIRROR_DIR" fetch --prune origin 2>&1)"; then
   exit 1
 fi
 
+# An empty or emptied source (a fetch that succeeds and prunes everything) would make
+# every destination ref an orphan, and the push would delete them all. The source always
+# has main; without it, nothing is pushed (#2041 review).
+if ! git -C "$MIRROR_DIR" rev-parse --verify --quiet refs/heads/main > /dev/null; then
+  say "ABORTED: the mirror has no main after the fetch — an empty source would empty the destination; nothing was pushed (status=fetch_failed)"
+  exit 1
+fi
+
 # ------------------------------------------------------------ 2. verify the destination
 if ! remote_refs="$("${GIT[@]}" ls-remote --heads --tags "$DEST_URL" 2>&1)"; then
   printf '%s\n' "$remote_refs" | sed 's/^/  /' | tail -n 15
@@ -108,7 +127,7 @@ if ! remote_refs="$("${GIT[@]}" ls-remote --heads --tags "$DEST_URL" 2>&1)"; the
   exit 1
 fi
 
-diverged="" orphans=""
+diverged="" orphans="" dest_only=""
 while read -r sha ref; do
   [ -n "$sha" ] || continue
   case "$ref" in *'^{}') continue ;; esac   # an annotated tag's peeled line
@@ -119,12 +138,22 @@ while read -r sha ref; do
   fi
   if [ -z "$(git -C "$MIRROR_DIR" for-each-ref --contains="$commit" --count=1 --format='%(refname)' refs/heads refs/tags)" ]; then
     orphans="${orphans}  $ref -> $sha"$'\n'
+  elif ! git -C "$MIRROR_DIR" rev-parse --verify --quiet "$ref" > /dev/null; then
+    # A NAME the source does not have, at a commit it does: a branch or tag made on the
+    # destination with no new commit. The push's --prune deletes it, as the laptop's
+    # always did; it is named here so that is never silent (#2041 review).
+    dest_only="${dest_only}  $ref -> $sha"$'\n'
   fi
 done <<< "$remote_refs"
 
+[ "$DRY_RUN" = "1" ] && will="would be pruned" || will="pruned"
 if [ -n "$orphans" ]; then
-  say "orphan refs on the destination (pruned: they came from the source and were deleted there):"
+  say "orphan refs on the destination ($will unless the run stops: they came from the source and were deleted there):"
   printf '%s' "$orphans"
+fi
+if [ -n "$dest_only" ]; then
+  say "WARNING: refs on the destination that the source does not name ($will unless the run stops — a branch or tag created there at a commit the source has):"
+  printf '%s' "$dest_only"
 fi
 
 if [ -n "$diverged" ]; then

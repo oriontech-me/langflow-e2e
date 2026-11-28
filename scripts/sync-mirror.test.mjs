@@ -129,7 +129,7 @@ test("an orphan — a branch deleted on the source after a squash — is pruned,
   git(ctx.source, "branch", "-q", "-D", "feature");
   const r = sync(ctx);
   assert.equal(r.status, 0, r.stdout);
-  assert.match(r.stdout, /orphan refs on the destination \(pruned: .*\):\n {2}refs\/heads\/feature -> \w+/);
+  assert.match(r.stdout, /orphan refs on the destination \(pruned unless the run stops: .*\):\n {2}refs\/heads\/feature -> \w+/);
   assert.ok(!refs(ctx.dest).some((l) => l.startsWith("refs/heads/feature ")), "pruned from the destination");
 });
 
@@ -157,6 +157,7 @@ test("bad switches and no destination are refused; a held lock ends the run quie
   writeFileSync(join(ctx.root, "lane"), "ISSUE_HOST=ghe.example.invalid\nISSUE_REPO=org/repo\n");
   const lane = sync(ctx, { DEST_URL: "", LANE_FILE: join(ctx.root, "lane"), DRY_RUN: "1" });
   assert.match(lane.stdout, /-> https:\/\/ghe\.example\.invalid\/org\/repo$/m);
+  assert.equal(lane.status, 1, "that host does not answer: verify_failed, nothing pushed");
 
   if (spawnSync("bash", ["-c", "command -v flock"]).status === 0) {
     const held = spawnSync("bash", ["-c", `exec 9> "$1"; flock 9; bash "$2"`, "x", join(ctx.root, "lock"), SCRIPT], {
@@ -178,10 +179,12 @@ test("the destination's credential is only the helper this repository ships", ()
   mkdirSync(bin);
   const calls = join(ctx.root, "git-calls.log");
   writeFileSync(join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(calls)}\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
-  const r = sync(ctx, { CREDENTIAL_HELPER: "/opt/e2e/helper.sh", PATH: `${bin}:${process.env.PATH}` });
+  const helper = join(ctx.root, "helper.sh");
+  writeFileSync(helper, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const r = sync(ctx, { CREDENTIAL_HELPER: helper, PATH: `${bin}:${process.env.PATH}` });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = readFileSync(calls, "utf8").split("\n");
-  const withHelper = (l) => l.includes("-c credential.helper= -c credential.helper=/opt/e2e/helper.sh");
+  const withHelper = (l) => l.includes(`-c credential.helper= -c credential.helper=${helper}`);
   for (const verb of [" ls-remote ", " push "]) {
     const line = lines.find((l) => l.includes(verb));
     assert.ok(line && withHelper(line), `${verb.trim()} must carry only this repository's helper: ${line}`);
@@ -189,4 +192,59 @@ test("the destination's credential is only the helper this repository ships", ()
   assert.ok(!withHelper(lines.find((l) => l.includes(" fetch ")) || ""), "the source fetch carries none");
   // By default, the helper the #2518 minting ships.
   assert.match(readFileSync(SCRIPT, "utf8"), /CREDENTIAL_HELPER="\$\{CREDENTIAL_HELPER-\$REPO\/scripts\/git-credential-destination\.sh\}"/);
+});
+
+test("a new mirror against a destination another writer filled refuses a branch the source has dropped, and loses nothing", () => {
+  // The cutover: the laptop pushed `feature`, then the branch was deleted on the source.
+  // A FRESH mirror never fetched its commits, so they read as born on the destination —
+  // a refusal (the unit's comment says how to seed the mirror to avoid it), never a prune.
+  const ctx = setup();
+  const laptop = join(ctx.root, "laptop.git");
+  git(ctx.root, "clone", "-q", "--bare", ctx.source, "laptop.git");
+  git(laptop, "push", "-q", "--mirror", ctx.dest);
+  git(ctx.source, "branch", "-q", "-D", "feature");
+  const featureOnDest = head(ctx.dest, "refs/heads/feature");
+  const r = sync(ctx);
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stdout, /refs\/heads\/feature -> \w+ \(a commit the mirror has never seen\)/);
+  assert.equal(head(ctx.dest, "refs/heads/feature"), featureOnDest, "nothing was pruned");
+});
+
+test("a branch created on the destination at a known commit is named before the prune deletes it", () => {
+  const ctx = setup();
+  sync(ctx);
+  git(ctx.dest, "update-ref", "refs/heads/made-on-dest", head(ctx.dest, "refs/heads/main"));
+  const dry = sync(ctx, { DRY_RUN: "1" });
+  assert.match(dry.stdout, /WARNING: refs on the destination that the source does not name \(would be pruned unless the run stops .*\):\n {2}refs\/heads\/made-on-dest -> \w+/);
+  assert.ok(refs(ctx.dest).some((l) => l.startsWith("refs/heads/made-on-dest ")), "a dry run deletes nothing");
+  const r = sync(ctx);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /\(pruned unless the run stops/);
+  assert.ok(!refs(ctx.dest).some((l) => l.startsWith("refs/heads/made-on-dest ")), "the laptop's behaviour: pruned, now with its name in the journal");
+});
+
+test("an emptied source never empties the destination", () => {
+  const ctx = setup();
+  sync(ctx);
+  const before = refs(ctx.dest);
+  const empty = join(ctx.root, "empty.git");
+  git(ctx.root, "init", "-q", "--bare", "empty.git");
+  git(ctx.mirror, "remote", "set-url", "origin", empty);
+  const r = sync(ctx);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /ABORTED: the mirror has no main after the fetch — an empty source would empty the destination/);
+  assert.deepEqual(refs(ctx.dest), before);
+});
+
+test("the lane file gives the destination and nothing else; a missing helper is said plainly", () => {
+  const ctx = setup();
+  writeFileSync(join(ctx.root, "lane"), "ISSUE_HOST=ghe.example.invalid\nISSUE_REPO=org/repo\nDRY_RUN=0\nALLOW_OVERWRITE=1\n");
+  // DRY_RUN=1 from the unit survives a DRY_RUN=0 in the lane file: the listing of the
+  // unreachable host fails, and the run never got as far as deciding to push.
+  const r = sync(ctx, { DEST_URL: "", LANE_FILE: join(ctx.root, "lane"), DRY_RUN: "1" });
+  assert.match(r.stdout, /sync started \(dry_run=1\) -> https:\/\/ghe\.example\.invalid\/org\/repo$/m);
+  assert.equal(r.status, 1);
+  const missing = sync(ctx, { CREDENTIAL_HELPER: join(ctx.root, "no-helper.sh") });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /the credential helper .*no-helper\.sh is not there or not executable/);
 });

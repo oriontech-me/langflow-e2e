@@ -12,6 +12,19 @@
 #   2. Then the VM pushes: remove the DRY_RUN line, copy the unit again, daemon-reload,
 #      and unload the laptop's job (launchctl bootout, not delete). Two writers pushing
 #      the same source are idempotent, so the overlap is safe.
+# CUTOVER: seed the VM's mirror from the laptop's. A fresh mirror fetches only what the
+# source's refs reach today, so a destination branch whose commits left the source since
+# the laptop's last push (a deleted or force-pushed branch) reads as "never seen" — a
+# divergence the guard refuses (exit 2; nothing is lost, the sync just stops). Sharing
+# the laptop's history avoids it, and the same noise can appear during the week both
+# writers run, for a branch created and deleted between two VM cycles. To seed:
+#   laptop$ git -C ~/git-mirrors/langflow-e2e.git bundle create /tmp/mirror.bundle --all
+#   (copy it to the VM)
+#   vm# git clone -q --bare /tmp/mirror.bundle /root/mirror/langflow-e2e.git
+#   vm# git -C /root/mirror/langflow-e2e.git remote set-url origin https://github.com/oriontech-me/langflow-e2e.git
+#   vm# git -C /root/mirror/langflow-e2e.git config --replace-all remote.origin.fetch '+refs/heads/*:refs/heads/*'
+#   vm# git -C /root/mirror/langflow-e2e.git config --add remote.origin.fetch '+refs/tags/*:refs/tags/*'
+#
 # The destination's credential is the GitHub App's, minted per push by
 # scripts/git-credential-destination.sh (#2518); without it every push is refused, and
 # the App needs Workflows: write, or a commit touching .github/workflows/ is refused
